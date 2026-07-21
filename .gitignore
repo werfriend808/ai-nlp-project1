@@ -1,0 +1,9 @@
+# 회사 제공 원본 데이터 (읽기 전용)
+data/*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
