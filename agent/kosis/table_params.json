@@ -4,32 +4,49 @@
     "tblId": "DT_1EA1019",
     "prdSe": "Y",
     "_table_name": "경영주 연령별 농가 통계표",
-    "_verified": "실제 API 호출로 확인됨 (855행 응답, 수동 테스트 완료) — objL1=ALL, itmId=ALL 조합은 정상 동작",
-    "_important_note": "실제 응답을 보니 연령대는 C1_NM이 아니라 ITM_NM에 들어있음 (C1_NM은 '전국'=지역). calculator.py 호출 시 category_field='ITM_NM'으로 넘길 것.",
+    "_verified": "실제 API 호출로 재확인 (2026-07-22). objL1=ALL + itmId=ALL → 855행(시도 57개 × 연령 15개) 응답. objL1='000' + itmId 특정 코드 → 정확히 1행 응답 확인.",
+    "_important_note": "연령대는 C1_NM이 아니라 ITM_NM에 들어있음 (C1_NM은 지역명). calculator.py 호출 시 category_field='ITM_NM'으로 넘길 것.",
 
     "dimensions": {
       "region": {
         "kosis_param": "objL1",
-        "default_value": "ALL",
+        "default_value": "000",
         "code_map": {
-          "전국": "ALL"
+          "전국": "000"
         },
-        "_note": "실제 호출 결과 objL1=ALL이면 C1_NM='전국' 전국 총계만 나옴. 시도별 세부 지역이 필요하면 실제 코드값 추가 조사 필요."
+        "_note": "정정 (2026-07-22): objL1=ALL은 '전국 총계'가 아니라 시도 57개를 전부 반환함 (000=전국 포함). 전국 총계 하나만 받으려면 objL1=000으로 좁혀야 api_client.py가 기대하는 '결과 1행'이 됨. 시도별 세부 지역 코드는 C1 목록(예: 11=서울특별시, 21=부산광역시...) 참고, 필요해지면 여기에 추가."
       },
 
       "farm_type": {
         "kosis_param": "TODO_확인필요",
         "default_value": null,
         "code_map": {
-          "_TODO": "브리프 예시(과수 농가 166,558가구)를 재현하려면 '영농형태' 분류가 필요한데, 지금까지 실제 조회해본 결과 이 표(DT_1EA1019) 응답에는 region(C1)과 age(ITM) 두 축만 확인됨. 영농형태 축이 이 표 안에 별도로 있는지, 아니면 완전히 다른 tblId(예: 농림어업조사 산하 별도 표)인지부터 inspect_table_meta.py로 확인할 것."
+          "_TODO": "확인 완료 (2026-07-22): 이 표(DT_1EA1019)는 region(C1)·age(ITM) 두 축만 있고 '영농형태' 축은 없음 (objL1=ALL+itmId=ALL로 받은 855행 = 57지역×15연령이 전부, 다른 축 없음). 브리프 예시(과수 농가 166,558가구)를 재현하려면 완전히 다른 tblId(농림어업조사 산하 영농형태별 표)를 새로 찾아야 함 — 이 dimension은 DT_1EA1019에서는 쓸 수 없음."
         }
       },
 
       "age": {
         "kosis_param": "itmId",
-        "default_value": "ALL",
-        "code_map": {},
-        "_note": "연령대는 매번 ALL로 전체 항목을 받아오고, calculator.py에서 category_field='ITM_NM'으로 필요한 구간만 골라 합산하는 방식을 권장 (매 연령대마다 API를 따로 부를 필요 없음)."
+        "default_value": "T00",
+        "code_map": {
+          "전체": "T00",
+          "계": "T00",
+          "20세미만": "T01",
+          "20~24세": "T02",
+          "25~29세": "T03",
+          "30~34세": "T04",
+          "35~39세": "T05",
+          "40~44세": "T06",
+          "45~49세": "T07",
+          "50~54세": "T08",
+          "55~59세": "T09",
+          "60~64세": "T10",
+          "65~69세": "T11",
+          "70~74세": "T12",
+          "75~79세": "T13",
+          "80세이상": "T14"
+        },
+        "_note": "검증 완료 (2026-07-22), ITM_NM 그대로 코드화 (T00~T14, 5세 단위). '65세 이상 고령 농가' 비율처럼 여러 구간을 합산하려면 T11~T14를 각각 호출해 numerator 리스트로 만든 뒤 calculator.compute_ratio(numerator, denominator=T00)에 넘기면 됨."
       }
     },
 
