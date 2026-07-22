@@ -1,3 +1,4 @@
+# 1→2→3→4→5→6→7→8 전체 CSV 순회 실행
 """
 agent/pipeline/batch_runner.py — 1→2→4→5→6단계 연결 데모 실행기
 
@@ -154,3 +155,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
