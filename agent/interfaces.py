@@ -94,6 +94,7 @@ class KosisApiResponse:
     org_id: str
     itm_id: str
     obj_l1: Optional[str] = None
+    obj_l2: Optional[str] = None   # ← 추가
     prd_se: Optional[str] = None
 
 
