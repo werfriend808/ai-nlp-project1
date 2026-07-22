@@ -10,7 +10,7 @@ from datetime import datetime, date
 
 
 load_dotenv()
-API_KEY = os.getenv("HCX__API_KEY")
+API_KEY = os.getenv("HCX_API_KEY")
 MODEL = "HCX-DASH-002"
 URL = f"https://clovastudio.stream.ntruss.com/v3/chat-completions/{MODEL}"
 HEADERS = {

@@ -113,5 +113,85 @@
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "이 표는 연간(Y) 통계라 '2024'처럼 연도만 넣으면 됨 (월 단위 아님)."
+  },
+
+  "DT_1J22003": {
+    "orgId": "101",
+    "tblId": "DT_1J22003",
+    "prdSe": "Y",
+    "_table_name": "소비자물가지수(2020=100)",
+    "_verified": "실제 API 호출로 확인 (2026-07-22). prdSe=Y(연간)로 objL1=T10(전국)+itmId=T → 1행 응답 확인 (2024년 전국 CPI=114.18). 월 단위(prdSe=M, YYYYMM)로도 조회되지만, D의 slot_filler가 채우는 period가 연도 단위(예: '2024')라서 Y를 기본으로 채택.",
+    "_important_note": "이 표는 itmId가 T(총지수) 하나뿐이라 dimensions에 안 두고 고정값으로 둠. api_client.py는 itmId_fixed를 우선 쓰므로 그대로 반영됨.",
+
+    "dimensions": {
+      "region": {
+        "kosis_param": "objL1",
+        "default_value": "T10",
+        "code_map": {
+          "전국": "T10",
+          "서울": "T11",
+          "부산": "T12",
+          "대구": "T13",
+          "인천": "T14",
+          "광주": "T15",
+          "대전": "T16",
+          "울산": "T17",
+          "세종": "T18",
+          "경기": "T21",
+          "강원": "T31",
+          "충북": "T41",
+          "충남": "T51",
+          "전북": "T61",
+          "전남": "T71",
+          "경북": "T81",
+          "경남": "T90",
+          "제주": "T96"
+        },
+        "_note": "검증 완료 (2026-07-22). C1_NM으로 확인됨 (전국 포함 시도 18개, 세종 별도 포함)."
+      }
+    },
+
+    "itmId_fixed": "T",
+    "_itm_note": "이 표는 itmId가 T(총지수) 하나뿐이라 고정값으로 둠.",
+
+    "startPrdDe": "2024",
+    "endPrdDe": "2024",
+    "_period_note": "prdSe=Y(연간 평균)로 연도만 넣으면 됨."
+  },
+
+  "DT_1DA7001S": {
+    "orgId": "101",
+    "tblId": "DT_1DA7001S",
+    "prdSe": "Y",
+    "_table_name": "성별 경제활동인구총괄",
+    "_verified": "실제 API 호출로 확인 (2026-07-22). prdSe=Y(연간)로 objL1=0(계)+itmId=T80(실업률) → 1행 응답 확인 (2024년 전체 실업률=2.8%).",
+    "_important_note": "이 표는 itmId가 여러 개(T10=15세이상인구, T20=경제활동인구, T30=취업자, T40=실업자, T50=비경제활동인구, T60=경제활동참가율, T80=실업률, T90=고용률)라서, B의 table_catalog.json 매칭 시 가장 흔한 키워드 '실업률'(T80)로 임시 고정해뒀음. '취업자 수'/'고용률' 관련 주장이 이 표로 매핑되면 실제로는 다른 itmId가 필요한데 지금 파이프라인은 claim.sentence만 보고 어떤 itmId를 골라야 하는지 구분하지 못함 — 3~4단계 사이에 itmId 선택 로직 추가 필요 (미해결, 알려진 갭).",
+
+    "dimensions": {
+      "gender": {
+        "kosis_param": "objL1",
+        "default_value": "0",
+        "code_map": {
+          "전체": "0",
+          "계": "0",
+          "남자": "2",
+          "여자": "3",
+          "농가": "4",
+          "농가남자": "5",
+          "농가여자": "6",
+          "비농가": "7",
+          "비농가남자": "8",
+          "비농가여자": "9"
+        },
+        "_note": "검증 완료 (2026-07-22). C1_NM으로 확인됨."
+      }
+    },
+
+    "itmId_fixed": "T80",
+    "_itm_note": "여러 itmId 중 '실업률'(T80)로 임시 고정. 위 _important_note 참고.",
+
+    "startPrdDe": "2024",
+    "endPrdDe": "2024",
+    "_period_note": "prdSe=Y(연간)로 연도만 넣으면 됨."
   }
 }
