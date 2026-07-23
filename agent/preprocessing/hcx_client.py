@@ -56,7 +56,7 @@ def call_hcx(
     temperature: float = 0.2,
     max_tokens: int = 1024,
     api_key: Optional[str] = None,
-    timeout: int = 30,
+    timeout: int = 60,
 ) -> str:
     """system/user 메시지 한 쌍을 CLOVA Studio에 보내고 assistant 응답 텍스트만 돌려줍니다.
 
