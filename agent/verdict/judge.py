@@ -71,6 +71,7 @@ NUMERIC_TOLERANCE = 0.1
 CLEAR_GAP_MULTIPLIER = 5
 
 _SCALE = {"조": 1e12, "억": 1e8, "만": 1e4, "천": 1e3}
+_SCALE_ORDER = ["조", "억", "만", "천"]  # 인덱스가 클수록 작은 단위 (조 > 억 > 만 > 천)
 _NUMBER_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(조|억|만|천)?")
 _YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 _DIGITS_RE = re.compile(r"\d+")
@@ -108,6 +109,39 @@ def _to_value(num_str: str, scale: Optional[str]) -> float:
     return value * _SCALE[scale] if scale else value
 
 
+def _find_compound_numbers(text: str) -> list[tuple[float, int, int]]:
+    """text에서 숫자를 찾되, "23만8천"처럼 조/억/만/천 단위가 큰 것부터 작은 것 순서로
+    공백 없이 이어지는 한글 복합 숫자는 하나의 값으로 합산한다.
+
+    (예전엔 _NUMBER_RE로 한 조각씩만 봐서 "23만8천"에서 뒤쪽 "8천"(=8000)만 인식하고
+    앞쪽 "23만"을 놓치는 버그가 있었음 — 실제 배치 실행에서 "23만8천명"을 8000명으로
+    잘못 읽어 정상 기사를 오탐하는 사례로 재현됨.)
+
+    반환: [(합산값, 시작 인덱스, 끝 인덱스), ...] — 인덱스는 claim.unit 매칭이나
+    연도 제외 판단에 이어서 쓰기 위해 그대로 넘김.
+    """
+    matches = [m for m in _NUMBER_RE.finditer(text) if m.group(1)]
+    results: list[tuple[float, int, int]] = []
+    i = 0
+    while i < len(matches):
+        num_str, scale = matches[i].groups()
+        total = _to_value(num_str, scale)
+        start, end = matches[i].start(), matches[i].end()
+        rank = _SCALE_ORDER.index(scale) if scale in _SCALE_ORDER else -1
+        i += 1
+        while rank >= 0 and i < len(matches) and matches[i].start() == end:
+            nxt_num, nxt_scale = matches[i].groups()
+            nxt_rank = _SCALE_ORDER.index(nxt_scale) if nxt_scale in _SCALE_ORDER else -1
+            if nxt_rank <= rank:  # 단위가 순서대로 작아지지 않으면(혹은 단위 없으면) 별개 숫자
+                break
+            total += _to_value(nxt_num, nxt_scale)
+            end = matches[i].end()
+            rank = nxt_rank
+            i += 1
+        results.append((total, start, end))
+    return results
+
+
 def _extract_claim_number(claim: Claim) -> Optional[float]:
     """claim.sentence에서 핵심 수치를 정규식으로 뽑아냄 (best-effort).
 
@@ -115,25 +149,24 @@ def _extract_claim_number(claim: Claim) -> Optional[float]:
     마지막 숫자를 사용합니다(주장 문장은 보통 "~55.8kg을 기록했다"처럼 핵심 수치가
     문장 뒤쪽에 옴). "2024년"처럼 연도로 보이는 4자리 숫자는 후보에서 제외합니다.
     """
+    chunks = _find_compound_numbers(claim.sentence)
+
+    if claim.unit:
+        unit_pattern = re.compile(rf"^\s*{re.escape(claim.unit)}")
+        for value, _start, end in chunks:
+            if unit_pattern.match(claim.sentence[end:]):
+                return _apply_direction(value, claim)
+
     candidates: list[float] = []
-    for m in _NUMBER_RE.finditer(claim.sentence):
-        num_str, scale = m.groups()
-        cleaned = num_str.replace(",", "")
-        tail = claim.sentence[m.end() : m.end() + 1]
-        if not scale and tail == "년" and _YEAR_RE.fullmatch(cleaned):
+    for value, start, end in chunks:
+        raw_chunk = claim.sentence[start:end].replace(",", "")
+        tail = claim.sentence[end : end + 1]
+        if tail == "년" and _YEAR_RE.fullmatch(raw_chunk):
             continue  # "2024년" 같은 연도 표기는 비교 대상 수치가 아니므로 제외
-        candidates.append(_to_value(num_str, scale))
+        candidates.append(value)
 
     if not candidates:
         return None
-
-    if claim.unit:
-        unit_match = re.search(
-            rf"(\d[\d,]*(?:\.\d+)?)\s*(조|억|만|천)?\s*{re.escape(claim.unit)}", claim.sentence
-        )
-        if unit_match:
-            value = _to_value(unit_match.group(1), unit_match.group(2))
-            return _apply_direction(value, claim)
 
     return _apply_direction(candidates[-1], claim)
 
@@ -148,7 +181,16 @@ def _apply_direction(value: float, claim: Claim) -> float:
 
 
 def _is_percent(claim: Claim, computed: ComputedResult) -> bool:
-    return computed.unit == "%" or claim.unit == "%" or claim.claim_type in ("증감률", "비율")
+    """% 단위 여부는 claim.unit이 명시돼 있으면 그걸 최우선으로 본다. claim.unit이 아예
+    없을 때만 claim_type("증감률"/"비율")으로 percent 여부를 추정한다.
+
+    (예전엔 claim.unit="명"처럼 명확히 %가 아닌 단위가 있어도 claim_type=="증감률"이면
+    무조건 percent로 취급해서, "23만8천명"(명 단위, 실제 차이 0.13%)을 "317%p 차이"로
+    잘못 계산해 오탐하는 버그가 있었음 — 실제 배치 실행에서 재현됨.)
+    """
+    if claim.unit:
+        return claim.unit == "%"
+    return computed.unit == "%" or claim.claim_type in ("증감률", "비율")
 
 
 def _numeric_gap(claim_value: float, claim: Claim, computed: ComputedResult) -> float:
@@ -426,3 +468,19 @@ if __name__ == "__main__":
     print(f"[케이스5 - period 누락 방어] 규칙 기반 1차 필터 결과: {rb5}")
     assert rb5 is None, "period 누락인데도 규칙으로 확정해버림 (엣지케이스 방어 회귀)"
     print("  → 통과: 시점 정보 없음을 '불일치 없음'으로 오인하지 않고 LLM에 위임함.")
+
+    # 케이스 6 — 회귀 방지: "23만8천"처럼 조/억/만/천이 이어지는 한글 복합 숫자를
+    # 제대로 합산하는지 + claim.unit="명"인데 claim_type="증감률"이라고 percent로
+    # 오판하지 않는지 (배치 실행 중 실제로 재현된 두 버그의 조합 케이스)
+    claim6 = Claim(
+        sentence="작년 출생아 수는 23만8천명으로 전년보다 늘어난 것으로 나타났다.",
+        claim_type="증감률", period="2024년", unit="명", population="출생아 수",
+    )
+    computed6 = ComputedResult(calc_type="단순조회", raw_value=238317.0, unit="명 건", period="2024")
+    claim6_value = _extract_claim_number(claim6)
+    print(f"[케이스6 - 복합 숫자 파싱] '23만8천명' 추출값: {claim6_value}")
+    assert claim6_value == 238000.0, f"복합 숫자 파싱 회귀 (기대 238000.0, 실제 {claim6_value})"
+    rb6 = _rule_based_verdict(claim6, computed6)
+    print(f"[케이스6 - is_percent 오판 방어] 규칙 기반 1차 필터 결과: {rb6}")
+    assert rb6 is None, "명 단위인데도 %p로 오판해서 규칙으로 확정해버림 (회귀)"
+    print("  → 통과: 238000(추출값)이 정확히 합산됐고, '명' 단위를 %로 오판하지 않아 LLM에 위임함.")

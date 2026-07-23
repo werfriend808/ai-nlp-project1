@@ -1,6 +1,12 @@
-# 1→2→3→4→5→6단계 전체 CSV 순회 실행
+# 1→2→3→4→5→6→7→8단계 전체 CSV 순회 실행
 """
-agent/pipeline/batch_runner.py — 1→2→3→4→5→6단계 전체 자동 연결 실행기
+agent/pipeline/batch_runner.py — 1→2→3→4→5→6→7→8단계 전체 자동 연결 실행기
+
+⚠️ 7·8단계 추가 (전체 통합):
+    6단계까지 계산된 ComputedResult가 나오면 D의 judge()로 판정(7단계)하고,
+    그 Verdict를 다시 explain()에 넘겨 사람이 읽을 수 있는 최종 설명(8단계)까지
+    생성합니다. judge/explain 둘 다 실패해도(JudgeError/ExplainerError 등) 배치
+    전체가 멈추지 않도록 run_stage_7_8에서 개별적으로 잡고 다음 주장/기사로 넘어갑니다.
 
 ⚠️ 이전 버전과의 차이:
     예전에는 3단계(통계표 자동 매핑)가 없어서 table_id/claim_sentence를 시나리오마다
@@ -53,6 +59,9 @@ from agent.orchestrator.slot_filler import fill_slots
 from agent.orchestrator.clarify import clarify
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
+from agent.verdict.judge import judge, JudgeError
+from agent.explain.explainer import explain, ExplainerError
+from agent.interfaces import ComputedResult
 
 TABLE_PARAMS_PATH = Path(__file__).parent.parent / "kosis" / "table_params.json"
 
@@ -196,14 +205,15 @@ def run_stage_5_6(
     table_params: dict,
     client: KosisApiClient,
     calculator: KosisCalculator,
-) -> None:
+) -> Optional[ComputedResult]:
+    """5·6단계. 7·8단계로 넘길 수 있도록 ComputedResult를 반환한다 (실패/스킵 시 None)."""
     kosis_slots = build_kosis_slots(table_id, generic_slots, table_params)
     if kosis_slots is None:
         print(
             f"[5단계 api_client] '{table_id}'가 table_params.json에 없음 "
             "→ C가 아직 이 표를 조사하지 않음 (알려진 갭, 스킵)"
         )
-        return
+        return None
 
     calc_type = generic_slots.get("calc_type")
     try:
@@ -217,14 +227,41 @@ def run_stage_5_6(
             calc_fn = calculator.compute_change_rate if calc_type == "증감률" else calculator.compute_change
             result = calc_fn(base_resp, target_resp)
             print(f"[6단계 calculator] {result}")
+            return result
         else:
             resp = client(table_id, kosis_slots)
             print(f"[5단계 api_client] {resp}")
             print("[6단계 calculator] 단순 조회 (calc_type 없음/미지원) → 계산 없이 값 그대로 사용")
+            return ComputedResult(calc_type="단순조회", raw_value=resp.raw_value, unit=resp.unit, period=resp.period)
     except (KosisApiError, CalculationError) as e:
         print(f"[오류] {type(e).__name__}: {e}")
+        return None
     except Exception as e:
         print(f"[오류] {type(e).__name__}: {e}")
+        return None
+
+
+def run_stage_7_8(claim, top, computed: ComputedResult) -> None:
+    """7단계 judge + 8단계 explain. 하나라도 실패해도 이 주장만 스킵하고 배치는 계속 돈다."""
+    try:
+        verdict = judge(claim, computed)
+        print(f"[7단계 judge] {verdict}")
+    except JudgeError as e:
+        print(f"[7단계 judge] 실패 ({type(e).__name__}: {e}) → 설명 생성 스킵")
+        return
+    except Exception as e:
+        print(f"[7단계 judge] 실패 ({type(e).__name__}: {e}) → 설명 생성 스킵")
+        return
+
+    try:
+        explanation = explain(claim, top, computed, verdict)
+        print(f"[8단계 explain] {explanation.explanation_text}")
+        if explanation.limitation:
+            print(f"[8단계 explain][한계] {explanation.limitation}")
+    except ExplainerError as e:
+        print(f"[8단계 explain] 실패 ({type(e).__name__}: {e})")
+    except Exception as e:
+        print(f"[8단계 explain] 실패 ({type(e).__name__}: {e})")
 
 
 def run_article(
@@ -286,7 +323,11 @@ def run_article(
         if slots is None:
             continue
 
-        run_stage_5_6(top.table_id, slots, table_params, client, calculator)
+        computed = run_stage_5_6(top.table_id, slots, table_params, client, calculator)
+        if computed is None:
+            continue
+
+        run_stage_7_8(claim, top, computed)
 
 
 def main() -> None:
