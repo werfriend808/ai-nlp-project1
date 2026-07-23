@@ -59,6 +59,12 @@ def build_extraction_prompt(user_input: str) -> str:
 문장: "작년 증감률 알려줘"
 응답: {{"period": "작년", "region": null, "calc_type": "증감률"}}
 
+문장: "평균 알려줘"
+응답: {{"period": null, "region": null, "calc_type": "평균"}}
+
+문장: "서울 알려줘"
+응답: {{"period": null, "region": "서울", "calc_type": null}}
+
 문장: "{user_input}"
 
 응답 형식 (JSON만, 다른 텍스트 없이):

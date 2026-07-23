@@ -38,6 +38,11 @@ CLOVASTUDIO_HOST = "https://clovastudio.stream.ntruss.com"
 # v3 엔드포인트를 지원하지 않는 이전 세대 모델 (v1 엔드포인트로 호출해야 함)
 LEGACY_V1_MODELS = {"HCX-003", "HCX-DASH-001"}
 
+# HCX-007(하이브리드 추론 모델)은 요청에 maxTokens를 넣으면 "40001 Invalid parameter:
+# maxTokens"로 거부됨 (실제로 확인됨 — 100/1024/32768 등 어떤 값을 넣어도 동일하게 실패,
+# 필드 자체를 빼야 200 OK). 추론 단계 때문에 길이를 모델이 자체 결정하는 것으로 보임.
+NO_MAX_TOKENS_MODELS = {"HCX-007"}
+
 
 class HcxApiError(RuntimeError):
     """CLOVA Studio 호출 실패 (HTTP 에러 또는 예상과 다른 응답 형식)."""
@@ -76,8 +81,9 @@ def call_hcx(
         ],
         "topP": 0.8,
         "temperature": temperature,
-        "maxTokens": max_tokens,
     }
+    if model not in NO_MAX_TOKENS_MODELS:
+        body["maxTokens"] = max_tokens
 
     api_version = "v1" if model in LEGACY_V1_MODELS else "v3"
     url = f"{CLOVASTUDIO_HOST}/{api_version}/chat-completions/{model}"
