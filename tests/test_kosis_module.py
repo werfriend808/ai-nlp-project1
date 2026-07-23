@@ -153,6 +153,16 @@ def case_16_region_all_returns_many_rows_should_fail():
     raise AssertionError("잘못된 region 값인데 예외가 안 났음")
 
 
+def case_17_future_year_should_fail():
+    """아직 발표되지 않은 미래 연도를 요청하면 KOSIS가 자체적으로 [30] 데이터 없음 에러를
+    내야 정상 (엣지케이스: 5단계가 7단계에 조용히 엉뚱한 시점 값을 넘기지 않는지 확인)."""
+    try:
+        client("DT_1DA7102S", {"period": "2099", "gender": "전체", "age": "청년(15~29세)"})
+    except KosisApiError:
+        return  # 기대한 실패
+    raise AssertionError("미래 연도인데 예외가 안 났음")
+
+
 CASES = [
     case_01_unemployment_2024_youth,
     case_02_unemployment_2023_youth,
@@ -170,6 +180,7 @@ CASES = [
     case_14_sum_mismatched_units_should_fail,
     case_15_unknown_table_id_should_fail,
     case_16_region_all_returns_many_rows_should_fail,
+    case_17_future_year_should_fail,
 ]
 
 
