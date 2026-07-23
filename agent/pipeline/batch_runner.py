@@ -59,7 +59,7 @@ TABLE_PARAMS_PATH = Path(__file__).parent.parent / "kosis" / "table_params.json"
 
 ARTICLES = [
     {
-        "label": "시나리오 1 — 청년 실업률 (KOSIS 지역 축 없는 표라 되묻기에서 막힘)",
+        "label": "시나리오 1 [고용/노동] 청년 실업률 — 정상 자동 연결",
         "published_date": date(2025, 1, 6),
         "article_text": (
             "6일 통계청이 발표한 고용동향에 따르면 지난달 청년 실업률이 6%에 육박한 "
@@ -68,13 +68,81 @@ ARTICLES = [
         "clarify_reply": "전국 기준으로 작년 대비 증감률 알려줘",
     },
     {
-        "label": "시나리오 2 — 소비자물가 (전 과정 자동 연결)",
+        "label": "시나리오 2 [물가/CPI] 소비자물가 — 정상 자동 연결 (단, 월/연 비교 기준 차이 있음, 이슈 1-2 참고)",
         "published_date": date(2025, 2, 5),
         "article_text": (
             "5일 통계청이 발표한 소비자물가동향에 따르면 지난달 소비자물가가 전년 "
             "동월 대비 2.2% 오른 것으로 나타났다."
         ),
         "clarify_reply": "전국 기준으로 작년 대비 증감률 알려줘",
+    },
+    {
+        "label": "시나리오 3 [인구] 주민등록인구 감소 — 정상 자동 연결 (단순 조회 경로)",
+        "published_date": date(2025, 1, 3),
+        "article_text": (
+            "행정안전부에 따르면 지난해 12월 기준 주민등록인구는 5017만명으로 "
+            "5년 연속 감소세를 이어갔다."
+        ),
+        "clarify_reply": "전국 기준으로 알려줘",
+    },
+    {
+        "label": "시나리오 4 [경제성장] GDP 성장률 — 예상된 실패 (DT_200Y102는 분기 단위 전용, 이슈 1-3)",
+        "published_date": date(2025, 1, 23),
+        "article_text": (
+            "한국은행이 발표한 국민소득(잠정)에 따르면 작년 4분기 실질 GDP는 "
+            "전기 대비 0.2% 성장에 그쳤다."
+        ),
+        "clarify_reply": "전국 기준으로 알려줘",
+    },
+    {
+        "label": "시나리오 5 [무역/수출입] 수출 역대 최대 — 정상 자동 연결 (단순 조회 경로)",
+        "published_date": date(2025, 1, 1),
+        "article_text": (
+            "관세청에 따르면 지난해 수출액은 6838억달러로 역대 최대치를 기록했다."
+        ),
+        "clarify_reply": "전국 기준으로 알려줘",
+    },
+    {
+        "label": "시나리오 6 [무역/수출입] 무역수지 흑자 전환 — 정상 자동 연결 (증감 경로, 단 itmId는 수출액 고정이라 실제로는 무역수지 자체가 아닌 수출액 증감으로 검증됨, 이슈 1-1)",
+        "published_date": date(2025, 1, 10),
+        "article_text": (
+            "산업통상자원부는 지난해 무역수지가 3년 만에 흑자로 전환됐다고 밝혔다."
+        ),
+        "clarify_reply": "전국 기준으로 작년 대비 증감률 알려줘",
+    },
+    {
+        "label": "시나리오 7 [부동산/주택] 집값 하락 — 예상된 실패 (DT_30404_B012는 월 단위 전용, 이슈 1-3)",
+        "published_date": date(2025, 2, 1),
+        "article_text": (
+            "한국부동산원 조사에 따르면 지난달 전국 아파트 매매가격은 하락세를 이어갔다."
+        ),
+        "clarify_reply": "전국 기준으로 알려줘",
+    },
+    {
+        "label": "시나리오 8 [출생/사망/혼인] 출생아 수 증가 — 정상 자동 연결 (증감률 경로)",
+        "published_date": date(2025, 1, 26),
+        "article_text": (
+            "통계청에 따르면 작년 출생아 수는 23만8천명으로 전년보다 늘어난 것으로 "
+            "나타났다."
+        ),
+        "clarify_reply": "전국 기준으로 작년 대비 증감률 알려줘",
+    },
+    {
+        "label": "시나리오 9 [출생/사망/혼인] 혼인 건수 역대 최저 — 알려진 왜곡 (vital_item이 출생아수로 고정돼있어 실제로는 혼인 건수가 아니라 출생아수 값으로 잘못 조회됨, 이슈 1-1)",
+        "published_date": date(2025, 3, 19),
+        "article_text": (
+            "통계청에 따르면 지난해 혼인 건수는 역대 최저치를 기록했다."
+        ),
+        "clarify_reply": "전국 기준으로 알려줘",
+    },
+    {
+        "label": "시나리오 10 [무관한 기사] 통계 주장 없음 — 1단계에서 걸러져야 함 (배치 안정성 확인용)",
+        "published_date": date(2025, 1, 2),
+        "article_text": (
+            "3일 서울 종로구의 한 상가건물에서 화재가 발생해 소방당국이 진화 작업을 "
+            "벌였다. 인명피해는 없는 것으로 파악됐다."
+        ),
+        "clarify_reply": None,
     },
 ]
 
@@ -193,11 +261,16 @@ def run_article(
         print(f"{'-' * 60}")
         print(f"주장: \"{claim.sentence}\" (claim_type={claim.claim_type})")
 
-        candidates = search_and_rerank(
-            claim,
-            keyword_fn=keyword_search,
-            embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
-        )
+        try:
+            candidates = search_and_rerank(
+                claim,
+                keyword_fn=keyword_search,
+                embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
+            )
+        except Exception as e:
+            print(f"[3단계 매핑] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
+            continue
+
         if not candidates:
             print("[3단계 매핑] 매칭되는 표 없음 → 스킵")
             continue
@@ -205,7 +278,11 @@ def run_article(
         top = candidates[0]
         print(f"[3단계 매핑] 최상위 후보: {top.table_name} ({top.table_id}) score={top.score:.3f}")
 
-        slots = run_stage_4(claim.sentence, article.get("clarify_reply"), article["published_date"])
+        try:
+            slots = run_stage_4(claim.sentence, article.get("clarify_reply"), article["published_date"])
+        except Exception as e:
+            print(f"[4단계 slot_filler] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
+            continue
         if slots is None:
             continue
 
