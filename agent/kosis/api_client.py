@@ -176,10 +176,27 @@ class KosisApiClient:
         if raw_value is None:
             raise KosisApiError(f"'{table_id}' 값이 결측치입니다: {row}")
 
+        # 엣지케이스 방어 1: PRD_DE(시점) 필드 자체가 없으면 빈 문자열로 조용히 넘기지 않고 에러.
+        actual_period = row.get("PRD_DE")
+        if not actual_period:
+            raise KosisApiError(f"'{table_id}' 응답에 PRD_DE(시점) 필드가 없습니다: {row}")
+
+        # 엣지케이스 방어 2: 요청한 시점과 실제 응답 시점이 다르면(KOSIS가 다른 시점 데이터로
+        # 대체해서 줄 가능성 대비) 조용히 넘기지 않고 에러. 실제로 DT_1DA7102S에서는 KOSIS가
+        # 데이터 없는 시점을 요청하면 스스로 에러를 내서 여기까지 안 오는 걸 확인했지만, 다른
+        # 표/prdSe 조합에서도 그렇다는 보장이 없어 예방적으로 검증.
+        requested_period = params.get("endPrdDe")
+        if requested_period and str(actual_period) != str(requested_period):
+            raise KosisApiError(
+                f"'{table_id}' 요청 시점({requested_period})과 응답 시점({actual_period})이 "
+                f"다릅니다. 요청 파라미터: "
+                f"{ {k: v for k, v in params.items() if k != 'apiKey'} }"
+            )
+
         return KosisApiResponse(
             raw_value=raw_value,
             unit=row.get("UNIT_NM", ""),
-            period=row.get("PRD_DE", ""),
+            period=actual_period,
             org_id=str(base["orgId"]),
             itm_id=row.get("ITM_ID", ""),
             obj_l1=row.get("C1"),

@@ -202,6 +202,11 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
         )
 
     if gap <= NUMERIC_TOLERANCE:
+        # 엣지케이스 방어: computed.period가 아예 없으면(5단계 필드 누락 등) "시점 불일치 없음"
+        # 으로 잘못 확정하지 말고 규칙 필터를 포기하고 LLM에 위임한다. (실제로 이 가드가 없으면
+        # computed.period=""일 때도 "일치"로 확정 판정해버리는 버그가 있었음 — 검증 완료.)
+        if not computed.period:
+            return None
         claim_gran = _period_granularity(claim.period)
         computed_gran = _period_granularity(computed.period)
         period_mismatch = claim_gran is not None and computed_gran is not None and claim_gran != computed_gran
@@ -409,3 +414,15 @@ if __name__ == "__main__":
     print(f"[케이스4 - 승격 조건 확인] needs_hybrid_reasoning={escalate}")
     assert escalate is True
     print("  → 조건 충족 확인됨 (claim_type='비교' 포함 + Claim 2개). 실제 HCX-007 호출은 judge_complex()로 별도 실행.")
+
+    # 케이스 5 — 엣지케이스 방어: computed.period 누락(5단계 필드 누락 등) 시 규칙으로
+    # 잘못 확정하지 않고 LLM에 위임하는지 확인 (수정 전엔 "일치"로 잘못 확정되던 버그였음)
+    claim5 = Claim(
+        sentence="작년 국민 1인당 쌀 소비량은 1년 전보다 1.1% 감소했다.",
+        claim_type="증감률", period="2024년", unit="%", population="국민 1인당",
+    )
+    computed5 = ComputedResult(calc_type="증감률", raw_value=-1.15, unit="%", period="")
+    rb5 = _rule_based_verdict(claim5, computed5)
+    print(f"[케이스5 - period 누락 방어] 규칙 기반 1차 필터 결과: {rb5}")
+    assert rb5 is None, "period 누락인데도 규칙으로 확정해버림 (엣지케이스 방어 회귀)"
+    print("  → 통과: 시점 정보 없음을 '불일치 없음'으로 오인하지 않고 LLM에 위임함.")
