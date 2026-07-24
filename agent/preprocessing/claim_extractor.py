@@ -5,7 +5,10 @@ agent/preprocessing/claim_extractor.py — 2단계 수치 주장 문장 추출
     입력: 기사 본문(str)  (※ 1단계 결과가 아니라 원본 기사 본문을 다시 받음)
     출력: Claim의 리스트 (문장 하나하나 따로 호출 X, 기사 전체 넣고 한 번에)
 
-모델: HCX-003
+모델: HCX-DASH-002 (2026-07-24 HCX-003에서 교체 — agent/preprocessing/eval_claim_extractor_model.py로
+  실측한 결과, HCX-003은 긴 기사(prompt 길이 약 17k자 이상)에서 컨텍스트 길이 초과로 절반이
+  아예 실패했고, HCX-DASH-002는 같은 샘플에서 100% 성공 + 2.6배 빠름 + 품질 지표도 비슷하거나
+  더 나음. 자세한 수치는 tests/claim_extractor_model_eval_log.md 참고.)
 프롬프트: prompts/claim_extractor_prompt.txt (few-shot 3개 포함, {article_text} 자리에 본문을 채워 넣음)
 """
 
@@ -35,7 +38,7 @@ except ImportError:
             population: Optional[str] = None
 
 
-MODEL = "HCX-003"
+MODEL = "HCX-DASH-002"
 PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "claim_extractor_prompt.txt"
 SYSTEM_PROMPT = "아래 지시사항을 정확히 따르고, 반드시 지정된 JSON 배열 형식으로만 응답하세요."
 
