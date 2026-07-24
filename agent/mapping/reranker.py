@@ -5,12 +5,22 @@ agent/mapping/reranker.py — 3단계: 리랭커로 후보 재정렬
 입력: Claim 1건 + TableCandidate 리스트 (keyword_search/embedding_search에서 모은 후보들)
 출력: TableCandidate 리스트 (재정렬, top-k)
 
-모델: 제공 리랭커 (LLM 호출 아님 — (query, document) 쌍을 넣으면 관련도 점수를 돌려주는
-     cross-encoder 계열 벡터 연산 모델로 가정)
+모델: Qwen3-Reranker-4B (notebooks/reranker_model_comparison.ipynb 비교 실험 결과 채택 —
+50개 라벨링 케이스 기준 top-1 64%로 4종(BGE-reranker-v2-m3 38%, ko-reranker 24%,
+bge-reranker-v2-m3-ko 10%) 중 1위). 분류 헤드가 아니라 생성형(decoder) 리랭커라
+"yes"/"no" 토큰의 확률을 관련도 점수로 쓴다.
 
 3단계 전체 흐름:
   keyword_search 결과 + embedding_search 결과 → table_id 기준 합치기(중복 제거)
   → rerank()로 최종 top-k 재정렬
+
+사전 준비물:
+    pip install transformers torch accelerate
+    GPU 권장(4B 파라미터 모델). VRAM이 부족하면 환경변수
+    KOSIS_RERANKER_MODEL=Qwen/Qwen3-Reranker-0.6B 로 교체.
+    transformers/torch가 없거나 모델 로딩·추론에 실패하면 rerank_scores()가 None을
+    반환해서, rerank()가 기존 score(키워드 매칭 점수 or 임베딩 유사도)를 그대로 정렬
+    기준으로 쓰는 항등(identity) 폴백으로 자동으로 넘어간다.
 """
 
 from __future__ import annotations
@@ -42,27 +52,97 @@ except ImportError:
 
 
 class RerankerError(RuntimeError):
-    """리랭커 API 호출 실패."""
+    """리랭커 모델 호출 실패."""
+
+
+RERANKER_MODEL = os.environ.get("KOSIS_RERANKER_MODEL", "Qwen/Qwen3-Reranker-4B")
+_RERANKER_MAX_LENGTH = 4096
+_RERANKER_INSTRUCTION = (
+    "Given a Korean news claim sentence, judge whether the KOSIS statistical table "
+    "description is the correct match"
+)
+_RERANKER_PREFIX = (
+    "<|im_start|>system\n"
+    "Judge whether the Document meets the requirements based on the Query and the Instruct "
+    'provided. Note that the answer can only be "yes" or "no".<|im_end|>\n<|im_start|>user\n'
+)
+_RERANKER_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+
+_reranker_singleton = None  # (tokenizer, model, prefix_tokens, suffix_tokens, true_id, false_id)
+
+
+def _get_reranker():
+    """Qwen3-Reranker를 lazy하게 로딩해서 프로세스 전체에서 재사용한다."""
+    global _reranker_singleton
+    if _reranker_singleton is None:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(RERANKER_MODEL, padding_side="left")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = AutoModelForCausalLM.from_pretrained(
+            RERANKER_MODEL,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        ).to(device).eval()
+
+        prefix_tokens = tokenizer.encode(_RERANKER_PREFIX, add_special_tokens=False)
+        suffix_tokens = tokenizer.encode(_RERANKER_SUFFIX, add_special_tokens=False)
+        token_false_id = tokenizer.convert_tokens_to_ids("no")
+        token_true_id = tokenizer.convert_tokens_to_ids("yes")
+
+        _reranker_singleton = (
+            tokenizer, model, prefix_tokens, suffix_tokens, token_true_id, token_false_id,
+        )
+    return _reranker_singleton
 
 
 # ---------------------------------------------------------------------------
-# 실제 리랭커 API 연동 지점.
-# TODO: 멘토링에서 받은 실제 리랭커 엔드포인트/모델명으로 교체.
-#   입력 형태 예상: [(query, document_text), ...] → 관련도 점수 리스트
-# 그 전까지는 None을 반환해서 "리랭커 호출 안 됨"을 알리고,
+# 실제 리랭커 모델 연동 지점. Qwen3-Reranker를 로컬에서 호출한다.
+# transformers/torch가 없거나 모델 로딩·추론에 실패하면 None을 반환해서
 # rerank()가 후보의 기존 score(키워드 매칭 점수 or 임베딩 유사도)를
 # 그대로 정렬 기준으로 쓰는 항등(identity) 폴백으로 넘어가게 한다.
-# (문서 텍스트 기반 글자 중복 점수는 원래 score보다 오히려 신뢰도가 낮아 쓰지 않는다.)
 # ---------------------------------------------------------------------------
 def rerank_scores(query: str, documents: list[str]) -> Optional[list[float]]:
-    api_key = os.environ.get("HCX_API_KEY")
-    if not api_key:
-        return None
+    if not documents:
+        return []
 
-    # TODO: 실제 리랭커 API 호출로 교체
-    # response = requests.post(RERANKER_ENDPOINT, headers=..., json={"query": query, "documents": documents})
-    # return response.json()["scores"]
-    return None
+    try:
+        import torch
+
+        tokenizer, model, prefix_tokens, suffix_tokens, token_true_id, token_false_id = _get_reranker()
+        device = model.device
+
+        pairs = [
+            f"<Instruct>: {_RERANKER_INSTRUCTION}\n<Query>: {query}\n<Document>: {doc}"
+            for doc in documents
+        ]
+        scores: list[float] = []
+        batch_size = 8
+        with torch.no_grad():
+            for i in range(0, len(pairs), batch_size):
+                batch = pairs[i:i + batch_size]
+                inputs = tokenizer(
+                    batch, padding=False, truncation="longest_first",
+                    return_attention_mask=False,
+                    max_length=_RERANKER_MAX_LENGTH - len(prefix_tokens) - len(suffix_tokens),
+                )
+                for j, ids in enumerate(inputs["input_ids"]):
+                    inputs["input_ids"][j] = prefix_tokens + ids + suffix_tokens
+                inputs = tokenizer.pad(
+                    inputs, padding=True, return_tensors="pt", max_length=_RERANKER_MAX_LENGTH
+                )
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+
+                logits = model(**inputs).logits[:, -1, :]
+                stacked = torch.stack(
+                    [logits[:, token_false_id], logits[:, token_true_id]], dim=1
+                )
+                probs = torch.nn.functional.log_softmax(stacked, dim=1)
+                scores.extend(probs[:, 1].exp().tolist())
+        return scores
+    except Exception as exc:  # noqa: BLE001 - 로딩/추론 실패는 전부 항등 폴백 대상
+        print(f"[reranker] Qwen3-Reranker 사용 불가({exc!r}) - 항등(identity) 정렬로 폴백합니다.")
+        return None
 
 
 def _merge_candidates(
@@ -72,11 +152,11 @@ def _merge_candidates(
     """keyword_search와 embedding_search 후보를 table_id 기준으로 합친다.
 
     실제 리랭커/임베딩 API가 붙기 전까지 embedding_search의 코사인 유사도는
-    의미 신호가 아니라 노이즈에 가깝다 (embed_texts의 해시 기반 폴백 참고).
+    의미 신호가 아니라 노이즈에 가까웠다 (embed_texts의 해시 기반 폴백 참고).
     그래서 두 score를 크기로 직접 비교하지 않는다:
       - keyword_search가 찾은 표는 그 score를 그대로 신뢰 가능한 신호로 쓴다.
       - embedding_search가 추가로 찾은 표(keyword가 못 찾은 것)는 recall 보충용으로만
-        살려두고 "unverified"로 표시해서, 나중에 진짜 리랭커가 붙으면 재평가되게 한다.
+        살려두고 "unverified"로 표시해서, rerank_scores()가 실제로 점수를 매겨 재평가하게 한다.
     입력으로 받은 candidate 객체는 변형하지 않고 dataclasses.replace로 복사본만 만든다.
     """
     merged: dict[str, TableCandidate] = {}
@@ -117,8 +197,8 @@ def rerank(
     scores = rerank_scores(claim.sentence, documents)
 
     if scores is None:
-        # 리랭커 API가 아직 없음 — 항등 폴백.
-        # embedding-only(unverified) 후보는 코사인 유사도가 노이즈에 가까워서
+        # 리랭커 모델을 못 쓰는 상황(의존성 미설치 등) — 항등 폴백.
+        # embedding-only(unverified) 후보는 코사인 유사도가 노이즈에 가까울 수 있어서
         # score 크기만으로 정렬하면 keyword_search가 검증한 후보를 밀어낸다.
         # 검증된 후보를 항상 먼저 두고, 그 안에서만 score 내림차순으로 정렬한다.
         def _sort_key(c: TableCandidate) -> tuple[bool, float]:

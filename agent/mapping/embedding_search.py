@@ -5,16 +5,20 @@ agent/mapping/embedding_search.py — 3단계: 임베딩 기반 top-k 검색
 입력: Claim 1건
 출력: TableCandidate의 리스트 (top-k, 코사인 유사도 기준)
 
-모델: 제공 임베딩 v1/v2 (LLM 호출 아님 — 벡터 임베딩 API 호출 후 코사인 연산은 코드로 처리)
+모델: Qwen3-Embedding-4B (notebooks/embedding_model_comparison.ipynb 비교 실험 결과 채택 —
+50개 라벨링 케이스 기준 top-1 70%로 4종(BGE-m3 44%, KoE5 20%, KoSimCSE 8%) 중 1위)
 
 ⚠️ 배치 임베딩 원칙(Day2 09:00-10:00 작업):
 table_catalog.json의 embedding_text는 최초 1회만 임베딩해서 캐시 파일(TABLE_EMBEDDING_CACHE)에
-저장한다. 검색할 때마다 표 20여 개를 매번 재임베딩하지 않는다 — 여기서 실제로 API를
-다시 부르는 건 "새 Claim 문장" 하나뿐이다.
+저장한다. 검색할 때마다 표 20여 개를 매번 재임베딩하지 않는다 — 여기서 실제로 모델을
+다시 부르는 건 "새 Claim 문장" 하나뿐이다. 캐시는 모델명이 바뀌면 자동으로 재생성된다.
 
-멘토링에서 실제 임베딩 API 엔드포인트/모델명이 확정되면 embed_texts()의 TODO 부분만
-채우면 되도록 인터페이스를 분리해뒀다. 그 전까지는 로컬 폴백(해시 기반 더미 벡터)으로
-파이프라인 연결과 top-k 로직 자체를 먼저 검증할 수 있다.
+사전 준비물:
+    pip install sentence-transformers torch
+    GPU 권장(4B 파라미터 모델). VRAM이 부족하면 환경변수
+    KOSIS_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B 로 교체.
+    sentence-transformers/torch가 없거나 모델 로딩에 실패하면 해시 기반 더미 벡터로
+    자동 폴백한다 (의미 유사도가 반영되지 않으니 개발/테스트 전용).
 """
 
 from __future__ import annotations
@@ -49,27 +53,51 @@ except ImportError:
 
 CATALOG_PATH = Path(__file__).parent / "table_catalog.json"
 EMBEDDING_CACHE_PATH = Path(__file__).parent / "table_embeddings_cache.json"
-EMBEDDING_MODEL = os.environ.get("KOSIS_EMBEDDING_MODEL", "embedding-v2")  # 제공 임베딩 v1/v2 중 확정본으로 교체
+EMBEDDING_MODEL = os.environ.get("KOSIS_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
+
+# Qwen3-Embedding 계열은 쿼리 쪽에 이 instruction을 붙여야 검색 성능이 나온다(권장 사용법).
+# 문서(표 설명) 쪽은 instruction 없이 그대로 인코딩한다.
+_QWEN_QUERY_INSTRUCTION = (
+    "Given a Korean news claim sentence, retrieve the KOSIS statistical table "
+    "description that best matches it"
+)
 
 
 class EmbeddingError(RuntimeError):
-    """임베딩 API 호출 실패."""
+    """임베딩 모델 호출 실패."""
+
+
+_model_singleton = None  # SentenceTransformer 인스턴스 lazy 캐시 (프로세스당 1회만 로딩)
+
+
+def _get_embedding_model():
+    """Qwen3-Embedding을 lazy하게 로딩해서 프로세스 전체에서 재사용한다."""
+    global _model_singleton
+    if _model_singleton is None:
+        from sentence_transformers import SentenceTransformer  # 없으면 ImportError -> 폴백
+
+        _model_singleton = SentenceTransformer(EMBEDDING_MODEL)
+    return _model_singleton
 
 
 # ---------------------------------------------------------------------------
-# 실제 임베딩 API 연동 지점.
-# TODO: 멘토링에서 받은 실제 임베딩 엔드포인트로 교체.
-#   (CLOVA Studio 계열이면 hcx_client.py처럼 requests.post + Authorization 헤더 패턴 재사용 가능)
-# 그 전까지는 결정적(deterministic) 해시 기반 더미 벡터로 대체해서
-# "파이프라인이 끊기지 않고 돌아가는지"부터 확인한다.
+# 실제 임베딩 모델 연동 지점. Qwen3-Embedding을 로컬에서 호출한다.
+# sentence-transformers/torch가 없거나 모델 로딩·추론에 실패하면 해시 기반 더미 벡터로
+# 폴백해서 "파이프라인이 끊기지 않고 돌아가는지"는 항상 보장한다.
 # ---------------------------------------------------------------------------
-def embed_texts(texts: list[str], *, model: str = EMBEDDING_MODEL) -> list[list[float]]:
-    api_key = os.environ.get("HCX_API_KEY")
-    if api_key:
-        # TODO: 실제 임베딩 API 호출로 교체
-        # response = requests.post(EMBEDDING_ENDPOINT, headers=..., json={"model": model, "texts": texts})
-        # return [item["embedding"] for item in response.json()["result"]]
-        pass
+def embed_texts(
+    texts: list[str], *, model: str = EMBEDDING_MODEL, is_query: bool = False
+) -> list[list[float]]:
+    try:
+        st_model = _get_embedding_model()
+        inputs = (
+            [f"Instruct: {_QWEN_QUERY_INSTRUCTION}\nQuery: {t}" for t in texts]
+            if is_query
+            else texts
+        )
+        return st_model.encode(inputs, convert_to_numpy=True).tolist()
+    except Exception as exc:  # noqa: BLE001 - 로딩/추론 실패는 전부 더미 폴백 대상
+        print(f"[embedding_search] Qwen3-Embedding 사용 불가({exc!r}) - 더미 벡터로 폴백합니다.")
 
     # --- 폴백: 해시 기반 더미 임베딩 (개발/테스트 전용, 의미 유사도는 반영 안 됨) ---
     dim = 64
@@ -105,17 +133,18 @@ def build_table_embedding_cache(
 ) -> dict:
     """table_catalog.json의 embedding_text를 최초 1회 임베딩해서 캐시 파일로 저장한다.
 
-    이미 캐시가 있고 표 개수가 그대로면 재임베딩하지 않는다 (배치 임베딩 원칙).
+    이미 캐시가 있고 표 개수·모델명이 그대로면 재임베딩하지 않는다 (배치 임베딩 원칙).
+    모델을 바꾸면(EMBEDDING_MODEL 변경) 캐시가 자동으로 무효화되어 재생성된다.
     """
     tables = _load_catalog(catalog_path)
 
     if cache_path.exists() and not force:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if len(cached.get("entries", [])) == len(tables):
+        if cached.get("model") == EMBEDDING_MODEL and len(cached.get("entries", [])) == len(tables):
             return cached
 
     texts = [t["embedding_text"] for t in tables]
-    vectors = embed_texts(texts)
+    vectors = embed_texts(texts, is_query=False)
 
     entries = [
         {
@@ -140,7 +169,7 @@ def embedding_search(
 ) -> list[TableCandidate]:
     """Claim 1건을 임베딩해서 캐시된 표 벡터들과 코사인 유사도로 top-k를 반환한다."""
     cache = cache or build_table_embedding_cache()
-    query_vec = embed_texts([claim.sentence])[0]
+    query_vec = embed_texts([claim.sentence], is_query=True)[0]
 
     scored: list[TableCandidate] = []
     for entry in cache["entries"]:
