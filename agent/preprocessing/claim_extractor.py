@@ -140,7 +140,7 @@ def _salvage_claims(reply: str) -> list[Claim]:
     return claims
 
 
-def extract_claims(article_text: str, *, model: str = MODEL, max_tokens: int = 2048) -> list[Claim]:
+def extract_claims(article_text: str, *, model: str = MODEL, max_tokens: int = 4096) -> list[Claim]:
     """기사 본문 하나를 받아 수치 기반 주장 문장들을 Claim 리스트로 돌려줍니다.
 
     실패 처리 3단계:
