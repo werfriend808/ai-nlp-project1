@@ -94,6 +94,14 @@ def _wants_comparison(question: str) -> bool:
     return any(kw in question for kw in _COMPARISON_KEYWORDS)
 
 
+def _format_number(value: float) -> str:
+    """9304400.0 -> "9,304,400", 5.9 -> "5.9", 291919.23905 -> "291,919.24" 처럼
+    정수는 소수점 없이, 소수는 천단위 구분+소수점 2자리로 사람이 읽기 편하게 표시."""
+    if float(value).is_integer():
+        return f"{int(value):,}"
+    return f"{value:,.2f}"
+
+
 def _normalize_short_reply(text: str) -> str:
     """D의 slot_filler 프롬프트는 few-shot 예시가 전부 "~알려줘" 꼴이라, 동사 없는 단답
     (예: "증감률", "합계")은 정보 없음(null)으로 판단해버리는 경향이 있다 (실제 확인됨).
@@ -110,15 +118,41 @@ def _normalize_short_reply(text: str) -> str:
 # 패턴에서 오락가락함). LLM에 넘기기 전에 미리 깔끔한 4자리 연도로 바꿔서 이 비결정성 자체를
 # 피한다 — slot_filler.py는 건드리지 않음.
 _YEAR_SUFFIX_RE = re.compile(r"(\d{2}|\d{4})\s*년도?(?=\s|$)")
+# "년/년도" 접미사도 없이 그냥 "26"처럼 숫자만 딱 온 답변 — "어느 연도 기준으로 알려드릴까요?"
+# 라는 질문에 대한 답으로 이것 말고는 해석할 여지가 없는 경우라, 접미사 없이도 연도로 인정한다.
+_BARE_YEAR_RE = re.compile(r"^(\d{2}|\d{4})$")
 
 
 def _normalize_year_expression(text: str) -> str:
+    stripped = text.strip()
+    bare_match = _BARE_YEAR_RE.fullmatch(stripped)
+    if bare_match:
+        digits = bare_match.group(1)
+        return f"20{digits}" if len(digits) == 2 else digits
+
     def _replace(match: re.Match) -> str:
         digits = match.group(1)
         year = f"20{digits}" if len(digits) == 2 else digits
         return year
 
     return _YEAR_SUFFIX_RE.sub(_replace, text)
+
+
+# "26년6월"/"2026년 6월"처럼 월 단위까지 명시한 질문은 "YYYYMM" 6자리로 뽑아낸다.
+# D의 slot_filler는 연도(4자리) 단위 추출만 하도록 설계돼 있어서(is_valid_period가 4자리만
+# 통과시킴), 6자리 값을 fill_slots에 맡기면 검증에 걸려 버려진다 — 그래서 이건 fill_slots를
+# 거치지 않고 원 발화에서 직접 뽑아 slots["period"]에 나중에 덮어쓴다.
+_MONTH_EXPR_RE = re.compile(r"(\d{2}|\d{4})년\s*(\d{1,2})월")
+
+
+def _extract_month_period(text: str) -> Optional[str]:
+    m = _MONTH_EXPR_RE.search(text)
+    if not m:
+        return None
+    year_digits, month_digits = m.groups()
+    year = f"20{year_digits}" if len(year_digits) == 2 else year_digits
+    month = month_digits.zfill(2)
+    return f"{year}{month}"
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +205,33 @@ def tool_call_kosis(
     kosis_slots = build_kosis_slots(table_id, slots, table_params)
     if kosis_slots is None:
         raise KeyError(f"'{table_id}'가 table_params.json에 없습니다.")
+    period = kosis_slots.get("period") or ""
+
+    if len(period) == 6:
+        # "202606"처럼 월 단위 6자리 period면, 이 표의 기본 prdSe(보통 Y)와 무관하게
+        # 월(M) 단위로 조회하도록 api_client.py에 명시적으로 알려준다.
+        kosis_slots["prd_se"] = "M"
+        return client(table_id, kosis_slots)
+
+    if len(period) == 4 and period.isdigit() and int(period) == date.today().year:
+        # "올해"(아직 안 끝난 해)는 연간 확정치가 원천적으로 없는 경우가 많다. 이 표가
+        # 월 단위 데이터도 갖고 있을 수 있으니, 최근 몇 개월을 거꾸로 시도해서 조회되는
+        # 첫 값을 대신 쓴다 (예: "2026 알려줘" -> 2026년 데이터가 없으면 2026-06, 2026-05...
+        # 순으로 시도). 이 표가 애초에 월 단위를 지원 안 하면 전부 실패하고 아래
+        # 원래 연간 조회로 넘어가서 기존과 동일하게 에러를 낸다.
+        today = date.today()
+        for months_back in range(4):
+            month = today.month - months_back
+            year = today.year
+            if month <= 0:
+                month += 12
+                year -= 1
+            fallback_slots = dict(kosis_slots, period=f"{year}{month:02d}", prd_se="M")
+            try:
+                return client(table_id, fallback_slots)
+            except (KosisApiError, KeyError):
+                continue
+
     return client(table_id, kosis_slots)
 
 
@@ -262,6 +323,13 @@ class ChatSession:
         self._log(f'  [tool: 슬롯추출] "{normalized}"')
         self.slots = fill_slots(normalized, self.slots, date.today())
 
+        # "26년6월"처럼 월까지 명시했으면, fill_slots(연도 4자리만 인식)가 채운 값을
+        # 덮어써서 정확한 월 단위(YYYYMM)로 조회되게 한다.
+        month_period = _extract_month_period(user_input)
+        if month_period:
+            self.slots["period"] = month_period
+            self._log(f"  [tool: 슬롯추출] 월 단위 시점 감지 -> {month_period}")
+
         question = tool_reask(
             self.slots, needs_region=self._needs_region(), needs_calc_type=self.wants_comparison
         )
@@ -292,7 +360,7 @@ class ChatSession:
 
         answer = (
             f"'{self.table.table_name}' 기준, {computed.period} {computed.calc_type} "
-            f"{computed.raw_value}{computed.unit} 입니다."
+            f"{_format_number(computed.raw_value)}{computed.unit} 입니다."
         )
         self.reset()
         return answer

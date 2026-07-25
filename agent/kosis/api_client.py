@@ -128,7 +128,10 @@ class KosisApiClient:
             "jsonVD": "Y",
             "orgId": base["orgId"],
             "tblId": base.get("tblId", table_id),
-            "prdSe": base.get("prdSe", "Y"),
+            # slots에 prd_se가 명시돼 있으면(예: 호출하는 쪽이 period를 "202606"처럼 월 단위
+            # 6자리로 채운 경우) 표의 기본 prdSe보다 우선한다 — 같은 표를 연간/월간 양쪽으로
+            # 다 조회할 수 있는 경우(예: 주민등록인구)를 위한 것.
+            "prdSe": slots.get("prd_se") or base.get("prdSe", "Y"),
             "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
         }
 
