@@ -31,6 +31,13 @@ from pathlib import Path
 from typing import Optional
 
 try:
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(usecwd=True))
+except ImportError:
+    pass
+
+try:
     from agent.interfaces import Claim, TableCandidate
 except ImportError:
     from dataclasses import dataclass, field
@@ -54,6 +61,13 @@ except ImportError:
 CATALOG_PATH = Path(__file__).parent / "table_catalog.json"
 EMBEDDING_CACHE_PATH = Path(__file__).parent / "table_embeddings_cache.json"
 EMBEDDING_MODEL = os.environ.get("KOSIS_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
+
+# 일부 환경(CPU/torch 스레딩 조합 등)에서 Qwen3-Embedding 인코딩 호출이 예외 없이 그냥
+# 멈춰버리는 경우가 있다 (모델 로딩 자체는 끝나는데 encode() 연산에서 무한 대기 — 세그폴트와
+# 달리 크래시도 아니라서 아래 try/except로도 못 잡는다). 이럴 땐 .env에
+# KOSIS_DISABLE_EMBEDDING=1을 넣어서 모델 시도 자체를 건너뛰고 더미 벡터 폴백으로 바로
+# 간다 (keyword_search가 이미 찾은 표는 정상 동작, 못 찾은 표만 "통계 없음"으로 처리됨).
+_DISABLE_EMBEDDING = os.environ.get("KOSIS_DISABLE_EMBEDDING", "").strip().lower() in ("1", "true", "yes")
 
 # Qwen3-Embedding 계열은 쿼리 쪽에 이 instruction을 붙여야 검색 성능이 나온다(권장 사용법).
 # 문서(표 설명) 쪽은 instruction 없이 그대로 인코딩한다.
@@ -88,16 +102,17 @@ def _get_embedding_model():
 def embed_texts(
     texts: list[str], *, model: str = EMBEDDING_MODEL, is_query: bool = False
 ) -> list[list[float]]:
-    try:
-        st_model = _get_embedding_model()
-        inputs = (
-            [f"Instruct: {_QWEN_QUERY_INSTRUCTION}\nQuery: {t}" for t in texts]
-            if is_query
-            else texts
-        )
-        return st_model.encode(inputs, convert_to_numpy=True).tolist()
-    except Exception as exc:  # noqa: BLE001 - 로딩/추론 실패는 전부 더미 폴백 대상
-        print(f"[embedding_search] Qwen3-Embedding 사용 불가({exc!r}) - 더미 벡터로 폴백합니다.")
+    if not _DISABLE_EMBEDDING:
+        try:
+            st_model = _get_embedding_model()
+            inputs = (
+                [f"Instruct: {_QWEN_QUERY_INSTRUCTION}\nQuery: {t}" for t in texts]
+                if is_query
+                else texts
+            )
+            return st_model.encode(inputs, convert_to_numpy=True).tolist()
+        except Exception as exc:  # noqa: BLE001 - 로딩/추론 실패는 전부 더미 폴백 대상
+            print(f"[embedding_search] Qwen3-Embedding 사용 불가({exc!r}) - 더미 벡터로 폴백합니다.")
 
     # --- 폴백: 해시 기반 더미 임베딩 (개발/테스트 전용, 의미 유사도는 반영 안 됨) ---
     dim = 64
