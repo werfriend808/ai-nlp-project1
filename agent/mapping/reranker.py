@@ -30,6 +30,13 @@ from dataclasses import replace
 from typing import Optional
 
 try:
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(usecwd=True))
+except ImportError:
+    pass
+
+try:
     from agent.interfaces import Claim, TableCandidate
 except ImportError:
     from dataclasses import dataclass, field
@@ -56,6 +63,12 @@ class RerankerError(RuntimeError):
 
 
 RERANKER_MODEL = os.environ.get("KOSIS_RERANKER_MODEL", "Qwen/Qwen3-Reranker-4B")
+
+# 일부 환경(예: 특정 CPU/torch 조합)에서 Qwen3-Reranker 로딩이 세그멘테이션 폴트로 죽는데,
+# 이건 OS 레벨 크래시라 아래 try/except로 못 잡는다. 이럴 땐 모델 로딩 자체를 시도하지 않도록
+# .env에 KOSIS_DISABLE_RERANKER=1을 넣어서 우회한다 (rerank()가 기존 score 기준 항등
+# 정렬로 폴백 — keyword_search 점수 우선, 그다음 embedding_search 유사도).
+_DISABLE_RERANKER = os.environ.get("KOSIS_DISABLE_RERANKER", "").strip().lower() in ("1", "true", "yes")
 _RERANKER_MAX_LENGTH = 4096
 _RERANKER_INSTRUCTION = (
     "Given a Korean news claim sentence, judge whether the KOSIS statistical table "
@@ -105,6 +118,8 @@ def _get_reranker():
 def rerank_scores(query: str, documents: list[str]) -> Optional[list[float]]:
     if not documents:
         return []
+    if _DISABLE_RERANKER:
+        return None
 
     try:
         import torch
