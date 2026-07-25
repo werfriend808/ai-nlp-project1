@@ -30,8 +30,8 @@ from agent.kosis.calculator import CalculationError, KosisCalculator
 from agent.mapping.embedding_search import build_table_embedding_cache, embedding_search
 from agent.mapping.keyword_search import keyword_search
 from agent.mapping.reranker import search_and_rerank
-from agent.orchestrator.clarify import clarify
-from agent.orchestrator.slot_filler import fill_slots
+from agent.orchestrator.clarify_rules import get_next_clarify_step
+from agent.orchestrator.slot_filler import fill_slots, is_valid_period, normalize_time_expressions
 from agent.pipeline.batch_runner import build_kosis_slots
 
 MAX_CLARIFY_ROUNDS = 2  # 슬롯당(질문 1건당) 최대 되묻기 횟수 — 넘으면 포기하고 안내 문구 출력
@@ -55,19 +55,34 @@ def _find_table(user_text: str, embedding_cache: dict) -> Optional[TableCandidat
 
 def _collect_slots(user_text: str) -> Optional[dict]:
     """4단계: fill_slots + clarify. 부족하면 최대 MAX_CLARIFY_ROUNDS번 되묻고,
-    그래도 안 채워지면 포기(None)한다."""
+    그래도 안 채워지면 포기(None)한다.
+
+    되묻기 답변은 fill_slots()로 다시 LLM 추출을 시키지 않고, get_next_clarify_step()이
+    "지금 정확히 어느 슬롯을 물었는지"를 알려주므로 그 슬롯에 답변을 직접 채운다.
+    (fill_slots의 LLM 추출이 "증감률"처럼 짧은 단답 한 단어에서 자주 null을 반환하는
+    문제가 있음 — few-shot 예시를 추가해도 재현됨. 되묻기 상황에서는 어차피 슬롯이
+    뭔지 이미 알고 있으니, 굳이 다시 추출을 맡기지 않는 게 더 안정적이다.)
+    """
     slots = fill_slots(user_text, {}, date.today())
-    question = clarify(slots)
+    step = get_next_clarify_step(slots)
 
     rounds = 0
-    while question and rounds < MAX_CLARIFY_ROUNDS:
-        print(f"봇: {question}")
+    while step.next_slot_to_ask and rounds < MAX_CLARIFY_ROUNDS:
+        print(f"봇: {step.clarify_question}")
         reply = input("나: ").strip()
-        slots = fill_slots(reply, slots, date.today())
-        question = clarify(slots)
+
+        if step.next_slot_to_ask == "period":
+            normalized = normalize_time_expressions({"period": reply}, date.today())
+            value = normalized.get("period")
+            if value and is_valid_period(value):
+                slots["period"] = value
+        else:
+            slots[step.next_slot_to_ask] = reply
+
+        step = get_next_clarify_step(slots)
         rounds += 1
 
-    if question:
+    if step.next_slot_to_ask:
         print("봇: 해당 통계는 지원하지 않거나 질문을 더 구체화해주세요.")
         return None
     return slots
