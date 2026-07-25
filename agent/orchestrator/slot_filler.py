@@ -65,18 +65,6 @@ def build_extraction_prompt(user_input: str) -> str:
 문장: "서울 알려줘"
 응답: {{"period": null, "region": "서울", "calc_type": null}}
 
-문장: "2025년"
-응답: {{"period": "2025년", "region": null, "calc_type": null}}
-
-문장: "2025"
-응답: {{"period": "2025", "region": null, "calc_type": null}}
-
-문장: "증감률"
-응답: {{"period": null, "region": null, "calc_type": "증감률"}}
-
-문장: "부산"
-응답: {{"period": null, "region": "부산", "calc_type": null}}
-
 문장: "{user_input}"
 
 응답 형식 (JSON만, 다른 텍스트 없이):
@@ -112,15 +100,6 @@ def normalize_time_expressions(extracted: dict, article_date: date) -> dict:
         return extracted
 
     period_str = str(period_val)
-
-    # 0) "2025년"처럼 절대 연도에 "년"이 붙어 있으면 숫자만 남긴다.
-    # (모델이 "원문 그대로" 지시를 따라 "년"을 붙여서 돌려주는 경우가 흔한데,
-    # is_valid_period()는 순수 4자리 숫자만 인정해서 그대로 두면 매번 무시되고
-    # clarify가 같은 질문을 반복하는 버그가 있었음 — 실제 재현됨.)
-    absolute_year_match = re.fullmatch(r"(\d{4})년?", period_str)
-    if absolute_year_match:
-        extracted["period"] = absolute_year_match.group(1)
-        return extracted
 
     # 1) 연 단위 표현은 파이썬으로 직접 계산 (LLM 호출 안 함)
     for kw, offset in RELATIVE_YEAR_OFFSET.items():
