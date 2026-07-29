@@ -20,9 +20,33 @@
 - unit: 수치의 단위 (예: "%", "kg", "달러"). 없으면 null.
 - population: 주장이 적용되는 대상/모집단 (예: "국민 1인당", "20대 남성"). 없으면 null.
 
+## 추출 규칙 (추가 필드)
+- statistic_expression: 기사가 실제로 쓴 지표 표현 (예: "쌀 소비량", "경제 성장률 전망치", "복구율").
+  population(누구/무엇에 대한 것인지)과는 다른 개념 — statistic_expression은 "무슨 지표"인지입니다.
+- value: 이 claim의 핵심 수치를 **부호 없는 숫자**로 씁니다 (증가/감소 방향은 comparison_operator가
+  따로 담당하므로 value 자체는 항상 양수). "23만8천"처럼 한글 단위가 붙으면 그대로 풀어서 숫자로
+  씁니다 (예: 238000). 수치를 특정할 수 없으면 null.
+- comparison_operator: 이 claim이 다른 시점/대상과 비교하는 내용이면 "증가"/"감소"/"동일"/"초과"/
+  "미만" 중 하나. 단순 규모(예: "55.8kg을 기록했다")처럼 비교가 아니면 null.
+- comparison_target: 비교 기준이 되는 시점·대상의 원문 표현 (예: "1년 전", "정부 전망치", "2019년").
+  비교가 아니면 null.
+- comparison_value: 기사에 비교 대상의 수치가 명시적으로 나와 있으면 그 값 (예: "정부(1.8%)"의 1.8),
+  명시 안 됐으면 null.
+- region: 수치가 적용되는 지역 (예: "전국", "수도권", "서울"). 기사에 명시 안 됐으면 null.
+- source_org: 기사가 이 수치의 출처로 인용한 기관 (예: "통계청", "한국은행", "한국개발연구원(KDI)").
+  없으면 null.
+- source_report: 기사가 인용한 조사·통계·보고서명 (예: "2024년 양곡소비량조사 결과"). 없으면 null.
+
 ## 출력 형식 (JSON 배열만 출력, 다른 텍스트 금지)
 [
-  {"sentence": "...", "claim_type": "규모|증감률|비교|전망", "period": "..." 또는 null, "unit": "..." 또는 null, "population": "..." 또는 null}
+  {
+    "sentence": "...", "claim_type": "규모|증감률|비교|전망",
+    "period": "..." 또는 null, "unit": "..." 또는 null, "population": "..." 또는 null,
+    "statistic_expression": "..." 또는 null, "value": 숫자 또는 null,
+    "comparison_operator": "증가|감소|동일|초과|미만" 또는 null,
+    "comparison_target": "..." 또는 null, "comparison_value": 숫자 또는 null,
+    "region": "..." 또는 null, "source_org": "..." 또는 null, "source_report": "..." 또는 null
+  }
 ]
 추출할 문장이 하나도 없으면 빈 배열 []을 출력합니다.
 
@@ -33,11 +57,12 @@
 
 [예시 출력]
 (한 문장 안에 "규모"와 "증감률" 수치가 같이 있으면, 문장을 쪼개지 말고 같은 원문 문장을 그대로
-두 claim에 반복해서 쓰고 claim_type/unit으로 구분합니다.)
+두 claim에 반복해서 쓰고 claim_type/unit/value로 구분합니다. "비교" claim의 value는 그 시점의
+실제 수치, comparison_value는 비교 대상의 수치입니다.)
 [
-  {"sentence": "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, 작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다.", "claim_type": "규모", "period": "2024년", "unit": "kg", "population": "국민 1인당"},
-  {"sentence": "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, 작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다.", "claim_type": "증감률", "period": "2024년", "unit": "%", "population": "국민 1인당"},
-  {"sentence": "작년 소비량은 30년 전인 1994년(108.3kg)의 절반 수준이다.", "claim_type": "비교", "period": "2024년", "unit": "kg", "population": "국민 1인당"}
+  {"sentence": "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, 작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다.", "claim_type": "규모", "period": "2024년", "unit": "kg", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 55.8, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"},
+  {"sentence": "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, 작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다.", "claim_type": "증감률", "period": "2024년", "unit": "%", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 1.1, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": null, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"},
+  {"sentence": "작년 소비량은 30년 전인 1994년(108.3kg)의 절반 수준이다.", "claim_type": "비교", "period": "2024년", "unit": "kg", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 55.8, "comparison_operator": "미만", "comparison_target": "1994년", "comparison_value": 108.3, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"}
 ]
 
 [예시 입력]
@@ -45,19 +70,21 @@
 
 [예시 출력]
 (두 번째 문장이 주어 없이 앞 문장에 이어지지만, 원문에 없는 "이는" 같은 말을 새로 넣지 않고
-원문 문장 그대로 씁니다. 빠진 맥락은 population 필드가 대신 채워줍니다.)
+원문 문장 그대로 씁니다. 빠진 맥락은 population/comparison_target 필드가 대신 채워줍니다.)
 [
-  {"sentence": "국책연구기관인 한국개발연구원(KDI)이 올해 한국 경제 성장률 전망치를 2%에서 1.6%로 낮췄다.", "claim_type": "전망", "period": "올해", "unit": "%", "population": "한국 경제 성장률"},
-  {"sentence": "지난달 정부(1.8%)보다도 낮은 수치다.", "claim_type": "비교", "period": "올해", "unit": "%", "population": "한국 경제 성장률"}
+  {"sentence": "국책연구기관인 한국개발연구원(KDI)이 올해 한국 경제 성장률 전망치를 2%에서 1.6%로 낮췄다.", "claim_type": "전망", "period": "올해", "unit": "%", "population": "한국 경제 성장률", "statistic_expression": "경제 성장률 전망치", "value": 1.6, "comparison_operator": "감소", "comparison_target": "이전 전망치", "comparison_value": 2.0, "region": null, "source_org": "한국개발연구원(KDI)", "source_report": null},
+  {"sentence": "지난달 정부(1.8%)보다도 낮은 수치다.", "claim_type": "비교", "period": "올해", "unit": "%", "population": "한국 경제 성장률", "statistic_expression": "경제 성장률 전망치", "value": 1.6, "comparison_operator": "미만", "comparison_target": "정부 전망치", "comparison_value": 1.8, "region": null, "source_org": "정부", "source_report": null}
 ]
 
 [예시 입력]
 기사: "한국은행이 6일 발표한 외환 보유액 통계에 따르면, 작년 12월 말 우리나라 외환 보유액은 4156억달러로 집계됐다. 연말 기준으로 2019년(4088억2000만달러) 이후 5년 만에 최저치다."
 
 [예시 출력]
+(한글 단위가 붙은 큰 수는 value에 그대로 풀어서 씁니다: "4156억" -> 415600000000, "4088억2000만"
+-> 408820000000.)
 [
-  {"sentence": "작년 12월 말 우리나라 외환 보유액은 4156억달러로 집계됐다.", "claim_type": "규모", "period": "2024년 12월", "unit": "달러", "population": "외환 보유액"},
-  {"sentence": "연말 기준으로 2019년(4088억2000만달러) 이후 5년 만에 최저치다.", "claim_type": "비교", "period": "2024년 12월", "unit": "달러", "population": "외환 보유액"}
+  {"sentence": "작년 12월 말 우리나라 외환 보유액은 4156억달러로 집계됐다.", "claim_type": "규모", "period": "2024년 12월", "unit": "달러", "population": "외환 보유액", "statistic_expression": "외환 보유액", "value": 415600000000, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": "한국은행", "source_report": "외환 보유액 통계"},
+  {"sentence": "연말 기준으로 2019년(4088억2000만달러) 이후 5년 만에 최저치다.", "claim_type": "비교", "period": "2024년 12월", "unit": "달러", "population": "외환 보유액", "statistic_expression": "외환 보유액", "value": 415600000000, "comparison_operator": "미만", "comparison_target": "2019년", "comparison_value": 408820000000, "region": null, "source_org": "한국은행", "source_report": "외환 보유액 통계"}
 ]
 
 [예시 입력 — 여러 항목이 한 문장에 나열된 경우]
@@ -66,12 +93,12 @@
 [예시 출력]
 (두 번째 원문 문장 하나에 2·3·4등급 수치 3개가 쉼표로 나열돼 있어도, "22.4%~75.0%까지
 다양했다"처럼 뭉뚱그리지 않고 등급별로 각각 별도 claim을 만듭니다. 세 claim 모두 원문
-문장이 같으므로 sentence는 동일하게 두고 population으로만 구분합니다.)
+문장이 같으므로 sentence는 동일하게 두고 population/value로만 구분합니다.)
 [
-  {"sentence": "1등급 시스템은 전체 40개 중 30개가 정상화돼 복구율은 75.0%다.", "claim_type": "규모", "period": null, "unit": "%", "population": "1등급 시스템"},
-  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "2등급 시스템"},
-  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "3등급 시스템"},
-  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "4등급 시스템"}
+  {"sentence": "1등급 시스템은 전체 40개 중 30개가 정상화돼 복구율은 75.0%다.", "claim_type": "규모", "period": null, "unit": "%", "population": "1등급 시스템", "statistic_expression": "복구율", "value": 75.0, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "2등급 시스템", "statistic_expression": "복구율", "value": 47.1, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "3등급 시스템", "statistic_expression": "복구율", "value": 39.8, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "4등급 시스템", "statistic_expression": "복구율", "value": 22.4, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
 ]
 
 ## 추출할 기사
