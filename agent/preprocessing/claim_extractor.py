@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Optional
 
 from .hcx_client import call_hcx
 
@@ -36,6 +37,14 @@ except ImportError:
             period: Optional[str] = None
             unit: Optional[str] = None
             population: Optional[str] = None
+            statistic_expression: Optional[str] = None
+            value: Optional[float] = None
+            comparison_operator: Optional[str] = None
+            comparison_target: Optional[str] = None
+            comparison_value: Optional[float] = None
+            region: Optional[str] = None
+            source_org: Optional[str] = None
+            source_report: Optional[str] = None
 
 
 MODEL = "HCX-DASH-002"
@@ -75,6 +84,15 @@ def _extract_json_array(text: str) -> list:
         return json.loads(_sanitize_smart_quotes(raw))
 
 
+def _to_optional_float(value: object) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _item_to_claim(item: dict) -> Claim:
     return Claim(
         sentence=str(item["sentence"]),
@@ -82,6 +100,14 @@ def _item_to_claim(item: dict) -> Claim:
         period=item.get("period"),
         unit=item.get("unit"),
         population=item.get("population"),
+        statistic_expression=item.get("statistic_expression"),
+        value=_to_optional_float(item.get("value")),
+        comparison_operator=item.get("comparison_operator"),
+        comparison_target=item.get("comparison_target"),
+        comparison_value=_to_optional_float(item.get("comparison_value")),
+        region=item.get("region"),
+        source_org=item.get("source_org"),
+        source_report=item.get("source_report"),
     )
 
 
