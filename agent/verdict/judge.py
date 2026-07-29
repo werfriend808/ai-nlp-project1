@@ -143,12 +143,16 @@ def _find_compound_numbers(text: str) -> list[tuple[float, int, int]]:
 
 
 def _extract_claim_number(claim: Claim) -> Optional[float]:
-    """claim.sentence에서 핵심 수치를 정규식으로 뽑아냄 (best-effort).
+    """claim의 핵심 수치를 반환.
 
-    claim.unit이 있으면 그 단위 바로 앞 숫자를 우선 사용하고, 없으면 문장에서 찾은
-    마지막 숫자를 사용합니다(주장 문장은 보통 "~55.8kg을 기록했다"처럼 핵심 수치가
-    문장 뒤쪽에 옴). "2024년"처럼 연도로 보이는 4자리 숫자는 후보에서 제외합니다.
+    claim.value(2단계 claim_extractor가 이미 뽑아준 값)가 있으면 그걸 그대로 신뢰해서 씀 —
+    2단계가 문장을 직접 이해하고 뽑은 값이 정규식 추측보다 신뢰도가 높음. claim.value가
+    없으면(옛날 방식으로 만든 Claim이거나 2단계 추출 실패) 정규식 기반 best-effort로 폴백
+    (아래 로직 — claim.unit 앞 숫자 우선, 없으면 문장 마지막 숫자, "2024년" 같은 연도 제외).
     """
+    if claim.value is not None:
+        return _apply_direction(claim.value, claim)
+
     chunks = _find_compound_numbers(claim.sentence)
 
     if claim.unit:
@@ -172,8 +176,16 @@ def _extract_claim_number(claim: Claim) -> Optional[float]:
 
 
 def _apply_direction(value: float, claim: Claim) -> float:
-    """claim_type="증감률"인 경우에만 감소/증가 단어를 보고 부호를 붙임."""
-    if claim.claim_type != "증감률" or value < 0:
+    """부호를 붙임 — claim.comparison_operator(2단계가 뽑아준 값)가 있으면 그걸 최우선으로
+    쓰고(가장 신뢰할 수 있는 신호), 없으면 claim_type="증감률" 문장에 한해 감소/증가 단어를
+    보고 부호를 붙이는 기존 방식으로 폴백."""
+    if value < 0:
+        return value
+    if claim.comparison_operator == "감소":
+        return -value
+    if claim.comparison_operator is not None:
+        return value
+    if claim.claim_type != "증감률":
         return value
     if any(w in claim.sentence for w in _DECREASE_WORDS):
         return -value

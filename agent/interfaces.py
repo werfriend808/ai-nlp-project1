@@ -37,6 +37,7 @@ class ClassificationResult:
 # ---------------------------------------------------------------------------
 
 ClaimType = Literal["규모", "증감률", "비교", "전망"]
+ComparisonOperator = Literal["증가", "감소", "동일", "초과", "미만"]
 
 @dataclass
 class Claim:
@@ -45,6 +46,17 @@ class Claim:
     period: Optional[str] = None       # 예: "2024년" / 시점 불명확하면 None
     unit: Optional[str] = None          # 예: "%", "가구" / 없으면 None
     population: Optional[str] = None    # 예: "국내 과수 농가" / 없으면 None
+    # --- 신규 (검증 DB 스키마 대응, 팀 상의 후 추가) ---
+    # 기존 필드 순서/의미는 그대로 두고 기본값 있는 필드만 뒤에 추가함 —
+    # Claim(sentence=..., claim_type=...)처럼 키워드 인자로 생성하는 기존 코드는 안 깨짐.
+    statistic_expression: Optional[str] = None  # 기사가 실제로 쓴 지표 표현 (예: "청년 고용")
+    value: Optional[float] = None               # 문장의 핵심 수치 (부호 없음 — 방향은 comparison_operator가 담당)
+    comparison_operator: Optional[ComparisonOperator] = None  # 수치의 비교/변화 방향
+    comparison_target: Optional[str] = None     # 비교 시점·대상 원문 표현 (예: "전년동월", "정부 전망치")
+    comparison_value: Optional[float] = None    # 기사에 명시된 비교 대상 수치 (없으면 None)
+    region: Optional[str] = None                # 수치가 적용되는 지역 (예: "전국", "수도권")
+    source_org: Optional[str] = None            # 기사가 인용한 기관 (예: "통계청")
+    source_report: Optional[str] = None         # 기사가 인용한 조사·보고서명
 
 
 # ---------------------------------------------------------------------------

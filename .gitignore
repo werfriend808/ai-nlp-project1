@@ -1,6 +1,9 @@
 # 회사 제공 원본 데이터 (읽기 전용)
 data/*.csv
 
+# batch_runner 실행할 때마다 새로 생성되는 검증 결과 DB (소스 아님)
+data/*.db
+
 # Python
 __pycache__/
 *.pyc

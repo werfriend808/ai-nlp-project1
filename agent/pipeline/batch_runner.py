@@ -55,7 +55,7 @@ from typing import Optional
 
 from agent.preprocessing.classifier import classify
 from agent.preprocessing.claim_extractor import extract_claims
-from agent.mapping.keyword_search import keyword_search
+from agent.mapping.keyword_search import SYNONYMS, keyword_search
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
 from agent.mapping.reranker import search_and_rerank
 from agent.orchestrator.slot_filler import fill_slots
@@ -64,13 +64,36 @@ from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
 from agent.verdict.judge import judge, JudgeError
 from agent.explain.explainer import explain, ExplainerError
-from agent.interfaces import ComputedResult, Verdict
+from agent.interfaces import ComputedResult, Explanation, Verdict
+from db.store import insert_verification, make_result_id
 
 TABLE_PARAMS_PATH = Path(__file__).parent.parent / "kosis" / "table_params.json"
-DATA_CSV_PATH = Path(__file__).parent.parent.parent / "data" / "data_set.csv"
+TABLE_CATALOG_PATH = Path(__file__).parent.parent / "mapping" / "table_catalog.json"
+# 예전엔 "data_set.csv"라는 존재하지 않는 파일을 가리키고 있어서 --csv 모드가 항상
+# FileNotFoundError로 실패했음 (실제 파일명은 data.csv) — 여기서 같이 고침.
+DATA_CSV_PATH = Path(__file__).parent.parent.parent / "data" / "data.csv"
 # ARTICLES의 시나리오들이 공통으로 쓰는 되묻기 답변 — region/period/calc_type을 한 번에
 # 채워주는 발화라, CSV에서 무작위로 뽑은 실제 기사에도 동일하게 재사용한다.
 DEFAULT_CLARIFY_REPLY = "전국 기준으로 작년 대비 증감률 알려줘"
+
+
+def _load_table_catalog_by_id(path: Path = TABLE_CATALOG_PATH) -> dict[str, dict]:
+    """table_catalog.json(3단계 B가 관리)을 tblId 기준으로 인덱싱 — statistic_category
+    필드를 매칭된 table_id로 조회하기 위한 용도(새 추출 없이 기존 데이터 재사용)."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return {t["tblId"]: t for t in data.get("tables", [])}
+
+
+def _normalize_statistic_name(expression: Optional[str]) -> Optional[str]:
+    """3단계 keyword_search.py의 기존 SYNONYMS 사전을 재사용해서 기사 표현을 정규화된
+    통계 용어로 바꾼다 (새 LLM 호출 없음). 매칭 안 되면 원래 표현 그대로 둔다."""
+    if not expression:
+        return None
+    for raw_term, mapped_terms in SYNONYMS.items():
+        if raw_term in expression:
+            return mapped_terms[0]
+    return expression
 
 
 def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) -> str:
@@ -114,6 +137,8 @@ def load_articles_from_csv(
         articles.append(
             {
                 "label": f"[data_set.csv] {title[:40]}",
+                "article_title": title,
+                "article_url": row.get("URL"),
                 "published_date": published,
                 "article_text": _clean_scraped_article_text(title, row["기사 본문 전체"]),
                 "clarify_reply": DEFAULT_CLARIFY_REPLY,
@@ -297,9 +322,10 @@ def run_stage_5_6(
         return None
 
 
-def run_stage_7_8(claim, top, computed: ComputedResult) -> Optional[Verdict]:
-    """7단계 judge + 8단계 explain. 하나라도 실패해도 이 주장만 스킵하고 배치는 계속 돈다.
-    16:30~17:00 결과 검수(verdict 분포/리뷰 큐)에 쓸 수 있게 Verdict를 반환한다."""
+def run_stage_7_8(claim, top, computed: ComputedResult) -> Optional[tuple[Verdict, Optional[Explanation]]]:
+    """7단계 judge + 8단계 explain. judge가 실패하면 이 주장 전체를 스킵(None)하지만,
+    explain만 실패하는 경우는 Verdict는 살리고 Explanation만 None으로 반환한다 —
+    DB 저장 레이어가 evidence 필드는 비어도 verification_result는 기록할 수 있게 하기 위함."""
     try:
         verdict = judge(claim, computed)
         print(f"[7단계 judge] {verdict}")
@@ -310,6 +336,7 @@ def run_stage_7_8(claim, top, computed: ComputedResult) -> Optional[Verdict]:
         print(f"[7단계 judge] 실패 ({type(e).__name__}: {e}) → 설명 생성 스킵")
         return None
 
+    explanation: Optional[Explanation] = None
     try:
         explanation = explain(claim, top, computed, verdict)
         print(f"[8단계 explain] {explanation.explanation_text}")
@@ -320,7 +347,74 @@ def run_stage_7_8(claim, top, computed: ComputedResult) -> Optional[Verdict]:
     except Exception as e:
         print(f"[8단계 explain] 실패 ({type(e).__name__}: {e})")
 
-    return verdict
+    return verdict, explanation
+
+
+def _lookup_statistic_category(table_id: Optional[str], catalog_by_id: dict[str, dict]) -> Optional[str]:
+    """table_catalog.json(3단계 B가 관리, 이미 있는 category 필드)을 table_id로 조회.
+    새 추출 없이 기존 데이터를 재사용한다."""
+    if not table_id:
+        return None
+    entry = catalog_by_id.get(table_id)
+    return entry.get("category") if entry else None
+
+
+def _build_verification_record(
+    *,
+    article: dict,
+    claim,
+    top,
+    generic_slots: Optional[dict],
+    table_params: dict,
+    computed: Optional[ComputedResult],
+    verdict: Optional[Verdict],
+    explanation: Optional[Explanation],
+    cls_result,
+    catalog_by_id: dict,
+    verification_possible: str,
+    ambiguity_reason: Optional[str],
+) -> dict:
+    """claim + 3~8단계 결과를 db/store.py의 검증 스키마 dict로 조립한다."""
+    kosis_dimension = None
+    if generic_slots is not None and top is not None:
+        kosis_dimension = build_kosis_slots(top.table_id, generic_slots, table_params)
+
+    calc_type = (generic_slots or {}).get("calc_type")
+    article_title = article.get("article_title") or article["label"]
+
+    return {
+        "result_id": make_result_id(article_title, claim.sentence),
+        "article_title": article_title,
+        "article_url": article.get("article_url"),
+        "claim_sentence": claim.sentence,
+        "claim_type": claim.claim_type,
+        "statistic_expression": claim.statistic_expression,
+        "normalized_statistic_name": _normalize_statistic_name(claim.statistic_expression),
+        "statistic_category": _lookup_statistic_category(top.table_id if top else None, catalog_by_id),
+        "value": claim.value,
+        "unit": claim.unit,
+        "comparison_operator": claim.comparison_operator,
+        "comparison_target": claim.comparison_target,
+        "comparison_value": claim.comparison_value,
+        "time_expression": claim.period,
+        "reference_time": (generic_slots or {}).get("period"),
+        "population": claim.population,
+        "region": claim.region,
+        "source_org": claim.source_org,
+        "source_report": claim.source_report,
+        "kosis_table_id": top.table_id if top else None,
+        "kosis_table": top.table_name if top else None,
+        "kosis_item": None,  # C의 table_params.json엔 아직 사람이 읽을 항목명이 없음 (알려진 갭)
+        "kosis_dimension": kosis_dimension,
+        "calculation_required": calc_type in ("증감", "증감률"),
+        "calculation_type": computed.calc_type if computed else None,
+        "verification_possible": verification_possible,
+        "ambiguity_reason": ambiguity_reason,
+        "verification_result": verdict.verdict if verdict else None,
+        "mismatch_reason": verdict.gap_type if verdict else None,
+        "evidence": explanation.explanation_text if explanation else (verdict.reason if verdict else None),
+        "classifier_score": cls_result.score if cls_result else None,
+    }
 
 
 def run_article(
@@ -329,6 +423,7 @@ def run_article(
     calculator: KosisCalculator,
     table_params: dict,
     embedding_cache: dict,
+    catalog_by_id: dict,
 ) -> list[dict]:
     """기사 하나를 1~8단계까지 돌리고, 16:30~17:00 결과 검수용 레코드 리스트를 반환한다.
     각 레코드: {article, claim_sentence, table_name, verdict, gap_type, classifier_score}."""
@@ -386,6 +481,15 @@ def run_article(
         # 된 매칭을 억지로 쓰지 않고 "매칭 없음"으로 처리한다.
         if top.source_meta and "unverified" in top.source_meta:
             print(f"[3단계 매핑] 최상위 후보가 검증 안 된 임베딩 전용 매칭(신뢰도 낮음) → 매칭 없음으로 처리")
+            insert_verification(
+                _build_verification_record(
+                    article=article, claim=claim, top=top, generic_slots=None,
+                    table_params=table_params, computed=None, verdict=None, explanation=None,
+                    cls_result=cls_result, catalog_by_id=catalog_by_id,
+                    verification_possible="애매",
+                    ambiguity_reason="표 매칭 신뢰도가 낮아 검증 안 된 임베딩 전용 매칭임",
+                )
+            )
             results.append(
                 {
                     "article": article["label"],
@@ -410,8 +514,17 @@ def run_article(
         if computed is None:
             continue
 
-        verdict = run_stage_7_8(claim, top, computed)
-        if verdict is not None:
+        outcome = run_stage_7_8(claim, top, computed)
+        if outcome is not None:
+            verdict, explanation = outcome
+            insert_verification(
+                _build_verification_record(
+                    article=article, claim=claim, top=top, generic_slots=slots,
+                    table_params=table_params, computed=computed, verdict=verdict,
+                    explanation=explanation, cls_result=cls_result, catalog_by_id=catalog_by_id,
+                    verification_possible="가능", ambiguity_reason=None,
+                )
+            )
             results.append(
                 {
                     "article": article["label"],
@@ -486,15 +599,19 @@ def main(use_csv_sample: bool = False, csv_n: int = 15) -> None:
     with open(TABLE_PARAMS_PATH, encoding="utf-8") as f:
         table_params = json.load(f)
 
+    catalog_by_id = _load_table_catalog_by_id()
     embedding_cache = build_table_embedding_cache()
 
     articles = load_articles_from_csv(n=csv_n) if use_csv_sample else ARTICLES
 
     all_results: list[dict] = []
     for article in articles:
-        all_results.extend(run_article(article, client, calculator, table_params, embedding_cache))
+        all_results.extend(
+            run_article(article, client, calculator, table_params, embedding_cache, catalog_by_id)
+        )
 
     print_review_summary(all_results)
+    print(f"\n[DB] {len(all_results)}건을 data/verifications.db에 저장했습니다.")
 
 
 if __name__ == "__main__":
