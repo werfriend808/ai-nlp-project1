@@ -1,4 +1,930 @@
 {
+  "DT_IMEMIB001": {
+    "orgId": "101",
+    "tblId": "DT_IMEMIB001",
+    "prdSe": "Y",
+    "_table_name": "성별/연령대별/소득분위별 소득분위 이동비율",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=00(계,성별)+objL2=0000(계,연령대)+objL3=00(전년도 소득분위 계)+itmId=T11(당해연도 1분위)+prdSe=Y → 2023년=19.996% 확인.",
+    "_important_note": "5x5 전이행렬(전년도 분위→당해연도 분위) 구조라 '상승 비율' 같은 헤드라인 수치는 여러 itmId(당해 2~5분위)를 전년도 특정 분위 기준으로 합산해야 함 — 단일 조회로는 안 나옴. objL1/objL2/objL3 모두 '계'로 두면 전체 인구 기준 개요만 나옴.",
+    "dimensions": {
+      "gender": {
+        "kosis_param": "objL1",
+        "default_value": "00",
+        "code_map": {"계": "00", "전체": "00"},
+        "_note": "검증 완료(2026-07-29)."
+      },
+      "age_group": {
+        "kosis_param": "objL2",
+        "default_value": "0000",
+        "code_map": {"계": "0000", "전체": "0000"},
+        "_note": "검증 완료(2026-07-29)."
+      },
+      "prev_year_quintile": {
+        "kosis_param": "objL3",
+        "default_value": "00",
+        "code_map": {"계": "00", "전체": "00"},
+        "_note": "검증 완료(2026-07-29). 특정 전년도 분위(1~5분위) 코드는 미확인 — '상승 비율' 계산 시 필요, objL3=ALL로 스캔해서 추가할 것."
+      }
+    },
+    "itmId_fixed": "T11",
+    "_itm_note": "T10=당해연도 소득분위 계, T11~T15=당해연도 1~5분위. '상승 비율' 계산하려면 여러 itmId를 합산해야 함.",
+    "startPrdDe": "2023",
+    "endPrdDe": "2023",
+    "_period_note": "연간(prdSe=Y)만 제공, 2018~2023."
+  },
+
+  "TX_13301_A011": {
+    "orgId": "133",
+    "tblId": "TX_13301_A011",
+    "prdSe": "Y",
+    "_table_name": "2.1.1 예산 및 세수 현황[2005~]",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=15133SMB070102(법인세)+itmId=16133AAB4(수납액)+prdSe=Y → 2023년=80,419,515백만원 확인.",
+    "_important_note": "연간(prdSe=Y)만 지원 — 기사의 '1~11월 누계' 같은 월별 YTD 수치는 이 표로 정확히 재현 안 될 수 있음. itmId에 예산액(16133AAB2)/징수결정액(16133AAB3)/수납액(16133AAB4)/불납결손액(16133AAB5)/미수납액(16133AAB6) 5종 있음 — 기사가 보통 인용하는 건 수납액.",
+    "dimensions": {
+      "tax_type": {
+        "kosis_param": "objL1",
+        "default_value": "15133SMB070102",
+        "code_map": {"법인세": "15133SMB070102"},
+        "_note": "검증 완료(2026-07-29) — 법인세만. 소득세/부가가치세 등 다른 세목 코드는 미확인, objL1=ALL로 스캔해서 필요시 추가."
+      }
+    },
+    "itmId_fixed": "16133AAB4",
+    "_itm_note": "16133AAB4=수납액(기본, 기사에서 보통 인용). 16133AAB2=예산액, 16133AAB3=징수결정액.",
+    "startPrdDe": "2023",
+    "endPrdDe": "2023",
+    "_period_note": "연간(prdSe=Y)만 제공, 2005~현재."
+  },
+
+  "DT_402Y014": {
+    "orgId": "301",
+    "tblId": "DT_402Y014",
+    "prdSe": "M",
+    "_table_name": "수출물가지수(기본분류)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=13102134642ACC_CD.*AA(총지수)+objL2=13102134642CRR_CTRT_CD.W(원화기준)+prdSe=M → 2024년12월=133.56 확인.",
+    "_important_note": "DT_401Y015(수입물가지수)와 구조 동일(코드 접두사만 134642 vs 134643으로 다름). 절대 서로 혼동하지 말 것.",
+    "dimensions": {
+      "item": {
+        "kosis_param": "objL1",
+        "default_value": "13102134642ACC_CD.*AA",
+        "code_map": {"총지수": "13102134642ACC_CD.*AA", "전체": "13102134642ACC_CD.*AA"},
+        "_note": "검증 완료(2026-07-29) — 총지수만."
+      },
+      "currency_basis": {
+        "kosis_param": "objL2",
+        "default_value": "13102134642CRR_CTRT_CD.W",
+        "code_map": {
+          "원화기준": "13102134642CRR_CTRT_CD.W",
+          "달러기준": "13102134642CRR_CTRT_CD.D",
+          "계약통화기준": "13102134642CRR_CTRT_CD.C"
+        },
+        "_note": "검증 완료(2026-07-29). 원화=133.56/달러=109.79/계약통화=112.36(2024년12월) 모두 확인."
+      }
+    },
+    "itmId_fixed": "13103134642999",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "202412",
+    "endPrdDe": "202412",
+    "_period_note": "월간(prdSe=M)만 제공, 1971~현재."
+  },
+
+  "DT_1TEC_P112": {
+    "orgId": "101",
+    "tblId": "DT_1TEC_P112",
+    "prdSe": "Q",
+    "_table_name": "무역집중도",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=01(수출)+objL2=50(상위100대)+prdSe=Q → 2024년3분기=117,507,845천불 확인. objL2=00(계)=173,646,405천불도 확인 → 117,507,845/173,646,405=67.7%(기사 67.6%와 거의 일치).",
+    "_important_note": "이 표는 비율이 아니라 '교역액'(금액) 자체가 DT임 — 무역집중도(%)는 상위N대 교역액을 계(00) 교역액으로 나눠서 calculator.py로 직접 계산해야 함. objL1=02(수입)도 존재 추정(미확인).",
+    "dimensions": {
+      "flow": {
+        "kosis_param": "objL1",
+        "default_value": "01",
+        "code_map": {"수출": "01"},
+        "_note": "검증 완료(2026-07-29) — 수출(01)만. 수입 코드는 미확인, 필요시 objL1=ALL로 스캔."
+      },
+      "rank_group": {
+        "kosis_param": "objL2",
+        "default_value": "00",
+        "code_map": {
+          "계": "00",
+          "전체": "00",
+          "상위5대": "10",
+          "상위10대": "20",
+          "상위20대": "30",
+          "상위50대": "40",
+          "상위100대": "50",
+          "상위500대": "60",
+          "상위1000대": "70"
+        },
+        "_note": "검증 완료(2026-07-29) — 계/상위5/10/20/50/100/500/1000대 전부 확인."
+      }
+    },
+    "itmId_fixed": "T20",
+    "_itm_note": "T20=교역액, 유일 항목.",
+    "startPrdDe": "202403",
+    "endPrdDe": "202403",
+    "_period_note": "분기(prdSe=Q)만 제공, 2010~현재. period 포맷은 'YYYY'+분기2자리(예: 2024년3분기='202403')."
+  },
+
+  "DT_401Y015": {
+    "orgId": "301",
+    "tblId": "DT_401Y015",
+    "prdSe": "M",
+    "_table_name": "수입물가지수(기본분류)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=...ACC_CD.*AA(총지수)+objL2=...CRR_CTRT_CD.W(원화기준)+prdSe=M → 2024년12월=141.98 확인.",
+    "_important_note": "objL1(품목/계정)에 수백 개 코드, objL2(통화기준)에 계약통화(C)/달러(D)/원화(W) 3종 있음 — 둘 다 필수. 기사가 보통 원화 기준으로 인용하므로 기본값은 W.",
+    "dimensions": {
+      "item": {
+        "kosis_param": "objL1",
+        "default_value": "13102134643ACC_CD.*AA",
+        "code_map": {"총지수": "13102134643ACC_CD.*AA", "전체": "13102134643ACC_CD.*AA"},
+        "_note": "검증 완료(2026-07-29) — 총지수만. 세부 품목 코드는 DT_401Y017(품목별 표) 사용 권장."
+      },
+      "currency_basis": {
+        "kosis_param": "objL2",
+        "default_value": "13102134643CRR_CTRT_CD.W",
+        "code_map": {
+          "원화기준": "13102134643CRR_CTRT_CD.W",
+          "달러기준": "13102134643CRR_CTRT_CD.D",
+          "계약통화기준": "13102134643CRR_CTRT_CD.C"
+        },
+        "_note": "검증 완료(2026-07-29). 원화=141.98/달러=116.73/계약통화=120.56(2024년12월) 모두 확인."
+      }
+    },
+    "itmId_fixed": "13103134643999",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "202412",
+    "endPrdDe": "202412",
+    "_period_note": "월간(prdSe=M)만 제공, 1971~현재."
+  },
+
+  "DT_401Y017": {
+    "orgId": "301",
+    "tblId": "DT_401Y017",
+    "prdSe": "M",
+    "_table_name": "수입물가지수(품목별)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=...10113501AA(커피)+objL2=...CRR_CTRT_CD.W(원화기준)+prdSe=M → 2024년12월=402.11 확인. 쇠고기(...10121201AA)=143.83도 확인.",
+    "_important_note": "objL1(품목)에 수백 개 코드 있음 — 여기 등록된 건 커피/쇠고기뿐. 새 품목이 나오면 objL1=ALL로 스캔해서 추가.",
+    "dimensions": {
+      "item": {
+        "kosis_param": "objL1",
+        "default_value": "13102134644ACC_CD.10113501AA",
+        "code_map": {
+          "커피": "13102134644ACC_CD.10113501AA",
+          "쇠고기": "13102134644ACC_CD.10121201AA"
+        },
+        "_note": "검증 완료(2026-07-29) — 커피/쇠고기 2개만. 필요시 objL1=ALL로 스캔해서 추가."
+      },
+      "currency_basis": {
+        "kosis_param": "objL2",
+        "default_value": "13102134644CRR_CTRT_CD.W",
+        "code_map": {
+          "원화기준": "13102134644CRR_CTRT_CD.W",
+          "달러기준": "13102134644CRR_CTRT_CD.D",
+          "계약통화기준": "13102134644CRR_CTRT_CD.C"
+        },
+        "_note": "검증 완료(2026-07-29)."
+      }
+    },
+    "itmId_fixed": "13103134644999",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "202412",
+    "endPrdDe": "202412",
+    "_period_note": "월간(prdSe=M)만 제공."
+  },
+
+  "DT_1KE10071": {
+    "orgId": "101",
+    "tblId": "DT_1KE10071",
+    "prdSe": "M",
+    "_table_name": "온라인쇼핑몰 판매매체별/상품군별거래액",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=000(합계)+objL2=00(계)+prdSe=M → 2024년1월=21,801,172백만원 확인. objL1=007(가방)도 존재 확인(C1_NM 스캔으로 찾음).",
+    "_important_note": "objL1(상품군)에 20여 개 코드, objL2(판매매체)에 계/모바일/인터넷 3종 있음.",
+    "dimensions": {
+      "category": {
+        "kosis_param": "objL1",
+        "default_value": "000",
+        "code_map": {
+          "합계": "000",
+          "전체": "000",
+          "가방": "007",
+          "컴퓨터및주변기기": "001",
+          "가전전자통신기기": "002",
+          "의복": "005",
+          "화장품": "010"
+        },
+        "_note": "검증 완료(2026-07-29) — 합계/가방 등 확인. 나머지 세부 상품군은 objL1=ALL로 스캔해서 필요시 추가."
+      },
+      "channel": {
+        "kosis_param": "objL2",
+        "default_value": "00",
+        "code_map": {"계": "00", "전체": "00", "모바일쇼핑": "10", "인터넷쇼핑": "20"},
+        "_note": "검증 완료(2026-07-29)."
+      }
+    },
+    "itmId_fixed": "T20",
+    "_itm_note": "T20=거래액, 유일 항목.",
+    "startPrdDe": "202401",
+    "endPrdDe": "202401",
+    "_period_note": "월간(prdSe=M)만 제공, 2017~현재."
+  },
+
+  "DT_404Y014": {
+    "orgId": "301",
+    "tblId": "DT_404Y014",
+    "prdSe": "M",
+    "_table_name": "생산자물가지수(기본분류)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=13102134604ACC_CD.*AA(총지수)+prdSe=M → 2024년1월=118.19 확인.",
+    "_important_note": "objL1=ALL이면 곡류/콩류/감자류 등 수백 개 세부 품목이 섞여 나옴 — 총지수만 받으려면 반드시 '*AA'로 고정. CPI(DT_1J22003)와 절대 혼동 금지 — 서로 다른 기관(PPI=한국은행, CPI=통계청) 발표.",
+    "dimensions": {
+      "item": {
+        "kosis_param": "objL1",
+        "default_value": "13102134604ACC_CD.*AA",
+        "code_map": {"총지수": "13102134604ACC_CD.*AA", "전체": "13102134604ACC_CD.*AA"},
+        "_note": "검증 완료(2026-07-29). 세부 품목 코드는 미확인 — 필요시 objL1=ALL로 스캔."
+      }
+    },
+    "itmId_fixed": "13103134604999",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "202401",
+    "endPrdDe": "202401",
+    "_period_note": "월간(prdSe=M)만 제공, 1965~현재."
+  },
+
+  "DT_1J22112": {
+    "orgId": "101",
+    "tblId": "DT_1J22112",
+    "prdSe": "M",
+    "_table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=T10(전국)+objL2=B01A01314(오징어채)+prdSe=M → 2024년1월=100.91 확인. objL2=B01A01402(분유)=108.19도 확인.",
+    "_important_note": "objL2(품목)에 380여 개 코드가 있음 — 여기 code_map엔 실제로 확인된 것만 넣었고, 새 품목이 나오면 objL1=T10+objL2=ALL로 스캔해서 C2/C2_NM에서 찾아 추가할 것. objL1(지역)은 T10=전국, T11=서울, T12=부산... 식으로 시도코드 이어짐(DT_1J22003과 유사한 체계로 추정, 필요시 재확인).",
+    "dimensions": {
+      "region": {
+        "kosis_param": "objL1",
+        "default_value": "T10",
+        "code_map": {"전국": "T10", "서울": "T11", "부산": "T12"},
+        "_note": "검증 완료(2026-07-29) — 전국/서울/부산만. 나머지 시도는 필요시 추가."
+      },
+      "item": {
+        "kosis_param": "objL2",
+        "default_value": "B01A01314",
+        "code_map": {
+          "오징어채": "B01A01314",
+          "분유": "B01A01402",
+          "오징어": "A06A01305",
+          "마른오징어": "A06A01312",
+          "과일": "A03",
+          "과실": "A03",
+          "축산물": "A05",
+          "수산물": "A06",
+          "초콜릿": "B01A01801",
+          "빵": "B01A01116",
+          "케이크": "B01A01115",
+          "떡": "B01A01117",
+          "라면": "B01A01110",
+          "우유": "B01A01401",
+          "치즈": "B01A01403"
+        },
+        "_note": "검증 완료(2026-07-29, 2차): 과실(140.14)/축산물(120.03)/수산물(115.6)/초콜릿(139.63)/빵(134.32) 실측 확인(2024년12월). '우유·치즈 및 계란'처럼 뉴스가 여러 세부품목을 묶어 부르는 경우는 이 표에 단일 코드가 없어 calculator.py로 합산해야 함. 산후조리원/외식소주/외식맥주는 서비스 항목이라 이 표(재화 중심)엔 없을 수 있음 — 별도 확인 필요."
+      }
+    },
+    "itmId_fixed": "T",
+    "_itm_note": "T=소비자물가지수, 유일 항목.",
+    "startPrdDe": "202401",
+    "endPrdDe": "202401",
+    "_period_note": "월간(prdSe=M)만 제공, 1975~현재."
+  },
+
+  "DT_1JH20201": {
+    "orgId": "101",
+    "tblId": "DT_1JH20201",
+    "prdSe": "M",
+    "_table_name": "전산업생산지수(원지수)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29, 팀원 D의 카탈로그 병합). objL1=0(전산업)+itmId=T1(원지수)+prdSe=M → 2024년1월=110.5 확인.",
+    "_important_note": "⚠️ 자매표 DT_1JH20202(계절조정지수)와 C1 코드 체계가 다름 — 계절조정판은 전산업='1', 이 표(원지수판)는 전산업='0'. 절대 코드를 공유해서 쓰면 안 됨(직접 재확인해서 다른 걸 확인).",
+    "dimensions": {
+      "industry": {
+        "kosis_param": "objL1",
+        "default_value": "0",
+        "code_map": {
+          "전산업": "0",
+          "광공업": "1B",
+          "서비스업": "1C",
+          "건설업": "1D",
+          "공공행정": "1E"
+        },
+        "_note": "검증 완료(2026-07-29). C1_NM 그대로 확인."
+      }
+    },
+    "itmId_fixed": "T1",
+    "_itm_note": "T1=원지수, 유일 항목.",
+    "startPrdDe": "202401",
+    "endPrdDe": "202401",
+    "_period_note": "월간(prdSe=M)만 제공, 2000~현재."
+  },
+
+  "DT_102N_AD01": {
+    "orgId": "184",
+    "tblId": "DT_102N_AD01",
+    "prdSe": "M",
+    "_table_name": "통합재정수지",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=15102AD130(통합재정수지)+itmId=16102AD1+prdSe=M → 2024년12월=-43,521십억원 확인.",
+    "_important_note": "'관리재정수지' 항목이 이 표엔 없음 — 통합재정수지만 제공. 관리재정수지를 물어보는 기사는 이 표로 검증 불가(판단불가 처리 권장).",
+    "dimensions": {
+      "balance_type": {
+        "kosis_param": "objL1",
+        "default_value": "15102AD130",
+        "code_map": {
+          "통합재정수지": "15102AD130"
+        },
+        "_note": "검증 완료(2026-07-29). 다른 세부 항목(총수입/총지출 등) 코드는 미확인 — 필요해지면 objL1=ALL로 스캔."
+      }
+    },
+    "itmId_fixed": "16102AD1",
+    "_itm_note": "재정수지, 유일 항목으로 보임.",
+    "startPrdDe": "202412",
+    "endPrdDe": "202412",
+    "_period_note": "월간(prdSe=M)만 제공."
+  },
+
+  "DT_32202_A100": {
+    "orgId": "322",
+    "tblId": "DT_32202_A100",
+    "prdSe": "Y",
+    "_table_name": "종별 가입자 현황",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=A001(전국)+objL2=15322AA1AA(총가입자수)+objL3=15322AA000(계,성별)+prdSe=Y → 2022년=22,497,819명 확인. 성별 세분화(남=12,230,526/여=10,267,293)도 확인.",
+    "_important_note": "3단 분류축(지역/가입자유형/성별) 모두 필요 — 하나라도 빠지면 에러.",
+    "dimensions": {
+      "region": {
+        "kosis_param": "objL1",
+        "default_value": "A001",
+        "code_map": {"전국": "A001", "합계": "A001"},
+        "_note": "검증 완료(2026-07-29)."
+      },
+      "subscriber_type": {
+        "kosis_param": "objL2",
+        "default_value": "15322AA1AA",
+        "code_map": {"총가입자수": "15322AA1AA", "전체": "15322AA1AA"},
+        "_note": "검증 완료(2026-07-29). 사업장가입자/지역가입자/임의가입자 등 세부 코드는 미확인."
+      },
+      "gender": {
+        "kosis_param": "objL3",
+        "default_value": "15322AA000",
+        "code_map": {"계": "15322AA000", "전체": "15322AA000", "남자": "15322AA000AA", "여자": "15322AA000AB"},
+        "_note": "검증 완료(2026-07-29)."
+      }
+    },
+    "itmId_fixed": "16322AAA0",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "2022",
+    "endPrdDe": "2022",
+    "_period_note": "연간(prdSe=Y) 데이터로 확인됨."
+  },
+
+  "DT_32202_B004": {
+    "orgId": "322",
+    "tblId": "DT_32202_B004",
+    "prdSe": "Y",
+    "_table_name": "급여종류별·연령별·성별 수급자 현황",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=A001(계,급여종류)+objL2=B001(합계,연령)+objL3=C001(계,성별)+itmId=H001(수급자수)+prdSe=Y → 2022년=6,674,143명 확인.",
+    "_important_note": "3단 분류축(급여종류/연령/성별) 모두 필요.",
+    "dimensions": {
+      "benefit_type": {
+        "kosis_param": "objL1",
+        "default_value": "A001",
+        "code_map": {"계": "A001", "전체": "A001"},
+        "_note": "검증 완료(2026-07-29). 노령연금/장애연금/유족연금 등 세부 코드는 미확인."
+      },
+      "age": {
+        "kosis_param": "objL2",
+        "default_value": "B001",
+        "code_map": {"합계": "B001", "전체": "B001"},
+        "_note": "검증 완료(2026-07-29)."
+      },
+      "gender": {
+        "kosis_param": "objL3",
+        "default_value": "C001",
+        "code_map": {"계": "C001", "전체": "C001"},
+        "_note": "검증 완료(2026-07-29)."
+      }
+    },
+    "itmId_fixed": "H001",
+    "_itm_note": "H001=수급자수.",
+    "startPrdDe": "2022",
+    "endPrdDe": "2022",
+    "_period_note": "연간(prdSe=Y) 데이터로 확인됨."
+  },
+
+  "DT_1L9U103": {
+    "orgId": "101",
+    "tblId": "DT_1L9U103",
+    "prdSe": "Q",
+    "_table_name": "소득5분위별 가구당 가계수지 (전국,1인이상)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=Q1(1분위)+objL2=A(소득)+itmId=T110(전체가구)+prdSe=Q, period=YYYY+분기2자리(예: 2024년2분기='202402') → 1,158,662.787원 확인. Q2(2,706,299.456원)도 추가 검증 완료. 2026-07-29(2차): objL2=ALL 스캔으로 138개 가계수지 세부 항목(소득/지출 전체) 확인 — 처분가능소득(Y1)=4,046,184.548원/가계지출(D)=3,984,059.179원/소비지출(F)=2,908,117.017원/식료품(H)=432,795.992원/주거(L)=390,312.92원/교통(O)=335,602.833원(이상 2024년1분기, Q0=전체가구 평균) 확인.",
+    "_important_note": "objL1(소득분위)은 Q0(전체평균)/Q1/Q2 실증 확인, Q3~Q5는 패턴 추정(사용 전 재확인 권장). objL2(가계수지항목)는 소득(A) 외에 처분가능소득/지출 세부 138개 항목이 있음 — '필수생계비 비율' 같은 파생 지표는 이 항목들을 조합해서 calculator.py로 직접 계산해야 함(정확히 어떤 항목을 합산하는지는 기사마다 다를 수 있어 확정 안 됨).",
+    "dimensions": {
+      "quintile": {
+        "kosis_param": "objL1",
+        "default_value": "Q1",
+        "code_map": {
+          "전체": "Q0",
+          "1분위": "Q1",
+          "2분위": "Q2",
+          "3분위": "Q3",
+          "4분위": "Q4",
+          "5분위": "Q5"
+        },
+        "_note": "Q0/Q1/Q2 실제 검증(2026-07-29). Q3~Q5는 패턴 추정 — 사용 전 재확인 권장."
+      },
+      "item": {
+        "kosis_param": "objL2",
+        "default_value": "A",
+        "code_map": {
+          "소득": "A",
+          "처분가능소득": "Y1",
+          "가계지출": "D",
+          "소비지출": "F",
+          "식료품비": "H",
+          "주거비": "L",
+          "교통비": "O",
+          "흑자율": "Y3",
+          "평균소비성향": "Y4"
+        },
+        "_note": "검증 완료(2026-07-29, 2차 조사) — 위 9개 항목 실제 값 확인. 나머지 129개 세부 항목(의류/보건/교육 등)은 objL2=ALL 스캔 결과에서 확인만 하고 code_map엔 아직 미등록 — 필요시 추가."
+      }
+    },
+    "itmId_fixed": "T110",
+    "_itm_note": "T110=전체가구, T120=근로자가구, T150=근로자외가구.",
+    "startPrdDe": "202402",
+    "endPrdDe": "202402",
+    "_period_note": "분기(prdSe=Q)만 제공. period 포맷은 'YYYY'+분기 2자리(예: 202402)."
+  },
+
+  "DT_KBA0001": {
+    "orgId": "127",
+    "tblId": "DT_KBA0001",
+    "prdSe": "Y",
+    "_table_name": "연구개발비 및 GDP 대비 연구개발비 비율",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=ALL+itmId=ALL+prdSe=Y → 2022년 연구개발비(A)=112,646,008백만원, 정부·공공재원(T2)=26,328,329백만원, 민간·외국재원(T3)=86,317,679백만원 확인.",
+    "_important_note": "objL1 코드가 매우 길고(예: 1611213103300310T1) 표별로 고유함 — code_map에 실제 확인된 값만 넣음.",
+    "dimensions": {
+      "item": {
+        "kosis_param": "objL1",
+        "default_value": "1611213103300310T1",
+        "code_map": {
+          "연구개발비": "1611213103300310T1",
+          "정부공공재원": "1611213103300310T2",
+          "민간외국재원": "1611213103300310T3"
+        },
+        "_note": "검증 완료(2026-07-29). GDP대비비율 코드는 미확인 — 필요시 objL1=ALL로 재스캔."
+      }
+    },
+    "itmId_fixed": "T001",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "2022",
+    "endPrdDe": "2022",
+    "_period_note": "연간(prdSe=Y)만 제공."
+  },
+
+  "DT_281Y001": {
+    "orgId": "301",
+    "tblId": "DT_281Y001",
+    "prdSe": "Q",
+    "_table_name": "금융거래표(2009~)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=13102134730INST_SECTOR_CD.S14(가계 및 비영리단체)+objL2=13102134730ACC_CD.F00B(합계 계정)+objL3=13102134730OPER_SRC_CD.C(운용)+prdSe=Q → 2024년2분기=50,906.2십억원 확인(팀원 D 제시치 51,667.3과 근사, 리비전 차이로 추정). 가계 부문 코드(S14)는 objL1=ALL 스캔으로 직접 찾음 — 팀원 D 설명엔 정확한 코드가 없었음.",
+    "_important_note": "3단 분류축(제도부문/계정코드/운용원천) 모두 필요.",
+    "dimensions": {
+      "sector": {
+        "kosis_param": "objL1",
+        "default_value": "13102134730INST_SECTOR_CD.S14",
+        "code_map": {"가계 및 비영리단체": "13102134730INST_SECTOR_CD.S14", "가계": "13102134730INST_SECTOR_CD.S14"},
+        "_note": "검증 완료(2026-07-29). 다른 제도부문(기업/정부 등) 코드는 미확인."
+      },
+      "account": {
+        "kosis_param": "objL2",
+        "default_value": "13102134730ACC_CD.F00B",
+        "code_map": {"합계": "13102134730ACC_CD.F00B"},
+        "_note": "검증 완료(2026-07-29). 세부 계정(예: 금과 SDRs, 현금 등)은 미확인."
+      },
+      "oper_src": {
+        "kosis_param": "objL3",
+        "default_value": "13102134730OPER_SRC_CD.C",
+        "code_map": {"운용": "13102134730OPER_SRC_CD.C", "원천": "13102134730OPER_SRC_CD.D"},
+        "_note": "검증 완료(2026-07-29)."
+      }
+    },
+    "itmId_fixed": "13103134730999",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "202402",
+    "endPrdDe": "202402",
+    "_period_note": "분기(prdSe=Q)만 제공."
+  },
+
+  "DT_1K41017": {
+    "orgId": "101",
+    "tblId": "DT_1K41017",
+    "prdSe": "M",
+    "_table_name": "음식점포함 소매판매액지수(2020=100.0)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=G0(소매판매액지수)+itmId=T2(불변지수)+prdSe=M → 2024년5월=104.7 확인.",
+    "_important_note": "objL1=ALL이면 AI00(음식점포함)/G0(소매판매액지수 자체)/I56(음식점및주점업) 등 여러 세부항목이 섞여 나옴 — 헤드라인 수치는 G0. itmId는 T1(경상지수)/T2(불변지수) 두 종류 — 기사에서 '%감소' 식으로 인용하는 전월비 증감률은 보통 불변지수(T2) 기준.",
+    "dimensions": {
+      "business_type": {
+        "kosis_param": "objL1",
+        "default_value": "G0",
+        "code_map": {
+          "소매판매액지수": "G0",
+          "전체": "G0",
+          "음식점포함": "AI00"
+        },
+        "_note": "검증 완료(2026-07-29). 세부 업종 코드는 objL1=ALL로 스캔해서 필요시 추가."
+      }
+    },
+    "itmId_fixed": "T2",
+    "_itm_note": "T1=경상지수, T2=불변지수(기본, 증감률 계산용).",
+    "startPrdDe": "202405",
+    "endPrdDe": "202405",
+    "_period_note": "월간(prdSe=M)만 제공, 1995~현재(전체 소매판매액지수 자체는 2010~)."
+  },
+
+  "DT_1F70011": {
+    "orgId": "101",
+    "tblId": "DT_1F70011",
+    "prdSe": "M",
+    "_table_name": "설비투자지수",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL2=C(총지수)+itmId=T5(계절조정지수)+prdSe=M → 2024년5월=104.1 확인.",
+    "_important_note": "이 표는 분류축이 objL1이 아니라 objL2다(응답에 C1 필드 자체가 없고 C2만 있음) — 다른 표들과 다른 특이 케이스이니 헷갈리지 말 것. itmId는 T3(원지수)/T5(계절조정지수) — 기본은 계절조정(T5).",
+    "dimensions": {
+      "sector": {
+        "kosis_param": "objL2",
+        "default_value": "C",
+        "code_map": {
+          "총지수": "C",
+          "전체": "C",
+          "기계류": "C1"
+        },
+        "_note": "검증 완료(2026-07-29). C2_NM 그대로 확인."
+      }
+    },
+    "itmId_fixed": "T5",
+    "_itm_note": "T3=원지수, T5=계절조정지수(기본).",
+    "startPrdDe": "202405",
+    "endPrdDe": "202405",
+    "_period_note": "월간(prdSe=M)만 제공, 1995~현재."
+  },
+
+  "DT_1G18007": {
+    "orgId": "101",
+    "tblId": "DT_1G18007",
+    "prdSe": "M",
+    "_table_name": "공종별 건설기성액(경상)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=0(계)+itmId=T30(기성액)+prdSe=M → 2024년5월=14,212,083백만원 확인.",
+    "_important_note": "objL1=ALL이면 건축/주거용/비주거용/토목 등 공종별 세부항목이 섞여 나옴 — 전체 합계는 0(계).",
+    "dimensions": {
+      "construction_type": {
+        "kosis_param": "objL1",
+        "default_value": "0",
+        "code_map": {
+          "계": "0",
+          "전체": "0",
+          "건축": "1",
+          "토목": "2"
+        },
+        "_note": "검증 완료(2026-07-29). C1_NM 그대로 확인."
+      }
+    },
+    "itmId_fixed": "T30",
+    "_itm_note": "T30=기성액, 유일 항목으로 보임.",
+    "startPrdDe": "202405",
+    "endPrdDe": "202405",
+    "_period_note": "월간(prdSe=M)만 제공, 1997~현재."
+  },
+
+  "DT_301Y013": {
+    "orgId": "301",
+    "tblId": "DT_301Y013",
+    "prdSe": "M",
+    "_table_name": "국제수지",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=13102134519ACC_CD.BOPF22000000(증권투자·부채)+prdSe=M → 2024년12월=-4051.4백만달러 확인. 팀원 D 병합(2026-07-29): 무역수지(=상품수지, ACC_CD.100000)=2024년 110,910백만달러, 경상수지(ACC_CD.000000)=2024년 99,973.5백만달러도 실제 API로 추가 검증.",
+    "_important_note": "objL1=ALL이면 경상수지/자본수지/금융계정 등 280여 개 세부 계정코드가 다 섞여 나옴 — 반드시 용도에 맞는 계정코드로 고정해야 함. BOPF21000000(증권투자·자산)은 우리나라 투자자의 해외 증권투자라 반대 의미이니 헷갈리지 말 것. 앞서 추가한 DT_311Y001(국제투자대조표)은 잔액(스톡)이고 이 표는 월별/연간 유출입·수지(플로우)이라 서로 다른 통계. 뉴스의 '무역수지'는 KOSIS 용어로 '상품수지'에 해당함에 주의.",
+    "dimensions": {
+      "account": {
+        "kosis_param": "objL1",
+        "default_value": "13102134519ACC_CD.BOPF22000000",
+        "code_map": {
+          "증권투자 부채": "13102134519ACC_CD.BOPF22000000",
+          "외국인 증권투자": "13102134519ACC_CD.BOPF22000000",
+          "증권투자 자산": "13102134519ACC_CD.BOPF21000000",
+          "무역수지": "13102134519ACC_CD.100000",
+          "상품수지": "13102134519ACC_CD.100000",
+          "경상수지": "13102134519ACC_CD.000000",
+          "서비스수지": "13102134519ACC_CD.200000"
+        },
+        "_note": "검증 완료(2026-07-29, 나+팀원D 합산). 나머지 280여 개 세부 계정코드는 미확인 — 필요해지면 objL1=ALL로 스캔해서 추가."
+      }
+    },
+    "itmId_fixed": "ALL",
+    "_itm_note": "이 표는 itmId 축이 없거나 ALL로 충분한 것으로 보임(추가 검증 필요시 재확인).",
+    "startPrdDe": "202412",
+    "endPrdDe": "202412",
+    "_period_note": "월간(prdSe=M)만 제공, 1980~현재."
+  },
+
+  "DT_133001_9832": {
+    "orgId": "133",
+    "tblId": "DT_133001_9832",
+    "prdSe": "Y",
+    "_table_name": "9.8.32 100대 생활밀접업종 폐업 사업자 현황Ⅰ(지역, 업종)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=A97(호프주점)+objL2=B02(서울)+prdSe=Y → 2024년=917명(곳) 확인. C1(objL1)=업종별(100여 종), C2(objL2)=지역별.",
+    "_important_note": "objL1에 100여 개 업종 코드가 있음 — 지금까지 확인된 건 호프주점(A97)/간이주점(A05)/합계(A01)뿐. 다른 업종(편의점/카페/PC방/헬스장 등)이 기사에서 나오면 objL1=ALL로 조회해서 C1_NM에서 해당 코드를 찾아 code_map에 추가할 것. objL2도 합계(B01)/서울(B02)/인천(B03) 외 시도 코드는 필요해지면 추가.",
+    "dimensions": {
+      "industry": {
+        "kosis_param": "objL1",
+        "default_value": "A01",
+        "code_map": {
+          "합계": "A01",
+          "간이주점": "A05",
+          "호프주점": "A97",
+          "호프집": "A97"
+        },
+        "_note": "검증 완료(2026-07-29) — 호프주점/간이주점만. 나머지 업종 코드는 미확인."
+      },
+      "region": {
+        "kosis_param": "objL2",
+        "default_value": "B01",
+        "code_map": {
+          "합계": "B01",
+          "전국": "B01",
+          "서울": "B02",
+          "인천": "B03"
+        },
+        "_note": "검증 완료(2026-07-29) — 서울/인천만. 나머지 시도 코드는 미확인."
+      }
+    },
+    "itmId_fixed": "T001",
+    "_itm_note": "T001=사업자 현황, 유일 항목.",
+    "startPrdDe": "2024",
+    "endPrdDe": "2024",
+    "_period_note": "연간(prdSe=Y)만 제공, 2024년 데이터부터 시작(신생 시리즈)."
+  },
+
+  "DT_102006_001": {
+    "orgId": "184",
+    "tblId": "DT_102006_001",
+    "prdSe": "Y",
+    "_table_name": "국가채무(D1)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=A01(국가채무 총액)+prdSe=Y → 2024년=1175조원 확인. objL1=A02는 GDP대비 비율(2023년=46.8%).",
+    "_important_note": "objL1에 A01(국가채무 총액, 조원)과 A02(GDP 대비 비율, %) 두 종류가 있음 — 기사에서 금액/비율 어느 쪽을 말하는지에 따라 default_value를 바꿔야 함. 기본은 총액(A01).",
+    "dimensions": {
+      "debt_item": {
+        "kosis_param": "objL1",
+        "default_value": "A01",
+        "code_map": {
+          "국가채무": "A01",
+          "총액": "A01",
+          "GDP 대비": "A02",
+          "GDP대비비율": "A02"
+        },
+        "_note": "검증 완료(2026-07-29). C1_NM 그대로 확인."
+      }
+    },
+    "itmId_fixed": "T001",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "2024",
+    "endPrdDe": "2024",
+    "_period_note": "연간(prdSe=Y)만 제공, 1997~현재."
+  },
+
+  "DT_1JH20202": {
+    "orgId": "101",
+    "tblId": "DT_1JH20202",
+    "prdSe": "M",
+    "_table_name": "전산업생산지수(계절조정지수)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=1(전산업생산지수)+prdSe=M → 2024년5월=114.1(2020=100) 확인.",
+    "_important_note": "objL1=ALL이면 전산업/광공업/서비스업/건설업/공공행정 등 산업별 지수가 다 섞여 나옴 — 전산업 총지수만 받으려면 objL1=1로 고정.",
+    "dimensions": {
+      "industry": {
+        "kosis_param": "objL1",
+        "default_value": "1",
+        "code_map": {
+          "전산업": "1",
+          "광공업": "1B",
+          "서비스업": "1C",
+          "건설업": "1D",
+          "공공행정": "1E"
+        },
+        "_note": "검증 완료(2026-07-29). C1_NM 그대로 확인."
+      }
+    },
+    "itmId_fixed": "T1",
+    "_itm_note": "T1=계절조정지수, 유일 항목으로 보임.",
+    "startPrdDe": "202405",
+    "endPrdDe": "202405",
+    "_period_note": "월간(prdSe=M)만 제공, 2000.1~현재."
+  },
+
+  "DT_1C8015": {
+    "orgId": "101",
+    "tblId": "DT_1C8015",
+    "prdSe": "M",
+    "_table_name": "경기종합지수(2020=100)(10차)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=B03(동행지수 순환변동치)+prdSe=M → 2025년1월=99.3 확인.",
+    "_important_note": "objL1=ALL이면 선행/동행/후행종합지수 각각의 지수·전월비·순환변동치 등 30여 종 세부 코드가 다 섞여 나옴 — '동행지수 순환변동치'만 받으려면 objL1=B03으로 고정. 다른 지수가 필요해지면 code_map에 추가(예: 선행종합지수=A00, 선행종합지수 전월비=A01).",
+    "dimensions": {
+      "index_type": {
+        "kosis_param": "objL1",
+        "default_value": "B03",
+        "code_map": {
+          "동행지수 순환변동치": "B03",
+          "동행종합지수": "B00",
+          "선행종합지수": "A00"
+        },
+        "_note": "검증 완료(2026-07-29). C1_NM 그대로 확인. 전체 코드 목록은 objL1=ALL로 조회 시 C1/C1_NM에서 확인 가능."
+      }
+    },
+    "itmId_fixed": "T1",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "202501",
+    "endPrdDe": "202501",
+    "_period_note": "월간(prdSe=M)만 제공, 1970~현재."
+  },
+
+  "DT_115_2009_H3001_18_1": {
+    "orgId": "115",
+    "tblId": "DT_115_2009_H3001_18_1",
+    "prdSe": "Q",
+    "_table_name": "산업별 외국인 투자 유치 실적",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=15115SEF000(계)+itmId=16115T2009_863(신고금액)+prdSe=Q → 2023년1분기=5,633,401천불 확인. prdSe=Y로 요청해도 PRD_SE는 'Q'로 응답됨 — 분기 데이터만 제공.",
+    "_important_note": "itmId에 신고건수(16115T2009_862)와 신고금액(16115T2009_863) 두 종류가 있음 — 기사에서 주로 인용하는 건 신고금액. 반기/연간 수치가 필요하면 calculator.py로 해당 분기들을 합산.",
+    "dimensions": {
+      "industry": {
+        "kosis_param": "objL1",
+        "default_value": "15115SEF000",
+        "code_map": {
+          "계": "15115SEF000",
+          "전체": "15115SEF000"
+        },
+        "_note": "검증 완료(2026-07-29). C1_NM='계'."
+      }
+    },
+    "itmId_fixed": "16115T2009_863",
+    "_itm_note": "16115T2009_863=신고금액(천불), 16115T2009_862=신고건수(개).",
+    "startPrdDe": "202301",
+    "endPrdDe": "202301",
+    "_period_note": "분기(prdSe=Q)만 제공. period 포맷은 'YYYY'+분기2자리(예: 2023년1분기='202301')."
+  },
+
+  "DT_311Y001": {
+    "orgId": "301",
+    "tblId": "DT_311Y001",
+    "prdSe": "Q",
+    "_table_name": "국제투자대조표(IIP)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=13102134486ACC_CD.1000000(대외금융자산)+prdSe=Q+period='202404'(YYYY+분기1자리) → 2024년4분기=2,510,342.4백만달러 확인. 주의: 분기 period 포맷은 'YYYYQ'(예: 2024Q4)나 'YYYYMM'이 아니라 'YYYY' + 분기숫자 이어붙인 'YYYY0Q' 형태 아님 — 실측으로는 '202404'가 먹혔음(2024년+04분기를 04로 표기, 즉 YYYY+분기2자리 zero-padded).",
+    "_important_note": "objL1=ALL로 받으면 대외금융자산/직접투자/지분투자/채무상품/증권투자 등 여러 계정코드가 섞여 나옴 — 반드시 objL1을 자산 총계 코드(1000000)로 고정해야 함. 부채(대외금융부채) 코드는 아직 못 찾음 — '순대외금융자산' 계산이 필요해지면 objL1=ALL로 전체 코드 스캔해서 부채 코드 찾아 추가할 것.",
+    "dimensions": {
+      "account": {
+        "kosis_param": "objL1",
+        "default_value": "13102134486ACC_CD.1000000",
+        "code_map": {
+          "대외금융자산": "13102134486ACC_CD.1000000",
+          "준비자산": "13102134486ACC_CD.1050000"
+        },
+        "_note": "검증 완료(2026-07-29, 나+팀원D). C1_NM='대외금융자산'/'준비자산'(2024년3분기=419,969.8백만달러 확인). 대외금융부채 코드는 미확인 — 준비자산은 외환보유액과 개념상 같지만, 외환보유액 질의는 DT_2KAA809를 우선 사용."
+      }
+    },
+    "itmId_fixed": "13103134486999",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "202404",
+    "endPrdDe": "202404",
+    "_period_note": "분기(prdSe=Q)만 제공. period 포맷은 'YYYY' + 분기 2자리(예: 2024년 4분기 = '202404')."
+  },
+
+  "DT_104Y282": {
+    "orgId": "101",
+    "tblId": "DT_104Y282",
+    "prdSe": "Y",
+    "_table_name": "시도별 주택시가총액(명목, 연말기준)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=00(전국)+itmId=T90(주택 시가총액)+prdSe=Y → 연도별 1행 응답 확인(2023년=6,869,875.7십억원). 서울(objL1=11)도 확인(2022년=2,375,984.6십억원).",
+    "_important_note": "국민대차대조표 계열이라 매년 8~9월경 전년도 확정치가 갱신됨 — 기사 인용 시점에 따라 확정치가 조금씩 다를 수 있음(article_evidence 예시에서 6839조 vs 실측 6869조, 리비전 차이로 추정, 오차범위 내로 판단).",
+    "dimensions": {
+      "region": {
+        "kosis_param": "objL1",
+        "default_value": "00",
+        "code_map": {
+          "전국": "00",
+          "서울": "11"
+        },
+        "_note": "검증 완료(2026-07-29). 다른 시도 코드는 필요해지면 추가(통계청 표준 시도코드 체계로 추정)."
+      }
+    },
+    "itmId_fixed": "T90",
+    "_itm_note": "T90=주택 시가총액(명목), 유일 항목.",
+    "startPrdDe": "2023",
+    "endPrdDe": "2023",
+    "_period_note": "연간(prdSe=Y)만 지원, 1995년~현재."
+  },
+
+  "DT_511Y002": {
+    "orgId": "301",
+    "tblId": "DT_511Y002",
+    "prdSe": "M",
+    "_table_name": "소비자동향조사(전국, 월, 2008.9~)",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=13102134688CSI_CD.FME(소비자심리지수)+objL2=13102134688CSI_CLF_CD.99988(전체)+prdSe=M → 월별 1행 응답 확인(2024년1월=101.5).",
+    "_important_note": "이 표는 objL1에 CSI 세부지표 25종(현재생활형편/현재경기판단/향후경기전망 등)이 다 들어있어, 종합 소비자심리지수(CCSI)를 받으려면 반드시 objL1을 FME로 정확히 고정해야 함 — objL1=ALL로 받으면 엉뚱한 세부지표(첫 항목인 현재생활형편CSI)가 나옴.",
+    "dimensions": {
+      "csi_type": {
+        "kosis_param": "objL1",
+        "default_value": "13102134688CSI_CD.FME",
+        "code_map": {
+          "소비자심리지수": "13102134688CSI_CD.FME",
+          "CCSI": "13102134688CSI_CD.FME",
+          "현재경기판단": "13102134688CSI_CD.FMAB",
+          "향후경기전망": "13102134688CSI_CD.FMBB"
+        },
+        "_note": "검증 완료(2026-07-29). 세부지표 25종 코드 목록은 objL1=ALL로 조회 시 C1/C1_NM에서 전부 확인 가능 — 필요해지면 code_map 추가."
+      },
+      "csi_classification": {
+        "kosis_param": "objL2",
+        "default_value": "13102134688CSI_CLF_CD.99988",
+        "code_map": {
+          "전체": "13102134688CSI_CLF_CD.99988"
+        },
+        "_note": "이 표는 objL2도 필수 파라미터라서 빠지면 err 20 남. 항상 '전체' 고정값 사용 (api_client.py는 dimensions 딕셔너리만 읽으므로 여기 넣어야 실제로 반영됨 — objL2_fixed 같은 임의 필드명은 무시됨)."
+      }
+    },
+    "itmId_fixed": "13103134688999",
+    "_itm_note": "유일 항목.",
+    "startPrdDe": "202401",
+    "endPrdDe": "202401",
+    "_period_note": "월간(prdSe=M)만 제공, 2008.9~현재. slots['period']가 YYYYMM 형식이어야 함."
+  },
+
+  "DT_2KAA809": {
+    "orgId": "101",
+    "tblId": "DT_2KAA809",
+    "prdSe": "Y",
+    "_table_name": "외환보유액",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=1005(대한민국)+itmId=T10(외환보유액 총계)+prdSe=Y → 연도별 1행 응답 확인(2024년=415,603.777백만 USD). prdSe=M으로 보내도 PRD_SE가 'A'(연간)로 응답되는 걸 봐서 이 표는 연간 데이터만 제공하는 것으로 보임.",
+    "_important_note": "국가별(C1) 축이 있어 반드시 objL1=1005(대한민국)로 좁혀야 함 — objL1=ALL이면 전세계 국가가 다 나옴. 기사에 흔한 '4월 말 기준' 같은 월별 수치는 이 표로 정확 검증 불가 — slot_filler/judge 단계에서 판단불가 처리 권장.",
+    "dimensions": {
+      "country": {
+        "kosis_param": "objL1",
+        "default_value": "1005",
+        "code_map": {
+          "대한민국": "1005",
+          "전국": "1005"
+        },
+        "_note": "검증 완료(2026-07-29). C1_NM='대한민국'."
+      }
+    },
+    "itmId_fixed": "T10",
+    "_itm_note": "T10=외환보유액(총계), T20=금제외. 기본은 T10.",
+    "startPrdDe": "2024",
+    "endPrdDe": "2024",
+    "_period_note": "연간 데이터만 지원. slots['period']가 연도 단위(예: '2024')일 때만 정확히 매칭됨."
+  },
+
+  "TX_13301_A169": {
+    "orgId": "133",
+    "tblId": "TX_13301_A169",
+    "prdSe": "Y",
+    "_table_name": "9.8.13 폐업자 현황 Ⅳ (폐업사유,지역,업태) [2005~]",
+    "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=15133SEJ00(합계)+objL2=B01(합계)+objL3=16133T2008_0245(총계)+itmId=T01+prdSe=Y → 연도별 1행 응답 확인(2022=867,292명, 2023=986,487명).",
+    "_important_note": "분류축 3개(과세유형/시도·업태/폐업사유)가 있어 objL1/objL2/objL3 모두 채워야 함 (하나라도 빠지면 err 20). 전국 합계만 받으려면 세 축 모두 '합계/총계' 코드로 고정.",
+    "dimensions": {
+      "taxpayer_type": {
+        "kosis_param": "objL1",
+        "default_value": "15133SEJ00",
+        "code_map": {
+          "합계": "15133SEJ00",
+          "전체": "15133SEJ00"
+        },
+        "_note": "검증 완료(2026-07-29). C1_NM='합계'."
+      },
+      "region_type": {
+        "kosis_param": "objL2",
+        "default_value": "B01",
+        "code_map": {
+          "합계": "B01",
+          "전국": "B01"
+        },
+        "_note": "검증 완료(2026-07-29). C2_NM='합계'(시도·업태별 축의 전국 합계 코드)."
+      },
+      "reason": {
+        "kosis_param": "objL3",
+        "default_value": "16133T2008_0245",
+        "code_map": {
+          "총계": "16133T2008_0245",
+          "전체": "16133T2008_0245"
+        },
+        "_note": "검증 완료(2026-07-29). C3_NM='총계'. 폐업사유별 세부 코드(예: '기타'=16133ABA7)도 존재하나 아직 전수 확인 안 함 — 필요해지면 추가."
+      }
+    },
+    "itmId_fixed": "T01",
+    "_itm_note": "T01=폐업사업자 현황(유일 항목으로 확인됨).",
+    "startPrdDe": "2024",
+    "endPrdDe": "2024",
+    "_period_note": "연간(prdSe=Y)만 지원, 2005년~현재."
+  },
+
   "DT_1EA1019": {
     "orgId": "101",
     "tblId": "DT_1EA1019",
@@ -713,5 +1639,160 @@
     "startPrdDe": "2018",
     "endPrdDe": "2018",
     "_period_note": "⚠️ 격년(F) 조사. 짝수해만 존재 (2016/2018/2020/2022...). 'YYYY' 형식."
+  },
+  "DT_200Y001": {
+    "orgId": "301",
+    "tblId": "DT_200Y001",
+    "prdSe": "Y",
+    "_table_name": "주요지표(연간지표)",
+    "_verified": "실제 API 호출로 확인 (2026-07-30). objL1='13102134474ACC_ITEM.1010601'(1인당 국민총소득 명목 달러표시)+itmId='13103134474999'로 2023년=33745(달러) 확인. 원화표시는 objL1='13102134474ACC_ITEM.10106'(단위: 만원, 2023년=4405.1).",
+    "_important_note": "이 표는 DT_200Y102(주요지표 분기지표)의 연간판. objL1=ALL로 조회하면 GDP/소비/투자 등 89개 계정항목이 섞여 나오므로 반드시 objL1을 특정 항목 코드로 좁혀야 함. 2024년치는 아직 미발표(API 호출 시 err30) — 2023년이 최신.",
+    "dimensions": {
+      "gni_item": {
+        "kosis_param": "objL1",
+        "default_value": "13102134474ACC_ITEM.1010601",
+        "code_map": {
+          "1인당GNI달러": "13102134474ACC_ITEM.1010601",
+          "1인당GNI원화": "13102134474ACC_ITEM.10106"
+        },
+        "_note": "검증 완료 (2026-07-30). 달러표시 기본값."
+      }
+    },
+    "itmId_fixed": "13103134474999",
+    "startPrdDe": "2023",
+    "endPrdDe": "2023",
+    "_period_note": "연간 데이터, 발표 시차 있음 — 최신값 확인 시 API로 재확인 필요."
+  },
+  "DT_512Y013": {
+    "orgId": "301",
+    "tblId": "DT_512Y013",
+    "prdSe": "M",
+    "_table_name": "기업경기조사(실적)",
+    "_verified": "실제 API 호출로 확인 (2026-07-30). objL1='13102134673BUSINESS_TYPE_CD.99988'(전산업)+objL2='13102134673BSI_CD.AX'(기업심리지수실적)+itmId='13103134673999'로 2025년1월=86.4 확인.",
+    "_important_note": "objL1(업종코드별)엔 전산업/제조업/대기업/중소기업/비제조업/중화학공업/경공업/수출기업/내수기업 등 다수 코드가 있음. objL2(BSI코드별)엔 기업심리지수실적(CBSI) 외 개별 항목(매출/생산/재고 등) BSI가 더 있을 수 있음 — 필요시 getMeta로 추가 코드 확인.",
+    "dimensions": {
+      "industry": {
+        "kosis_param": "objL1",
+        "default_value": "13102134673BUSINESS_TYPE_CD.99988",
+        "code_map": {
+          "전산업": "13102134673BUSINESS_TYPE_CD.99988",
+          "제조업": "13102134673BUSINESS_TYPE_CD.C0000",
+          "비제조업": "13102134673BUSINESS_TYPE_CD.Y9900",
+          "대기업": "13102134673BUSINESS_TYPE_CD.X5000",
+          "중소기업": "13102134673BUSINESS_TYPE_CD.X6000"
+        },
+        "_note": "검증 완료 (2026-07-30). 전산업 기본값."
+      },
+      "bsi_type": {
+        "kosis_param": "objL2",
+        "default_value": "13102134673BSI_CD.AX",
+        "code_map": {
+          "기업심리지수실적": "13102134673BSI_CD.AX"
+        },
+        "_note": "검증 완료 (2026-07-30). CBSI(종합)만 확인, 개별 세부항목(매출/생산 등) 코드는 미확인."
+      }
+    },
+    "itmId_fixed": "13103134673999",
+    "startPrdDe": "202501",
+    "endPrdDe": "202501",
+    "_period_note": "월(M) 단위, period 형식 'YYYYMM'."
+  },
+  "DT_1ED0001": {
+    "orgId": "101",
+    "tblId": "DT_1ED0001",
+    "prdSe": "Y",
+    "_table_name": "1인당 연간 양곡소비량",
+    "_verified": "실제 API 호출로 확인 (2026-07-30). objL1(C1)='10'(쌀)+objL2(C2)='00'(계)+itmId='T10'(전가구)로 2024년=55.8kg, 2023년=54.5kg 확인.",
+    "_important_note": "objL1='00'은 양곡 전체(쌀+보리쌀 등 합계, 2024년=64.4kg)라서 기사의 '쌀 소비량'과는 다른 숫자가 나옴 — 반드시 '10'(쌀)로 좁혀야 함. itmId는 T10(전가구)/T20(농가)/T30(비농가) 중 보통 전가구(T10) 기준.",
+    "dimensions": {
+      "grain_type": {
+        "kosis_param": "objL1",
+        "default_value": "10",
+        "code_map": {
+          "쌀": "10",
+          "보리쌀": "20",
+          "양곡전체": "00"
+        },
+        "_note": "검증 완료 (2026-07-30). 쌀 기본값."
+      },
+      "use_type": {
+        "kosis_param": "objL2",
+        "default_value": "00",
+        "code_map": {
+          "계": "00",
+          "주부식용": "10",
+          "기타음식용": "99"
+        },
+        "_note": "검증 완료. 계(전체 용도 합) 기본값."
+      }
+    },
+    "itmId_fixed": "T10",
+    "startPrdDe": "2024",
+    "endPrdDe": "2024",
+    "_period_note": "연간 데이터, period 형식 'YYYY'."
+  },
+  "DT_1B34E01": {
+    "orgId": "101",
+    "tblId": "DT_1B34E01",
+    "prdSe": "Y",
+    "_table_name": "사망원인(104항목)/성/연령(5세)별 사망자수, 사망률",
+    "_verified": "실제 API 호출로 확인 (2026-07-30). objL1(C1)=ALL(사망원인 104항목, '0'=계, '200'=악성신생물(암))+objL2(C2)='0'(성별 계)+objL3(C3)='00'(연령 계)+itmId='T1'(사망자수)로 2023년 전체=352511명, 암(C1='200')=85271명 확인. itmId='T5'는 사망률(십만명당).",
+    "_important_note": "3개 분류축(사망원인/성별/연령) 구조. objL1='0'은 전체 사망원인 합계, 개별 원인(암=200 등)은 다른 코드. 원인별 세부 코드는 104개나 되므로 전수 등록 안 함 — 필요 시 getMeta(type=ITM)로 추가 코드 확인.",
+    "dimensions": {
+      "cause": {
+        "kosis_param": "objL1",
+        "default_value": "0",
+        "code_map": {
+          "전체": "0",
+          "암": "200",
+          "악성신생물": "200"
+        },
+        "_note": "검증 완료 (2026-07-30). 전체 기본값. 104개 세부 원인 중 암(악성신생물)만 확인."
+      },
+      "gender": {
+        "kosis_param": "objL2",
+        "default_value": "0",
+        "code_map": {
+          "계": "0"
+        },
+        "_note": "검증 완료. 계(전체) 기본값. 남/여 개별 코드는 미확인."
+      },
+      "age_group": {
+        "kosis_param": "objL3",
+        "default_value": "00",
+        "code_map": {
+          "계": "00"
+        },
+        "_note": "검증 완료. 계(전체 연령) 기본값. 5세 단위 개별 코드는 미확인."
+      }
+    },
+    "itmId_fixed": "T1",
+    "startPrdDe": "2023",
+    "endPrdDe": "2023",
+    "_period_note": "연간 데이터, period 형식 'YYYY'. itmId='T5'로 바꾸면 사망률(십만명당) 조회 가능."
+  },
+  "DT_11714_N001": {
+    "orgId": "117",
+    "tblId": "DT_11714_N001",
+    "prdSe": "Y",
+    "_table_name": "국민기초생활수급자총괄(일반,시설)-시도별",
+    "_verified": "실제 API 호출로 확인 (2026-07-30). objL1='00'(전국)+itmId='TT'(계)로 2023년=2,554,627명 확인 (일반=2,458,608명, ITM_ID='01' / 시설=96,019명, ITM_ID='02').",
+    "_important_note": "objL1(행정구역별) 코드는 표준 시도 코드(00=전국, 11=서울, 21=부산 등) 사용. itmId는 01(일반수급자)/02(시설수급자)/TT(계) 중 보통 계(TT) 기준.",
+    "dimensions": {
+      "region": {
+        "kosis_param": "objL1",
+        "default_value": "00",
+        "code_map": {
+          "전국": "00",
+          "서울": "11",
+          "부산": "21"
+        },
+        "_note": "검증 완료 (2026-07-30). 전국 기본값. 서울/부산만 확인, 나머지 시도 코드는 표준 KOSIS 지역코드 추정 — 필요 시 재확인."
+      }
+    },
+    "itmId_fixed": "TT",
+    "startPrdDe": "2023",
+    "endPrdDe": "2023",
+    "_period_note": "연간 데이터, period 형식 'YYYY'."
   }
 }
