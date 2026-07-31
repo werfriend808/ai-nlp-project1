@@ -5,20 +5,23 @@ agent/mapping/reranker.py — 3단계: 리랭커로 후보 재정렬
 입력: Claim 1건 + TableCandidate 리스트 (keyword_search/embedding_search에서 모은 후보들)
 출력: TableCandidate 리스트 (재정렬, top-k)
 
-모델: Qwen3-Reranker-4B (notebooks/reranker_model_comparison.ipynb 비교 실험 결과 채택 —
-50개 라벨링 케이스 기준 top-1 64%로 4종(BGE-reranker-v2-m3 38%, ko-reranker 24%,
-bge-reranker-v2-m3-ko 10%) 중 1위). 분류 헤드가 아니라 생성형(decoder) 리랭커라
-"yes"/"no" 토큰의 확률을 관련도 점수로 쓴다.
+모델: BAAI/bge-reranker-v2-m3 (notebooks/reranker_model_comparison.ipynb 비교 실험 결과
+채택. 568M). 분류 헤드가 달린 cross-encoder라 CrossEncoder.predict()가 query-document
+쌍의 관련도 점수를 바로 반환한다 — Qwen3-Reranker처럼 "yes"/"no" 토큰 확률을 직접
+계산하는 생성형 방식이 아니다.
+
+임베딩(intfloat/multilingual-e5-large, Microsoft)과 달리 이 리랭커는 BAAI(Beijing
+Academy of Artificial Intelligence) 제작이다. "임베딩/리랭커 둘 다 같은 회사(Microsoft)
+제품으로 통일"하려 했으나, Microsoft가 공식 배포한 다국어 리랭커가 없어 회사 통일은
+포기하고 성능/체급 검증이 끝난 bge-reranker-v2-m3를 그대로 유지하기로 함 (2026-07-31 결정).
 
 3단계 전체 흐름:
   keyword_search 결과 + embedding_search 결과 → table_id 기준 합치기(중복 제거)
   → rerank()로 최종 top-k 재정렬
 
 사전 준비물:
-    pip install transformers torch accelerate
-    GPU 권장(4B 파라미터 모델). VRAM이 부족하면 환경변수
-    KOSIS_RERANKER_MODEL=Qwen/Qwen3-Reranker-0.6B 로 교체.
-    transformers/torch가 없거나 모델 로딩·추론에 실패하면 rerank_scores()가 None을
+    pip install sentence-transformers
+    sentence-transformers가 없거나 모델 로딩·추론에 실패하면 rerank_scores()가 None을
     반환해서, rerank()가 기존 score(키워드 매칭 점수 or 임베딩 유사도)를 그대로 정렬
     기준으로 쓰는 항등(identity) 폴백으로 자동으로 넘어간다.
 """
@@ -62,56 +65,35 @@ class RerankerError(RuntimeError):
     """리랭커 모델 호출 실패."""
 
 
-RERANKER_MODEL = os.environ.get("KOSIS_RERANKER_MODEL", "Qwen/Qwen3-Reranker-4B")
+RERANKER_MODEL = os.environ.get("KOSIS_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 
-# 일부 환경(예: 특정 CPU/torch 조합)에서 Qwen3-Reranker 로딩이 세그멘테이션 폴트로 죽는데,
+# 일부 환경(예: 특정 CPU/torch 조합)에서 리랭커 모델 로딩이 세그멘테이션 폴트로 죽는데,
 # 이건 OS 레벨 크래시라 아래 try/except로 못 잡는다. 이럴 땐 모델 로딩 자체를 시도하지 않도록
 # .env에 KOSIS_DISABLE_RERANKER=1을 넣어서 우회한다 (rerank()가 기존 score 기준 항등
 # 정렬로 폴백 — keyword_search 점수 우선, 그다음 embedding_search 유사도).
 _DISABLE_RERANKER = os.environ.get("KOSIS_DISABLE_RERANKER", "").strip().lower() in ("1", "true", "yes")
-_RERANKER_MAX_LENGTH = 4096
-_RERANKER_INSTRUCTION = (
-    "Given a Korean news claim sentence, judge whether the KOSIS statistical table "
-    "description is the correct match"
-)
-_RERANKER_PREFIX = (
-    "<|im_start|>system\n"
-    "Judge whether the Document meets the requirements based on the Query and the Instruct "
-    'provided. Note that the answer can only be "yes" or "no".<|im_end|>\n<|im_start|>user\n'
-)
-_RERANKER_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
-_reranker_singleton = None  # (tokenizer, model, prefix_tokens, suffix_tokens, true_id, false_id)
+_reranker_singleton = None  # CrossEncoder 인스턴스 lazy 캐시 (프로세스당 1회만 로딩)
 
 
 def _get_reranker():
-    """Qwen3-Reranker를 lazy하게 로딩해서 프로세스 전체에서 재사용한다."""
+    """리랭커(cross-encoder)를 lazy하게 로딩해서 프로세스 전체에서 재사용한다."""
     global _reranker_singleton
     if _reranker_singleton is None:
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from sentence_transformers import CrossEncoder
 
-        tokenizer = AutoTokenizer.from_pretrained(RERANKER_MODEL, padding_side="left")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = AutoModelForCausalLM.from_pretrained(
-            RERANKER_MODEL,
-            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-        ).to(device).eval()
-
-        prefix_tokens = tokenizer.encode(_RERANKER_PREFIX, add_special_tokens=False)
-        suffix_tokens = tokenizer.encode(_RERANKER_SUFFIX, add_special_tokens=False)
-        token_false_id = tokenizer.convert_tokens_to_ids("no")
-        token_true_id = tokenizer.convert_tokens_to_ids("yes")
-
-        _reranker_singleton = (
-            tokenizer, model, prefix_tokens, suffix_tokens, token_true_id, token_false_id,
-        )
+        _reranker_singleton = CrossEncoder(RERANKER_MODEL, trust_remote_code=True)
+        if _reranker_singleton.model.device.type == "cuda":
+            # 일부 모델(trust_remote_code 커스텀 구현)이 config 기본값으로 bfloat16을 쓰는데,
+            # Turing급 GPU(T4 등)는 cuBLAS에서 bf16 GEMM을 지원하지 않아
+            # "CUBLAS_STATUS_NOT_SUPPORTED"로 죽는다. fp16으로 강제 변환해서 회피한다.
+            _reranker_singleton.model = _reranker_singleton.model.half()
     return _reranker_singleton
 
 
 # ---------------------------------------------------------------------------
-# 실제 리랭커 모델 연동 지점. Qwen3-Reranker를 로컬에서 호출한다.
-# transformers/torch가 없거나 모델 로딩·추론에 실패하면 None을 반환해서
+# 실제 리랭커 모델 연동 지점. bge-reranker-v2-m3(cross-encoder)를 로컬에서 호출한다.
+# sentence-transformers가 없거나 모델 로딩·추론에 실패하면 None을 반환해서
 # rerank()가 후보의 기존 score(키워드 매칭 점수 or 임베딩 유사도)를
 # 그대로 정렬 기준으로 쓰는 항등(identity) 폴백으로 넘어가게 한다.
 # ---------------------------------------------------------------------------
@@ -122,41 +104,11 @@ def rerank_scores(query: str, documents: list[str]) -> Optional[list[float]]:
         return None
 
     try:
-        import torch
-
-        tokenizer, model, prefix_tokens, suffix_tokens, token_true_id, token_false_id = _get_reranker()
-        device = model.device
-
-        pairs = [
-            f"<Instruct>: {_RERANKER_INSTRUCTION}\n<Query>: {query}\n<Document>: {doc}"
-            for doc in documents
-        ]
-        scores: list[float] = []
-        batch_size = 8
-        with torch.no_grad():
-            for i in range(0, len(pairs), batch_size):
-                batch = pairs[i:i + batch_size]
-                inputs = tokenizer(
-                    batch, padding=False, truncation="longest_first",
-                    return_attention_mask=False,
-                    max_length=_RERANKER_MAX_LENGTH - len(prefix_tokens) - len(suffix_tokens),
-                )
-                for j, ids in enumerate(inputs["input_ids"]):
-                    inputs["input_ids"][j] = prefix_tokens + ids + suffix_tokens
-                inputs = tokenizer.pad(
-                    inputs, padding=True, return_tensors="pt", max_length=_RERANKER_MAX_LENGTH
-                )
-                inputs = {k: v.to(device) for k, v in inputs.items()}
-
-                logits = model(**inputs).logits[:, -1, :]
-                stacked = torch.stack(
-                    [logits[:, token_false_id], logits[:, token_true_id]], dim=1
-                )
-                probs = torch.nn.functional.log_softmax(stacked, dim=1)
-                scores.extend(probs[:, 1].exp().tolist())
-        return scores
+        model = _get_reranker()
+        scores = model.predict([(query, doc) for doc in documents])
+        return [float(s) for s in scores]
     except Exception as exc:  # noqa: BLE001 - 로딩/추론 실패는 전부 항등 폴백 대상
-        print(f"[reranker] Qwen3-Reranker 사용 불가({exc!r}) - 항등(identity) 정렬로 폴백합니다.")
+        print(f"[reranker] {RERANKER_MODEL} 사용 불가({exc!r}) - 항등(identity) 정렬로 폴백합니다.")
         return None
 
 

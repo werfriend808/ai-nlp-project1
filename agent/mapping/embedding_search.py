@@ -5,8 +5,9 @@ agent/mapping/embedding_search.py — 3단계: 임베딩 기반 top-k 검색
 입력: Claim 1건
 출력: TableCandidate의 리스트 (top-k, 코사인 유사도 기준)
 
-모델: Qwen3-Embedding-4B (notebooks/embedding_model_comparison.ipynb 비교 실험 결과 채택 —
-50개 라벨링 케이스 기준 top-1 70%로 4종(BGE-m3 44%, KoE5 20%, KoSimCSE 8%) 중 1위)
+모델: intfloat/multilingual-e5-large (notebooks/embedding_model_comparison.ipynb 비교
+실험 결과 채택. 560M 파라미터. e5 계열 권장 사용법대로 쿼리 쪽엔 "query: ", 문서 쪽엔
+"passage: " 프리픽스를 붙여 비대칭 인코딩한다 — 안 붙이면 검색 성능이 크게 떨어진다)
 
 ⚠️ 배치 임베딩 원칙(Day2 09:00-10:00 작업):
 table_catalog.json의 embedding_text는 최초 1회만 임베딩해서 캐시 파일(TABLE_EMBEDDING_CACHE)에
@@ -15,8 +16,6 @@ table_catalog.json의 embedding_text는 최초 1회만 임베딩해서 캐시 �
 
 사전 준비물:
     pip install sentence-transformers torch
-    GPU 권장(4B 파라미터 모델). VRAM이 부족하면 환경변수
-    KOSIS_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B 로 교체.
     sentence-transformers/torch가 없거나 모델 로딩에 실패하면 해시 기반 더미 벡터로
     자동 폴백한다 (의미 유사도가 반영되지 않으니 개발/테스트 전용).
 """
@@ -60,21 +59,18 @@ except ImportError:
 
 CATALOG_PATH = Path(__file__).parent / "table_catalog.json"
 EMBEDDING_CACHE_PATH = Path(__file__).parent / "table_embeddings_cache.json"
-EMBEDDING_MODEL = os.environ.get("KOSIS_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
+EMBEDDING_MODEL = os.environ.get("KOSIS_EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
 
-# 일부 환경(CPU/torch 스레딩 조합 등)에서 Qwen3-Embedding 인코딩 호출이 예외 없이 그냥
+# 일부 환경(CPU/torch 스레딩 조합 등)에서 임베딩 모델 인코딩 호출이 예외 없이 그냥
 # 멈춰버리는 경우가 있다 (모델 로딩 자체는 끝나는데 encode() 연산에서 무한 대기 — 세그폴트와
 # 달리 크래시도 아니라서 아래 try/except로도 못 잡는다). 이럴 땐 .env에
 # KOSIS_DISABLE_EMBEDDING=1을 넣어서 모델 시도 자체를 건너뛰고 더미 벡터 폴백으로 바로
 # 간다 (keyword_search가 이미 찾은 표는 정상 동작, 못 찾은 표만 "통계 없음"으로 처리됨).
 _DISABLE_EMBEDDING = os.environ.get("KOSIS_DISABLE_EMBEDDING", "").strip().lower() in ("1", "true", "yes")
 
-# Qwen3-Embedding 계열은 쿼리 쪽에 이 instruction을 붙여야 검색 성능이 나온다(권장 사용법).
-# 문서(표 설명) 쪽은 instruction 없이 그대로 인코딩한다.
-_QWEN_QUERY_INSTRUCTION = (
-    "Given a Korean news claim sentence, retrieve the KOSIS statistical table "
-    "description that best matches it"
-)
+# e5 계열은 쿼리/문서를 서로 다른 프리픽스로 인코딩해야 검색 성능이 나온다(권장 사용법).
+_E5_QUERY_PREFIX = "query: "
+_E5_PASSAGE_PREFIX = "passage: "
 
 
 class EmbeddingError(RuntimeError):
@@ -85,7 +81,7 @@ _model_singleton = None  # SentenceTransformer 인스턴스 lazy 캐시 (프로�
 
 
 def _get_embedding_model():
-    """Qwen3-Embedding을 lazy하게 로딩해서 프로세스 전체에서 재사용한다."""
+    """임베딩 모델을 lazy하게 로딩해서 프로세스 전체에서 재사용한다."""
     global _model_singleton
     if _model_singleton is None:
         from sentence_transformers import SentenceTransformer  # 없으면 ImportError -> 폴백
@@ -95,7 +91,8 @@ def _get_embedding_model():
 
 
 # ---------------------------------------------------------------------------
-# 실제 임베딩 모델 연동 지점. Qwen3-Embedding을 로컬에서 호출한다.
+# 실제 임베딩 모델 연동 지점. multilingual-e5-large를 로컬에서 호출한다. e5 계열은
+# 쿼리 쪽엔 "query: ", 문서 쪽엔 "passage: " 프리픽스를 붙여야 검색 성능이 나온다.
 # sentence-transformers/torch가 없거나 모델 로딩·추론에 실패하면 해시 기반 더미 벡터로
 # 폴백해서 "파이프라인이 끊기지 않고 돌아가는지"는 항상 보장한다.
 # ---------------------------------------------------------------------------
@@ -105,14 +102,11 @@ def embed_texts(
     if not _DISABLE_EMBEDDING:
         try:
             st_model = _get_embedding_model()
-            inputs = (
-                [f"Instruct: {_QWEN_QUERY_INSTRUCTION}\nQuery: {t}" for t in texts]
-                if is_query
-                else texts
-            )
+            prefix = _E5_QUERY_PREFIX if is_query else _E5_PASSAGE_PREFIX
+            inputs = [prefix + t for t in texts]
             return st_model.encode(inputs, convert_to_numpy=True).tolist()
         except Exception as exc:  # noqa: BLE001 - 로딩/추론 실패는 전부 더미 폴백 대상
-            print(f"[embedding_search] Qwen3-Embedding 사용 불가({exc!r}) - 더미 벡터로 폴백합니다.")
+            print(f"[embedding_search] {EMBEDDING_MODEL} 사용 불가({exc!r}) - 더미 벡터로 폴백합니다.")
 
     # --- 폴백: 해시 기반 더미 임베딩 (개발/테스트 전용, 의미 유사도는 반영 안 됨) ---
     dim = 64
