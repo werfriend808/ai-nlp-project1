@@ -51,7 +51,6 @@ SYNONYMS: dict[str, list[str]] = {
     "실업자": ["실업률"],
     "고용": ["고용률", "고용동향"],
     "일자리": ["고용률", "취업자수"],
-    "물가": ["소비자물가지수", "소비자물가", "물가지수"],
     "장바구니": ["장바구니 물가", "소비자물가지수"],
     "집값": ["집값", "아파트 매매가격", "주택매매가격지수"],
     "부동산": ["주택매매가격지수", "주택가격동향"],
@@ -59,7 +58,8 @@ SYNONYMS: dict[str, list[str]] = {
     "저출생": ["저출산", "출생아수", "출생률"],
     "출생아": ["출생아수", "합계출산율", "출생률"],
     "인구감소": ["인구감소", "주민등록인구"],
-    "수출": ["수출액", "수출 증가율"],
+    "수출이": ["수출액", "수출 증가율"],
+    "수출은": ["수출액", "수출 증가율"],
     "수입": ["수입액"],
     "무역흑자": ["무역수지", "무역흑자"],
     "성장률": ["경제성장률", "GDP", "국내총생산"],
@@ -88,11 +88,18 @@ def _load_catalog(path: Path = CATALOG_PATH) -> list[dict]:
     return data["tables"]
 
 
+def _normalize(text: str) -> str:
+    """공백 제거 비교용 정규화. 기사 본문은 "혼인 건수"처럼 카탈로그 키워드
+    "혼인건수"와 띄어쓰기가 달라지는 경우가 흔해서, 공백을 무시하고 비교한다."""
+    return re.sub(r"\s+", "", text)
+
+
 def _expand_query_terms(sentence: str) -> set[str]:
     """문장에서 동의어 사전을 거쳐 검색에 쓸 정규화된 키워드 집합을 만든다."""
     terms: set[str] = set()
+    normalized_sentence = _normalize(sentence)
     for raw_term, mapped_terms in SYNONYMS.items():
-        if raw_term in sentence:
+        if _normalize(raw_term) in normalized_sentence:
             terms.update(mapped_terms)
     return terms
 
@@ -101,9 +108,10 @@ def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[
     """표 하나에 대해 (매칭 점수, 매칭된 키워드 목록)을 계산한다."""
     matched: list[str] = []
     keywords = table.get("keywords", [])
+    normalized_sentence = _normalize(sentence)
 
     for kw in keywords:
-        if kw in sentence:
+        if _normalize(kw) in normalized_sentence:
             matched.append(kw)
         elif kw in expanded_terms:
             matched.append(kw)
