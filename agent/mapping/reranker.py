@@ -196,15 +196,18 @@ def search_and_rerank(
     keyword_fn,
     embedding_fn,
     top_k: int = 5,
+    document_texts: Optional[dict[str, str]] = None,
 ) -> list[TableCandidate]:
     """3단계 전체 흐름: keyword_search + embedding_search 결과를 합쳐 rerank까지 수행.
 
     keyword_fn, embedding_fn: 각각 keyword_search(claim), embedding_search(claim) 함수를 주입.
+    document_texts: table_id -> 임베딩/설명 텍스트. rerank()로 그대로 전달된다(생략 시
+    table_name으로 대체되는데, 리랭커가 짧은 제목만 보고 판단하게 되어 성능이 떨어진다).
     """
     kw_results = keyword_fn(claim)
     emb_results = embedding_fn(claim)
     merged = _merge_candidates(kw_results, emb_results)
-    return rerank(claim, merged, top_k=top_k)
+    return rerank(claim, merged, top_k=top_k, document_texts=document_texts)
 
 
 if __name__ == "__main__":
