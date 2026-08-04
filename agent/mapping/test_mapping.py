@@ -21,14 +21,11 @@ golden_set을 직접 로드하면 이 드리프트가 원천적으로 사라진�
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from agent.mapping.embedding_search import build_table_embedding_cache, embedding_search
 from agent.mapping.eval_metrics import EvalResult, evaluate
 from agent.mapping.golden_set import load_golden_set
 from agent.mapping.keyword_search import keyword_search
-from agent.mapping.reranker import search_and_rerank
+from agent.mapping.reranker import search_and_rerank, load_document_texts
 
 try:
     from agent.interfaces import Claim
@@ -44,13 +41,7 @@ except ImportError:
         unit: Optional[str] = None
         population: Optional[str] = None
 
-CATALOG_PATH = Path(__file__).parent / "table_catalog.json"
 TOP_K = 5  # eval_metrics.DEFAULT_K_LIST의 최댓값(Recall@5)을 커버하려면 rank_fn이 5개는 반환해야 함
-
-
-def _load_document_texts(catalog_path: Path = CATALOG_PATH) -> dict[str, str]:
-    tables = json.loads(catalog_path.read_text(encoding="utf-8"))["tables"]
-    return {t["tblId"]: t["embedding_text"] for t in tables}
 
 
 def _print_result(r: EvalResult) -> None:
@@ -73,7 +64,7 @@ def _print_failures(r: EvalResult, examples_by_id: dict[str, str], limit: int = 
 
 def run_tests(top_k: int = TOP_K) -> None:
     examples = load_golden_set()
-    document_texts = _load_document_texts()
+    document_texts = load_document_texts()
     embedding_cache = build_table_embedding_cache()
     examples_by_id = {e.claim_id: e.sentence for e in examples}
 

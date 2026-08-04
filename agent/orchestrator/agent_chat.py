@@ -47,7 +47,7 @@ from typing import Optional
 from agent.interfaces import Claim, TableCandidate, ComputedResult, KosisApiResponse
 from agent.mapping.keyword_search import keyword_search
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank
+from agent.mapping.reranker import search_and_rerank, load_document_texts
 from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback
 from agent.orchestrator.clarify_rules import CLARIFY_QUESTIONS
 from agent.kosis.api_client import KosisApiClient, KosisApiError
@@ -292,13 +292,14 @@ def _extract_month_period(text: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # 툴 1: 통계표 매핑 — 실전1(3단계)의 search_and_rerank를 그대로 재사용
 # ---------------------------------------------------------------------------
-def tool_search_table(user_question: str, embedding_cache: dict) -> list[TableCandidate]:
+def tool_search_table(user_question: str, embedding_cache: dict, document_texts: dict) -> list[TableCandidate]:
     claim = Claim(sentence=user_question, claim_type="규모")
     return search_and_rerank(
         claim,
         keyword_fn=keyword_search,
         embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
         top_k=3,
+        document_texts=document_texts,
     )
 
 
@@ -401,6 +402,7 @@ class ChatSession:
         with open(TABLE_PARAMS_PATH, encoding="utf-8") as f:
             self.table_params = json.load(f)
         self.embedding_cache = build_table_embedding_cache()
+        self.document_texts = load_document_texts()
 
         self.slots: dict = {}
         self.table: Optional[TableCandidate] = None
@@ -432,7 +434,7 @@ class ChatSession:
         # 아직 표를 못 찾았으면: 이번 발화로 통계표 매핑부터 시도
         if self.table is None:
             self._log(f'  [tool: 통계표_매핑] query="{user_input}"')
-            candidates = tool_search_table(user_input, self.embedding_cache)
+            candidates = tool_search_table(user_input, self.embedding_cache, self.document_texts)
             if not candidates:
                 return "죄송합니다, 관련된 통계표를 찾지 못했습니다. (통계 없음/불명확)"
 

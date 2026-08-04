@@ -461,6 +461,7 @@ def run_article(
                 claim,
                 keyword_fn=keyword_search,
                 embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
+                document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
             )
         except Exception as e:
             print(f"[3단계 매핑] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")

@@ -47,7 +47,7 @@ from agent.preprocessing import classifier as classifier_module
 from agent.preprocessing import claim_extractor as claim_extractor_module
 from agent.mapping.keyword_search import keyword_search
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank
+from agent.mapping.reranker import search_and_rerank, load_document_texts
 
 CSV_PATH = Path(__file__).parent.parent.parent / "data" / "data_set.csv"
 
@@ -77,7 +77,9 @@ def load_articles(csv_path: Path, limit: int | None) -> pd.DataFrame:
     return df
 
 
-def run_article(title: str, published_date, article_text: str, embedding_cache: dict) -> dict:
+def run_article(
+    title: str, published_date, article_text: str, embedding_cache: dict, document_texts: dict
+) -> dict:
     result: dict = {"title": title, "date": str(published_date), "hcx_calls": 0}
 
     # --- 1단계: classifier (호출 1회 기대) ---
@@ -139,6 +141,7 @@ def run_article(title: str, published_date, article_text: str, embedding_cache: 
                 claim,
                 keyword_fn=keyword_search,
                 embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
+                document_texts=document_texts,
             )
         except Exception as e:
             stage3.append({"claim_sentence": claim.sentence, "error": f"{type(e).__name__}: {e}"})
@@ -165,6 +168,7 @@ def main() -> None:
     limit = None if args.limit == 0 else args.limit
     df = load_articles(CSV_PATH, limit)
     embedding_cache = build_table_embedding_cache()
+    document_texts = load_document_texts()
 
     results = []
     mismatches = []
@@ -175,7 +179,7 @@ def main() -> None:
         title = row["기사제목"]
         print(f"\n[{i + 1}/{len(df)}] {title}")
 
-        res = run_article(title, row["작성일"], row["기사 본문 전체"], embedding_cache)
+        res = run_article(title, row["작성일"], row["기사 본문 전체"], embedding_cache, document_texts)
         results.append(res)
         total_calls += res["hcx_calls"]
 
