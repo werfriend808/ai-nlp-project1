@@ -28,6 +28,7 @@ Academy of Artificial Intelligence) 제작이다. "임베딩/리랭커 둘 다 �
 
 from __future__ import annotations
 
+import json
 import os
 
 # embedding_search.py와 동일한 이유(OpenMP 런타임 중복 로드로 인한 세그폴트, 2026-08-03 확인) —
@@ -36,6 +37,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -72,6 +74,22 @@ class RerankerError(RuntimeError):
 
 
 RERANKER_MODEL = os.environ.get("KOSIS_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+
+CATALOG_PATH = Path(__file__).parent / "table_catalog.json"
+
+
+def load_document_texts(catalog_path: Path = CATALOG_PATH) -> dict[str, str]:
+    """table_catalog.json의 embedding_text를 tblId -> 텍스트로 매핑해서 반환한다.
+
+    search_and_rerank()에 document_texts로 넘기면 리랭커가 표 제목이 아니라 이 풍부한
+    텍스트(제목+키워드+설명)를 보고 판단한다 — 안 넘기면 table_name(짧은 제목)으로
+    대체되어 성능이 크게 떨어진다. 2026-08-03에 이 프로젝트의 모든 실제 호출부
+    (csv_batch_runner.py/batch_runner.py/agent_chat.py)가 이걸 안 넘기고 있던 걸
+    발견해서 이 헬퍼로 통일했다 — 새로 search_and_rerank()를 호출하는 곳이 생기면
+    반드시 이 함수로 document_texts를 만들어서 넘길 것.
+    """
+    tables = json.loads(catalog_path.read_text(encoding="utf-8"))["tables"]
+    return {t["tblId"]: t["embedding_text"] for t in tables}
 
 # 일부 환경(예: 특정 CPU/torch 조합)에서 리랭커 모델 로딩이 세그멘테이션 폴트로 죽는데,
 # 이건 OS 레벨 크래시라 아래 try/except로 못 잡는다. 이럴 땐 모델 로딩 자체를 시도하지 않도록
@@ -230,11 +248,13 @@ if __name__ == "__main__":
         Claim(sentence="출생아 수가 14.6% 증가했다", claim_type="증감률"),
         Claim(sentence="지난해 수출이 6838억달러로 역대 최대를 기록했다", claim_type="규모"),
     ]
+    document_texts = load_document_texts()
     for c in test_claims:
         result = search_and_rerank(
             c,
             keyword_fn=keyword_search,
             embedding_fn=lambda claim: embedding_search(claim, cache=cache),
+            document_texts=document_texts,
         )
         print(f"\n[{c.sentence}]")
         for r in result[:3]:
