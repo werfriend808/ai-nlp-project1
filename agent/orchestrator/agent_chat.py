@@ -168,12 +168,17 @@ def _extract_table_dimension_hints_llm(
     2026-08-03 golden set 검증에서 이런 케이스가 실제로 확인됐지만 건수가 적어(1건) 보류했었는데,
     2026-08-05 사용자 요청으로 실제 구현.
 
-    환각 방지 2단계:
+    환각 방지 3단계:
     1) 그 표의 code_map에 실제로 존재하는 라벨(전체/계/합계 제외)이 아니면 버린다.
     2) LLM이 같이 답한 quote(근거 문구)가 실제로 원문 문장에 있는지 확인하고, 없으면 버린다 —
        "value는 후보 안에 있지만 문장에 아무 근거가 없는데도 그럴듯하게 골라버리는" 진짜 환각을
        잡기 위한 것 (2026-08-05 확인: "고용률..." 문장에 성별 언급이 전혀 없는데도 gender 후보
-       중 하나인 "비농가"를 근거 없이 답한 사례 — code_map 소속 여부 검사만으로는 못 걸러짐)."""
+       중 하나인 "비농가"를 근거 없이 답한 사례 — code_map 소속 여부 검사만으로는 못 걸러짐).
+    3) 문장이 "20대"/"70대 이상" 같은 다중코드(10세 단위) 패턴이면, 그 축은 LLM한테 아예
+       안 물어본다 — 2026-08-06 확인: DT_1B04005N.age에 5세 단위 21개 구간을 채운 뒤로
+       "20대 인구" 문장에 LLM이 "20~24세"(20대의 절반뿐)를 답으로 내놓는 새 오답이 생김.
+       "20대"는 resolve_decade_age_responses()가 별도로 처리해야 하는 값이라, 단일값 후보
+       중 하나를 고르는 이 함수가 손대면 안 됨."""
     if not unresolved_dims:
         return {}
     dimensions = table_params.get(table_id, {}).get("dimensions", {})
@@ -182,7 +187,13 @@ def _extract_table_dimension_hints_llm(
         code_map = dimensions.get(dim_name, {}).get("code_map", {})
         return any(c not in _GENERIC_FALLBACK_LABELS for c in code_map)
 
-    unresolved_dims = [d for d in unresolved_dims if _has_real_candidates(d)]
+    def _is_decade_multi_code_case(dim_name: str) -> bool:
+        code_map = dimensions.get(dim_name, {}).get("code_map", {})
+        return _resolve_decade_age_codes(question, code_map) is not None
+
+    unresolved_dims = [
+        d for d in unresolved_dims if _has_real_candidates(d) and not _is_decade_multi_code_case(d)
+    ]
     if not unresolved_dims:
         return {}
 
@@ -222,6 +233,255 @@ def _extract_demographic_hints(question: str) -> dict:
         if keyword in question:
             hints.update(slot_values)
     return hints
+
+
+# ---------------------------------------------------------------------------
+# "20대"/"70대 이상" 같은 10세 단위 다중코드 합산 (DT_1B04005N age 등)
+#
+# KOSIS는 이 표를 5세 단위로만 분류해서 "20대"에 해당하는 단일 코드가 없다. "20대"마다
+# 하드코딩하는 대신, code_map에 이미 등록된 5세 단위 라벨("20~24세" 등)을 파싱해서 그
+# 10세 구간에 포함되는 코드들을 자동으로 찾아낸다 — 10대~100세이상까지 전부 이 함수
+# 하나로 커버되고, 다른 표에 같은 5세 단위 구조가 있어도 그대로 재사용 가능하다
+# (2026-08-06 설계).
+# ---------------------------------------------------------------------------
+_AGE_BAND_RANGE_RE = re.compile(r"^(\d+)~(\d+)세$")
+_AGE_100_PLUS_RE = re.compile(r"^100세이상$")
+# (?<!\d): 매칭되는 한 자리 숫자 앞에 다른 숫자가 있으면(예: "1480대"의 "80대") 매칭하지
+# 않는다 — 실제 기사 실측(2026-08-04, full_coverage_result.jsonl 3181건 분석)에서
+# "1082만1480대"(자동차 판매 대수)처럼 큰 숫자의 끝자리가 나이대로 오탐되는 사례를 발견해서
+# 추가한 정규식 레벨 방어. "20대"/"10·20대"처럼 진짜 나이대는 앞에 다른 숫자가 안 붙는다.
+_DECADE_EXPR_RE = re.compile(r"(?<!\d)(\d)0대(\s*이상)?")
+
+
+def _parse_age_band_label(label: str) -> Optional[tuple[int, Optional[int]]]:
+    """code_map의 5세 단위 라벨을 (시작나이, 끝나이) 튜플로 변환한다. "100세이상"처럼
+    끝이 없으면 끝나이는 None(무한대 취급). 매칭 안 되면 None."""
+    m = _AGE_BAND_RANGE_RE.match(label)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    if _AGE_100_PLUS_RE.match(label):
+        return 100, None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# "숫자0대"가 진짜 나이대인지 문맥 확인 (1차 규칙 + 2차 LLM 더블체크)
+#
+# 실측(2026-08-04, 실제 기사 1005건/claim 3181건 분석)에서 같은 정규식이 나이대가 아닌
+# 경우에도 오탐되는 걸 확인함: "상위 10대 기업"(순위), "K2 전차 총 180대"(대수/단위).
+# 정규식 하나로는 이 둘을 못 걸러서, 표별 슬롯 힌트(LLM 2차)와 같은 원칙으로 처리한다 —
+# 확실한 신호가 있는 대다수는 규칙(공짜)으로 끝내고, 신호가 없는 애매한 소수만 LLM에 묻는다.
+# ---------------------------------------------------------------------------
+_DECADE_AGE_FOLLOW_WHITELIST = (
+    "후반", "초반", "중반", "이상", "미만", "인구", "실업률", "취업률", "취업자",
+    "근로자", "직장인", "남성", "여성", "남자", "여자", "가구주", "세대주",
+)
+_DECADE_AGE_FOLLOW_BLACKLIST = ("기업", "은행", "국가", "기관", "대학", "도시", "종목", "그룹", "브랜드")
+_DECADE_AGE_PRECEDE_BLACKLIST = (
+    "전차", "차량", "트럭", "헬기", "전투기", "버스", "컴퓨터", "노트북", "항공기", "탱크", "장비",
+)
+# 조사로 자연스럽게 끝나는 경우("20대는", "20대가")도 나이대로 확정 — 순위/대수 표현은
+# 보통 뒤에 바로 다른 명사(기업/전차 등)가 오지 조사만 딱 붙어 끝나지 않는다.
+_DECADE_AGE_PARTICLE_CHARS = "는가이을를의도만에과와랑"
+
+
+def _check_decade_age_context(normalized_question: str, match: re.Match) -> Optional[bool]:
+    """"숫자0대" 매칭 앞뒤 문맥만 보고 확실히 판단되면 True/False, 확실하지 않으면(애매) None.
+
+    None을 반환하면 호출하는 쪽이 LLM(2차)에게 물어봐야 한다 — 여기서 애매한 걸 억지로
+    True/False로 단정하지 않는다."""
+    follow = normalized_question[match.end() : match.end() + 6]
+    precede = normalized_question[max(0, match.start() - 6) : match.start()]
+
+    if any(w in follow for w in _DECADE_AGE_FOLLOW_BLACKLIST):
+        return False
+    if any(w in precede for w in _DECADE_AGE_PRECEDE_BLACKLIST):
+        return False
+    if any(w in follow for w in _DECADE_AGE_FOLLOW_WHITELIST):
+        return True
+    if not follow or follow[0] in _DECADE_AGE_PARTICLE_CHARS:
+        return True
+    return None
+
+
+def _confirm_decade_age_with_llm(question: str, matched_expr: str) -> bool:
+    """규칙(1차)으로 확실히 판단 안 되는 애매한 경우만 호출하는 2차 확인. 실패/근거없음/
+    근거가 원문에 없으면(환각) 전부 안전하게 False(나이대 아님)로 처리한다 — 표별
+    LLM 힌트(_extract_table_dimension_hints_llm)와 같은 "확신 없으면 억지로 추측하지
+    않는다" 원칙."""
+    prompt = f"""다음 문장에서 "{matched_expr}"라는 표현이 나이대(연령대)를 뜻하는지 판단하세요.
+
+규칙:
+- 나이대를 뜻하면(예: "20대 취업자 수", "40대 남성") value를 true로 답하세요.
+- 개수를 세는 단위(예: "전차 180대")나 순위(예: "상위 10대 기업")처럼 나이가 아니면
+  value를 false로 답하세요.
+- 판단 근거가 되는, 문장에 실제로 나온 표현을 quote에 그대로 복사하세요. 지어내지 마세요.
+- 설명이나 다른 텍스트는 절대 포함하지 마세요.
+
+문장: "{question}"
+
+응답 형식 (JSON만, 다른 텍스트 없이): {{"value": true 또는 false, "quote": "근거 문구"}}
+"""
+    try:
+        raw = call_hcx(prompt)
+    except Exception:
+        return False
+
+    try:
+        extracted = json.loads(raw)
+    except json.JSONDecodeError:
+        extracted = extract_json_fallback(raw)
+
+    value = extracted.get("value")
+    quote = extracted.get("quote")
+    if value is not True or not quote:
+        return False
+    if _normalize_whitespace(str(quote)) not in _normalize_whitespace(question):
+        return False
+    return True
+
+
+def _resolve_decade_age_codes(question: str, age_code_map: dict) -> Optional[tuple[str, list[str]]]:
+    """문장에서 "20대"/"70대 이상" 같은 표현을 찾아, age_code_map(5세 단위 라벨들) 중 그
+    구간에 해당하는 코드 목록을 반환한다. 매칭 없으면 None.
+
+    반환값: (매칭된 표현 원문, 해당 구간 코드 리스트) — 코드가 2개 이상이면 호출하는 쪽이
+    api_client를 코드별로 여러 번 호출한 뒤 calculator.compute_sum()으로 합산해야 한다."""
+    normalized_question = _normalize_whitespace(question)
+    m = _DECADE_EXPR_RE.search(normalized_question)
+    if not m:
+        return None
+
+    context_check = _check_decade_age_context(normalized_question, m)
+    if context_check is False:
+        return None
+    if context_check is None and not _confirm_decade_age_with_llm(question, m.group(0)):
+        return None
+
+    decade_start = int(m.group(1)) * 10
+    is_or_above = bool(m.group(2))
+
+    matched_codes = []
+    for label, code in age_code_map.items():
+        band = _parse_age_band_label(label)
+        if band is None:
+            continue
+        band_start, band_end = band
+        if is_or_above:
+            if band_start >= decade_start:
+                matched_codes.append(code)
+        elif band_start >= decade_start and (band_end is not None and band_end < decade_start + 10):
+            matched_codes.append(code)
+
+    if not matched_codes:
+        return None
+    return m.group(0), matched_codes
+
+
+def resolve_decade_age_responses(
+    table_id: str, question: str, base_slots: dict, table_params: dict, client
+) -> Optional[tuple[str, list]]:
+    """"20대"/"70대 이상" 등을 감지해서, 필요한 코드들을 client.fetch_by_codes()로 한 번에
+    가져온다 (합산은 호출하는 쪽이 calculator.compute_sum()으로). 감지 안 되면 None.
+
+    2026-08-06: 원래 코드별로 client()를 여러 번 호출했었는데, resolve_max_since_event_
+    responses()에 fetch_series()를 적용한 것과 일관되게 맞추려고 fetch_by_codes() 한 번
+    호출로 리팩터링(KOSIS가 objL2="25+30"처럼 "+"로 묶은 요청도 한 번에 응답해줌을 확인)."""
+    age_code_map = table_params.get(table_id, {}).get("dimensions", {}).get("age", {}).get("code_map", {})
+    resolved = _resolve_decade_age_codes(question, age_code_map)
+    if resolved is None:
+        return None
+    label, codes = resolved
+    responses = client.fetch_by_codes(table_id, base_slots, "age", codes)
+    return label, responses
+
+
+# ---------------------------------------------------------------------------
+# "코로나 이후 최고"/"역대 최대" 같은 극값(extremum) 주장 검증
+#
+# 이런 주장은 단일 KosisApiResponse 하나로는 못 다룬다 — "기준 시점부터 지금까지의 모든
+# 과거 값"을 실제로 조회해서, 현재 값이 정말 그 중 최댓값인지 비교해야 한다(6단계
+# calculator.compute_max_check() 참고). "코로나 이후"처럼 사건을 기준점으로 삼는 표현은
+# 그 사건이 언제 시작됐는지를 먼저 알아야 하는데, 이건 "작년"/"지난달"처럼 매번 달라지는
+# 상대 시점이 아니라 고정된 역사적 사실이라 정확한 사전 하나로 충분하다 — LLM에 맡기면
+# 매번 값이 오락가락(비결정적)할 수 있는 걸 굳이 LLM에 맡길 이유가 없다(2026-08-06 설계).
+# ---------------------------------------------------------------------------
+_TIME_ANCHOR_YEARS: dict[str, int] = {
+    "코로나": 2020,
+    "코로나19": 2020,
+    "팬데믹": 2020,
+}
+_SINCE_EVENT_RE = re.compile(r"(코로나(?:19)?|팬데믹)\s*이후")
+
+
+def _resolve_since_event_start_year(question: str) -> Optional[int]:
+    """"코로나 이후"처럼 사건을 기준점으로 삼는 표현에서 시작 연도를 찾는다. 매칭 안 되면 None."""
+    normalized_question = _normalize_whitespace(question)
+    m = _SINCE_EVENT_RE.search(normalized_question)
+    if not m:
+        return None
+    anchor = m.group(1)
+    key = "코로나" if anchor.startswith("코로나") else anchor
+    return _TIME_ANCHOR_YEARS.get(key)
+
+
+def resolve_max_since_event_responses(
+    table_id: str, question: str, base_slots: dict, client, *, current_year: int
+) -> Optional[tuple[int, list]]:
+    """"코로나 이후 최고" 등을 감지해서, 시작 연도부터 current_year까지의 시계열을
+    client.fetch_series()로 한 번에 가져온다 (최댓값 검증은 호출하는 쪽이
+    calculator.compute_max_check()로). 감지 안 되면 None.
+
+    2026-08-06: 원래 연도별로 client()를 여러 번 호출했었는데, KOSIS가 넓은 기간
+    요청(startPrdDe~endPrdDe)을 한 번의 호출로 전부 돌려준다는 걸 확인해서
+    fetch_series() 한 번 호출로 리팩터링(실측: 26개 연도가 1번 호출로 옴)."""
+    start_year = _resolve_since_event_start_year(question)
+    if start_year is None:
+        return None
+    responses = client.fetch_series(table_id, base_slots, str(start_year), str(current_year))
+    return start_year, responses
+
+
+_N_YEARS_SINCE_RE = re.compile(r"(\d+)년\s*만에")
+
+
+def _resolve_n_years_since_start_year(question: str, article_year: int) -> Optional[int]:
+    """"8년 만에 최대"처럼 숫자로 명시된 기간 표현에서 시작 연도를 계산한다(기사 작성
+    연도 - N). "코로나 이후"(고정 이벤트)와 달리 매번 다른 숫자가 오는 진짜 상대 표현이라
+    기사 작성 시점 기준으로 계산해야 한다. 매칭 안 되면 None."""
+    normalized_question = _normalize_whitespace(question)
+    m = _N_YEARS_SINCE_RE.search(normalized_question)
+    if not m:
+        return None
+    return article_year - int(m.group(1))
+
+
+def resolve_max_n_years_responses(
+    table_id: str, question: str, base_slots: dict, client, *, article_year: int, current_year: int
+) -> Optional[tuple[int, list]]:
+    """"8년 만에 최대" 등을 감지해서, (기사 작성 연도-N)부터 current_year까지의 시계열을
+    한 번에 가져온다. 감지 안 되면 None."""
+    start_year = _resolve_n_years_since_start_year(question, article_year)
+    if start_year is None:
+        return None
+    responses = client.fetch_series(table_id, base_slots, str(start_year), str(current_year))
+    return start_year, responses
+
+
+_ALL_TIME_RE = re.compile(r"역대")
+
+
+def resolve_max_all_time_responses(
+    table_id: str, question: str, base_slots: dict, client, *, current_year: int, earliest_year: int = 1960
+) -> Optional[list]:
+    """"역대 최대"처럼 기준 시점 자체가 없는 극값 주장을 감지해서, 그 표가 실제로 갖고
+    있는 가장 오래된 시점부터 전부 가져온다. earliest_year는 안전하게 이른 기본값(1960)일
+    뿐 — KOSIS는 실제 데이터가 없는 앞부분은 그냥 알아서 제외하고 있는 것만 돌려주므로
+    표마다 정확한 시작 연도를 몰라도 안전하다(실측: DT_1DA7102S에 1999년부터 요청해도
+    실제 데이터가 있는 2000년부터로 정상 응답). 감지 안 되면 None."""
+    if not _ALL_TIME_RE.search(question):
+        return None
+    return client.fetch_series(table_id, base_slots, str(earliest_year), str(current_year))
 
 
 def _wants_comparison(question: str) -> bool:

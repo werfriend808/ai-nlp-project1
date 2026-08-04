@@ -1,7 +1,0 @@
-Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-[golden_set] 총 89건 중 정답 없음/미완료 19건 제외, 카탈로그에 없는 gold_table_id 11건 제외 -> 평가 가능 59건
-  카탈로그에 없는 항목: [('A027-03', 'DT_1J22005'), ('A033-01', 'DT_1R11001_FRM101'), ('A033-02', 'DT_1R11001_FRM101'), ('A033-03', 'DT_1R11001_FRM101'), ('A033-04', 'DT_1R11001_FRM101'), ('A034-01', 'DT_1KE10041'), ('A034-02', 'DT_1KE10041'), ('A034-03', 'DT_1KE10041'), ('A039-01', 'DT_1C91'), ('A039-02', 'DT_1C91'), ('A039-03', 'DT_1C91')]
-=== golden_set 59건으로 keyword/embedding/rerank 평가 ===
-
-Loading weights:   0%|          | 0/391 [00:00<?, ?it/s]Loading weights:  71%|███████   | 276/391 [00:00<00:00, 2755.50it/s]Loading weights: 100%|██████████| 391/391 [00:00<00:00, 3148.23it/s]
-Loading weights:   0%|          | 0/393 [00:00<?, ?it/s]Loading weights: 100%|██████████| 393/393 [00:00<00:00, 4522.25it/s]

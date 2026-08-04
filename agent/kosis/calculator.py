@@ -24,7 +24,7 @@ except ImportError:
         from dataclasses import dataclass
         from typing import Literal, Optional
 
-        CalcType = Literal["합계", "비율", "증감", "증감률"]  # type: ignore[misc]
+        CalcType = Literal["합계", "비율", "증감", "증감률", "최댓값검증"]  # type: ignore[misc]
 
         @dataclass
         class KosisApiResponse:  # type: ignore[no-redef]
@@ -97,6 +97,26 @@ class KosisCalculator:
         rate = (target.raw_value - base.raw_value) / base.raw_value * 100
         return ComputedResult(
             calc_type="증감률", raw_value=round(rate, 1), unit="%", period=f"{base.period}~{target.period}"
+        )
+
+    def compute_max_check(
+        self, current: KosisApiResponse, historical: list[KosisApiResponse]
+    ) -> ComputedResult:
+        """최댓값검증: "역대 최대"/"코로나 이후 최고" 같은 극값 주장을 검증한다.
+
+        current를 포함한 historical(같은 시점 범위 전체, 보통 current도 그 안에 포함해서
+        여러 번 호출한 리스트) 중 실제 최댓값과 그 시점을 raw_value/period에 담아 반환한다.
+        judge()(7단계)가 "기사가 주장한 값 == 이 함수가 찾은 진짜 최댓값"인지 비교해서
+        "현재 값이 정말 최댓값이 맞는지"를 판정한다 — LLM이 추측하는 게 아니라 실제
+        과거 시계열 데이터를 코드로 직접 비교해서 정한다 (2026-08-06 추가).
+        """
+        all_values = historical if current in historical else historical + [current]
+        if not all_values:
+            raise CalculationError("최댓값 검증에는 최소 1개 이상의 KosisApiResponse가 필요합니다.")
+        unit = _check_same_unit(all_values)
+        max_response = max(all_values, key=lambda r: r.raw_value)
+        return ComputedResult(
+            calc_type="최댓값검증", raw_value=max_response.raw_value, unit=unit, period=max_response.period
         )
 
 

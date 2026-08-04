@@ -117,7 +117,7 @@ class KosisApiResponse:
 # 출력: ComputedResult
 # ---------------------------------------------------------------------------
 
-CalcType = Literal["합계", "비율", "증감", "증감률"]
+CalcType = Literal["합계", "비율", "증감", "증감률", "최댓값검증"]
 
 @dataclass
 class ComputedResult:
