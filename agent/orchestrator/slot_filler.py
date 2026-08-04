@@ -84,12 +84,16 @@ def extract_json_fallback(raw: str) -> dict:
         return {}
 
 
-RELATIVE_TIME_KEYWORDS = ["작년", "올해", "지난달", "이번달", "재작년", "지난주", "이번주"]
+RELATIVE_TIME_KEYWORDS = ["작년", "지난해", "올해", "지난달", "이번달", "재작년", "지난주", "이번주"]
 
 # 연도로 바로 환산 가능한 표현만 여기 정의 (계산 = 코드로)
+# "지난해"는 "작년"과 같은 뜻인데 빠져있어서, LLM 추출 자체는 "지난해 12월"처럼 정확히
+# 뽑아내는데도 is_valid_period()가 못 알아보는 값으로 취급해 버려지는 문제가 있었음
+# (pipeline_integration_log.md 이슈 1-5, 2026-08-04 확인 후 수정).
 RELATIVE_YEAR_OFFSET = {
     "재작년": -2,
     "작년": -1,
+    "지난해": -1,
     "올해": 0,
 }
 

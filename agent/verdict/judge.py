@@ -73,8 +73,10 @@ CLEAR_GAP_MULTIPLIER = 5
 _SCALE = {"조": 1e12, "억": 1e8, "만": 1e4, "천": 1e3}
 _SCALE_ORDER = ["조", "억", "만", "천"]  # 인덱스가 클수록 작은 단위 (조 > 억 > 만 > 천)
 _NUMBER_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(조|억|만|천)?")
-_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 _DIGITS_RE = re.compile(r"\d+")
+# 숫자 바로 뒤에 이 마커가 오면 "23만8천명"의 "명"처럼 claim.unit과 일치하는 값이 아닌 한
+# 기간/시점 표현("46개월 만에", "3년 만에", "2024년")이지 비교 대상 수치가 아니다.
+_DURATION_MARKER_RE = re.compile(r"^(개월|년|일|주|시간|분기)")
 
 # "1.1% 감소했다"처럼 claim_type="증감률" 문장은 숫자 자체엔 부호가 없고 방향은 단어로만
 # 표현됨. ComputedResult 쪽(calculator.py compute_change/compute_change_rate)은 감소를
@@ -163,10 +165,15 @@ def _extract_claim_number(claim: Claim) -> Optional[float]:
 
     candidates: list[float] = []
     for value, start, end in chunks:
-        raw_chunk = claim.sentence[start:end].replace(",", "")
-        tail = claim.sentence[end : end + 1]
-        if tail == "년" and _YEAR_RE.fullmatch(raw_chunk):
-            continue  # "2024년" 같은 연도 표기는 비교 대상 수치가 아니므로 제외
+        marker_match = _DURATION_MARKER_RE.match(claim.sentence[end : end + 3])
+        if marker_match and marker_match.group(1) != claim.unit:
+            # "2024년"(연도 표기), "46개월"/"3년 만에"(기간 경과 표현) 둘 다 여기 걸림 —
+            # claim이 실제로 그 단위를 주장하는 게 아니라면(예: claim.unit="개월") 비교 대상
+            # 수치가 아니므로 제외한다. (예전엔 "년"+4자리 연도 표기만 걸렀는데, "46개월"처럼
+            # 개월 단위 기간 표현은 못 걸러서 "46"을 실제 수치로 오인하는 버그가 있었음 —
+            # 실제 배치 실행에서 "청년층 취업자 수는 46개월 만에 감소로 전환했다"가
+            # 상대오차 1143%라는 무의미한 "불일치" 판정으로 이어지는 걸로 재현됨.)
+            continue
         candidates.append(value)
 
     if not candidates:
@@ -214,6 +221,27 @@ def _numeric_gap(claim_value: float, claim: Claim, computed: ComputedResult) -> 
     return abs(claim_value - computed.raw_value) / abs(computed.raw_value) * 100
 
 
+_RATE_CALC_TYPES = ("증감", "증감률")
+_LEVEL_CALC_TYPES = ("단순조회", "합계", "규모")
+
+
+def _claim_computed_type_mismatch(claim: Claim, computed: ComputedResult) -> bool:
+    """claim이 주장하는 종류(claim_type)와 computed가 실제로 계산한 종류(calc_type)가
+    다른 값(수준값 vs 변화율)을 가리키면 True.
+
+    (실제 배치 실행에서 재현된 버그: claim_type="규모"인 "실업률이 6%에 육박"을
+    computed.calc_type="증감률"인 계산값(실업률 자체의 전년비 변화율 3.7%)과 그대로 숫자
+    비교해서 "6 vs 3.7%p 차이, 불일치"로 확정한 사례가 있었음 — 최종 판정은 우연히 맞았지만
+    비교 근거 자체가 잘못된 값이었음. 종류가 다르면 숫자가 우연히 비슷하든 다르든 규칙으로
+    확정하지 않고 LLM에 위임해서 문장을 직접 보고 판단하게 한다.)
+    """
+    if claim.claim_type == "규모" and computed.calc_type in _RATE_CALC_TYPES:
+        return True
+    if claim.claim_type == "증감률" and computed.calc_type in _LEVEL_CALC_TYPES:
+        return True
+    return False
+
+
 def _period_granularity(period: Optional[str]) -> Optional[str]:
     """period 문자열이 "월" 단위인지 "년" 단위인지 best-effort로 추정.
 
@@ -240,6 +268,9 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
     claim_value = _extract_claim_number(claim)
     if claim_value is None:
         return None  # 수치 추출 실패 → 규칙으로 못 정함, LLM에 원문 문장 그대로 위임
+
+    if _claim_computed_type_mismatch(claim, computed):
+        return None  # 수준값 vs 변화율처럼 종류가 다른 값 비교 → 규칙으로 확정하지 않고 LLM 위임
 
     gap = _numeric_gap(claim_value, claim, computed)
     clear_threshold = NUMERIC_TOLERANCE * CLEAR_GAP_MULTIPLIER

@@ -1,0 +1,17 @@
+# 실행에 필요한 외부 패키지 목록 (agent/, db/, tests/ 전체 import 기준으로 추출함,
+# 2026-08-04 기준 WSL venv에서 검증된 버전).
+#
+# sentence-transformers가 torch/transformers를 함께 설치하는데, GPU(CUDA) 빌드가 잡히는지
+# CPU 전용 빌드가 잡히는지는 플랫폼에 따라 pip가 알아서 고름 — 그래서 torch 자체는 버전을
+# 못박지 않음. reranker.py/embedding_search.py에 있는 주석대로 일부 Windows CPU/torch
+# 조합에서 세그폴트가 나는 게 알려져 있으니, 설치 후 안 되면 그 두 파일의 KMP_DUPLICATE_LIB_OK/
+# OMP_NUM_THREADS 관련 주석부터 참고할 것.
+#
+# openpyxl은 코드에서 직접 import하진 않지만 agent/mapping/golden_set.py가
+# pandas.read_excel()로 .xlsx 골든셋을 읽을 때 pandas가 내부적으로 필요로 함.
+
+pandas>=3.0.5
+openpyxl>=3.1.5
+python-dotenv>=1.2.2
+requests>=2.34.2
+sentence-transformers>=5.6.1
