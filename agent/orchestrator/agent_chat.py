@@ -224,6 +224,76 @@ def _extract_demographic_hints(question: str) -> dict:
     return hints
 
 
+# ---------------------------------------------------------------------------
+# "20대"/"70대 이상" 같은 10세 단위 다중코드 합산 (DT_1B04005N age 등)
+#
+# KOSIS는 이 표를 5세 단위로만 분류해서 "20대"에 해당하는 단일 코드가 없다. "20대"마다
+# 하드코딩하는 대신, code_map에 이미 등록된 5세 단위 라벨("20~24세" 등)을 파싱해서 그
+# 10세 구간에 포함되는 코드들을 자동으로 찾아낸다 — 10대~100세이상까지 전부 이 함수
+# 하나로 커버되고, 다른 표에 같은 5세 단위 구조가 있어도 그대로 재사용 가능하다
+# (2026-08-06 설계).
+# ---------------------------------------------------------------------------
+_AGE_BAND_RANGE_RE = re.compile(r"^(\d+)~(\d+)세$")
+_AGE_100_PLUS_RE = re.compile(r"^100세이상$")
+_DECADE_EXPR_RE = re.compile(r"(\d)0대(\s*이상)?")
+
+
+def _parse_age_band_label(label: str) -> Optional[tuple[int, Optional[int]]]:
+    """code_map의 5세 단위 라벨을 (시작나이, 끝나이) 튜플로 변환한다. "100세이상"처럼
+    끝이 없으면 끝나이는 None(무한대 취급). 매칭 안 되면 None."""
+    m = _AGE_BAND_RANGE_RE.match(label)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    if _AGE_100_PLUS_RE.match(label):
+        return 100, None
+    return None
+
+
+def _resolve_decade_age_codes(question: str, age_code_map: dict) -> Optional[tuple[str, list[str]]]:
+    """문장에서 "20대"/"70대 이상" 같은 표현을 찾아, age_code_map(5세 단위 라벨들) 중 그
+    구간에 해당하는 코드 목록을 반환한다. 매칭 없으면 None.
+
+    반환값: (매칭된 표현 원문, 해당 구간 코드 리스트) — 코드가 2개 이상이면 호출하는 쪽이
+    api_client를 코드별로 여러 번 호출한 뒤 calculator.compute_sum()으로 합산해야 한다."""
+    normalized_question = _normalize_whitespace(question)
+    m = _DECADE_EXPR_RE.search(normalized_question)
+    if not m:
+        return None
+    decade_start = int(m.group(1)) * 10
+    is_or_above = bool(m.group(2))
+
+    matched_codes = []
+    for label, code in age_code_map.items():
+        band = _parse_age_band_label(label)
+        if band is None:
+            continue
+        band_start, band_end = band
+        if is_or_above:
+            if band_start >= decade_start:
+                matched_codes.append(code)
+        elif band_start >= decade_start and (band_end is not None and band_end < decade_start + 10):
+            matched_codes.append(code)
+
+    if not matched_codes:
+        return None
+    return m.group(0), matched_codes
+
+
+def resolve_decade_age_responses(
+    table_id: str, question: str, base_slots: dict, table_params: dict, client
+) -> Optional[tuple[str, list]]:
+    """"20대"/"70대 이상" 등을 감지해서 실제 KOSIS API를 코드별로 여러 번 호출하고, 그
+    KosisApiResponse 리스트를 반환한다 (합산은 호출하는 쪽이 calculator.compute_sum()으로).
+    감지 안 되면 None."""
+    age_code_map = table_params.get(table_id, {}).get("dimensions", {}).get("age", {}).get("code_map", {})
+    resolved = _resolve_decade_age_codes(question, age_code_map)
+    if resolved is None:
+        return None
+    label, codes = resolved
+    responses = [client(table_id, {**base_slots, "age": code}) for code in codes]
+    return label, responses
+
+
 def _wants_comparison(question: str) -> bool:
     return any(kw in question for kw in _COMPARISON_KEYWORDS)
 
