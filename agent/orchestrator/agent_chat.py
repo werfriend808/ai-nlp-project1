@@ -48,7 +48,7 @@ from agent.interfaces import Claim, TableCandidate, ComputedResult, KosisApiResp
 from agent.mapping.keyword_search import keyword_search
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
 from agent.mapping.reranker import search_and_rerank
-from agent.orchestrator.slot_filler import fill_slots
+from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback
 from agent.orchestrator.clarify_rules import CLARIFY_QUESTIONS
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
@@ -73,6 +73,7 @@ _REGION_LIKE_DIMENSIONS = ("region", "country")
 # 직접 채워 넣는다 (표별 dimensions를 대화로 순회하는 정식 구현 전까지의 임시 조치).
 _DEMOGRAPHIC_HINTS: dict[str, dict[str, str]] = {
     "청년": {"age": "청년(15~29세)"},
+    "청년층": {"age": "청년(15~29세)"},  # golden set 실제 기사(A040-02 "청년층 고용률")에서 미매칭 확인, 2026-08-04 추가
     "고령": {"age": "60세이상"},
     "노인": {"age": "60세이상"},
     "여성": {"gender": "여자"},
@@ -80,6 +81,139 @@ _DEMOGRAPHIC_HINTS: dict[str, dict[str, str]] = {
     "남성": {"gender": "남자"},
     "남자": {"gender": "남자"},
 }
+
+
+def _normalize_whitespace(text: str) -> str:
+    """공백 제거 비교용 정규화. keyword_search.py의 _normalize()와 동일한 이유 —
+    기사 문장은 "원화 기준"/"국가 채무"처럼 code_map 라벨("원화기준"/"국가채무")과
+    띄어쓰기가 다른 경우가 흔해서, 공백을 무시하고 비교한다."""
+    return re.sub(r"\s+", "", text)
+
+
+def _extract_table_dimension_hints(question: str, table_id: str, table_params: dict) -> dict:
+    """매칭된 표의 dimensions(code_map)를 보고, 질문 문장에 그 코드 라벨이 이미 그대로
+    나와있으면 채운다 (예: DT_1DA7102S의 age code_map에 있는 "20대"가 질문에 있으면 그대로 사용).
+
+    _DEMOGRAPHIC_HINTS(청년/여성 등 7개 하드코딩)와 달리 표마다 다른 축(연령/성별/대출종류/
+    소득분위/업종 등)에 전부 자동으로 적용된다 — 표가 늘어나도 이 함수는 안 고쳐도 됨.
+    다만 표현이 code_map 라벨과 정확히 안 겹치는 경우(예: "청년" vs "청년(15~29세)")는 여기서
+    못 잡으므로, _DEMOGRAPHIC_HINTS 같은 동의어 사전이 계속 보완해야 한다 — 이 함수가
+    _extract_demographic_hints를 대체하는 게 아니라 보완하는 관계.
+
+    실제 golden set(59건) 검증 중 "원화 기준"(문장) vs "원화기준"(code_map), "국가 채무" vs
+    "국가채무" 같은 순수 띄어쓰기 차이로 못 잡는 사례가 다수 발견되어(2026-08-03),
+    keyword_search.py와 동일하게 공백 무시 비교를 적용한다.
+    """
+    hints: dict = {}
+    normalized_question = _normalize_whitespace(question)
+    dimensions = table_params.get(table_id, {}).get("dimensions", {})
+    for dim_name, dim in dimensions.items():
+        code_map = dim.get("code_map", {})
+        # 라벨이 여러 개 겹쳐 매칭될 수 있으니(예: "20대"와 "20~24세" 둘 다 후보), 더 구체적인
+        # (긴) 라벨을 우선한다. 정규화 후 길이 기준으로 정렬해 공백 차이로 순서가 뒤바뀌지 않게 함.
+        for label in sorted(code_map.keys(), key=lambda l: len(_normalize_whitespace(l)), reverse=True):
+            if label and _normalize_whitespace(label) in normalized_question:
+                hints[dim_name] = label
+                break
+    return hints
+
+
+# "전체"류 라벨을 LLM 후보에 주면, 문장에 특정 값(예: "20대")이 있는데 후보엔 그 정확한 값이
+# 없을 때 LLM이 null 대신 이 포괄값을 "그럴듯한 답"으로 골라버리는 경우가 실제로 확인됨
+# (2026-08-05, DT_1B04005N: "20대 인구" 문장 → age 후보가 ['계','전체']뿐이라 LLM이 '전체'를
+# 답함 — 이건 "전체 인구"라는 완전히 다른 값이라 처음 발견한 "20대 실업률" 버그와 같은 성격의
+# 오답임). 이런 라벨이 진짜 정답인 케이스는 애초에 아무것도 안 채워져도 default_value가 같은
+# 값을 채우므로, 후보에서 빼도 손해가 없다 — "억지로 아무거나 고르는" 위험만 제거된다.
+_GENERIC_FALLBACK_LABELS = {"전체", "계", "합계"}
+
+
+def _build_dimension_llm_prompt(question: str, dimensions: dict, unresolved_dims: list[str]) -> str:
+    lines = []
+    for dim_name in unresolved_dims:
+        all_candidates = dimensions.get(dim_name, {}).get("code_map", {}).keys()
+        candidates = sorted(c for c in all_candidates if c not in _GENERIC_FALLBACK_LABELS)
+        if candidates:
+            lines.append(f'- {dim_name}: 후보 = {candidates}')
+    candidates_block = "\n".join(lines)
+    example_dim = unresolved_dims[0]
+    example_json = json.dumps(
+        {example_dim: {"value": "후보 중 하나 또는 null", "quote": "그 근거가 된 문장 속 표현 그대로, value가 null이면 null"}},
+        ensure_ascii=False,
+    )
+    return f"""다음 문장에서 아래 각 축(dimension)에 해당하는 값을 반드시 "후보" 목록 중에서만 골라
+JSON으로 응답하세요. 후보 목록에 없는 새 값을 만들어내지 마세요.
+
+중요 규칙:
+- 각 축마다 value(후보 중 하나 또는 null)와 quote(그렇게 판단한 근거가 되는, 문장에 실제로
+  나온 표현을 그대로 복사)를 같이 답하세요. quote는 지어내지 말고 문장에서 그대로 가져오세요.
+- 문장에 해당 내용이 없거나, 후보 중 확실히 맞는 게 없거나, 근거가 되는 표현을 문장에서
+  못 찾겠으면 value와 quote 둘 다 반드시 null로 응답하세요. 애매하면 추측하지 말고 null.
+- 설명이나 다른 텍스트는 절대 포함하지 마세요.
+
+축 목록과 후보:
+{candidates_block}
+
+문장: "{question}"
+
+응답 형식 (JSON만, 다른 텍스트 없이, 예시): {example_json}
+"""
+
+
+def _extract_table_dimension_hints_llm(
+    question: str, table_id: str, table_params: dict, unresolved_dims: list[str]
+) -> dict:
+    """_extract_table_dimension_hints(코드 기반, 1차)가 못 채운 축만 LLM(HCX-DASH-002)에
+    넘겨서 보완한다 (2차 폴백). code_map에 있는 라벨과 문장 표현이 정확히 안 겹치는 진짜
+    동의어/표현차이 케이스(예: "1인당 국민총소득(GNI)" vs code_map의 "1인당GNI달러")를 위한 것 —
+    2026-08-03 golden set 검증에서 이런 케이스가 실제로 확인됐지만 건수가 적어(1건) 보류했었는데,
+    2026-08-05 사용자 요청으로 실제 구현.
+
+    환각 방지 2단계:
+    1) 그 표의 code_map에 실제로 존재하는 라벨(전체/계/합계 제외)이 아니면 버린다.
+    2) LLM이 같이 답한 quote(근거 문구)가 실제로 원문 문장에 있는지 확인하고, 없으면 버린다 —
+       "value는 후보 안에 있지만 문장에 아무 근거가 없는데도 그럴듯하게 골라버리는" 진짜 환각을
+       잡기 위한 것 (2026-08-05 확인: "고용률..." 문장에 성별 언급이 전혀 없는데도 gender 후보
+       중 하나인 "비농가"를 근거 없이 답한 사례 — code_map 소속 여부 검사만으로는 못 걸러짐)."""
+    if not unresolved_dims:
+        return {}
+    dimensions = table_params.get(table_id, {}).get("dimensions", {})
+
+    def _has_real_candidates(dim_name: str) -> bool:
+        code_map = dimensions.get(dim_name, {}).get("code_map", {})
+        return any(c not in _GENERIC_FALLBACK_LABELS for c in code_map)
+
+    unresolved_dims = [d for d in unresolved_dims if _has_real_candidates(d)]
+    if not unresolved_dims:
+        return {}
+
+    prompt = _build_dimension_llm_prompt(question, dimensions, unresolved_dims)
+    try:
+        raw = call_hcx(prompt)
+    except Exception:
+        return {}
+
+    try:
+        extracted = json.loads(raw)
+    except json.JSONDecodeError:
+        extracted = extract_json_fallback(raw)
+
+    normalized_question = _normalize_whitespace(question)
+    hints: dict = {}
+    for dim_name in unresolved_dims:
+        entry = extracted.get(dim_name)
+        if not isinstance(entry, dict):
+            continue
+        value = entry.get("value")
+        quote = entry.get("quote")
+        if value is None or not quote:
+            continue
+        candidates = dimensions[dim_name].get("code_map", {})
+        if value not in candidates or value in _GENERIC_FALLBACK_LABELS:
+            continue
+        if _normalize_whitespace(str(quote)) not in normalized_question:
+            continue  # quote가 원문에 실제로 없으면(지어낸 근거) 버림
+        hints[dim_name] = value
+    return hints
 
 
 def _extract_demographic_hints(question: str) -> dict:
@@ -311,12 +445,30 @@ class ChatSession:
 
             self.table = top
             self.wants_comparison = _wants_comparison(user_input)
+            # dimension_hints: 매칭된 표의 code_map을 직접 보고 채우는 범용 로직(신규) — 표가
+            # 뭐든(연령/성별/대출종류/소득분위 등) 자동으로 동작한다.
+            # demographic_hints: 기존 7개 하드코딩(청년/여성 등) — code_map 라벨과 표현이 정확히
+            # 안 겹치는 경우(예: "청년" vs "청년(15~29세)")를 보완한다.
+            # dimension_hints가 code_map과 직접 매칭된 값이라 더 정확하므로 우선 적용한다.
+            dimension_hints = _extract_table_dimension_hints(user_input, top.table_id, self.table_params)
             demographic_hints = _extract_demographic_hints(user_input)
-            self.slots.update(demographic_hints)
+            combined_hints = {**demographic_hints, **dimension_hints}
+
+            # 2차: 1차(코드 기반)가 못 채운 축만 LLM에 넘겨서 보완 시도 (진짜 동의어/표현차이용).
+            all_dims = self.table_params.get(top.table_id, {}).get("dimensions", {})
+            unresolved_dims = [d for d in all_dims if d not in combined_hints]
+            llm_hints = _extract_table_dimension_hints_llm(
+                user_input, top.table_id, self.table_params, unresolved_dims
+            )
+            combined_hints = {**llm_hints, **combined_hints}  # 코드 기반 결과가 항상 우선
+
+            self.slots.update(combined_hints)
             self._log(f"  [tool: 통계표_매핑] 후보 확정 -> {top.table_name} ({top.table_id})")
             self._log(f"  [tool: 통계표_매핑] 비교 의도 감지: {self.wants_comparison}")
-            if demographic_hints:
-                self._log(f"  [tool: 통계표_매핑] 인구통계 한정어 감지 -> {demographic_hints}")
+            if combined_hints:
+                self._log(f"  [tool: 통계표_매핑] 표별 슬롯 힌트 감지 -> {combined_hints}")
+            if llm_hints:
+                self._log(f"  [tool: 통계표_매핑] LLM 보완 힌트 -> {llm_hints}")
 
         # 이번 발화에서 슬롯 추출 (되묻기 답변이든 첫 질문 자체든 동일하게 시도)
         normalized = _normalize_short_reply(_normalize_year_expression(user_input))

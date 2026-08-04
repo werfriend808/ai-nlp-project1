@@ -36,13 +36,13 @@ def load_rows() -> list[list[str]]:
     with open(DATA_PATH, encoding="utf-8-sig") as f:
         reader = csv.reader(f)
         next(reader)  # header
-        return [row for row in reader if len(row) == 5 and row[4].strip() in ("TRUE", "FALSE")]
+        return [row for row in reader if len(row) == 5 and row[4].strip().upper() in ("TRUE", "FALSE")]
 
 
 def main(n_true: int = 15, n_false: int = 10, seed: int = 42) -> None:
     rows = load_rows()
-    true_rows = [r for r in rows if r[4].strip() == "TRUE" and r[0] not in FEWSHOT_TITLES]
-    false_rows = [r for r in rows if r[4].strip() == "FALSE" and r[0] not in FEWSHOT_TITLES]
+    true_rows = [r for r in rows if r[4].strip().upper() == "TRUE" and r[0] not in FEWSHOT_TITLES]
+    false_rows = [r for r in rows if r[4].strip().upper() == "FALSE" and r[0] not in FEWSHOT_TITLES]
 
     rng = random.Random(seed)
     sample = rng.sample(true_rows, n_true) + rng.sample(false_rows, n_false)
