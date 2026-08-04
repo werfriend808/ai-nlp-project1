@@ -103,7 +103,7 @@ def run_tests(top_k: int = TOP_K) -> None:
     print("=== 결과 요약 ===")
     for r in results:
         print(f"{r.model} top-1 정답률: {r.accuracy * 100:.1f}% ({int(r.accuracy * r.n)}/{r.n})")
-    print(f"reranker(최종) 결과가 실질적인 3단계 정확도 — keyword/embedding 후보를 합쳐 재정렬한 값.")
+    print(f"reranker(최종) 결과가 실질적인 3단계 정확도 - keyword/embedding 후보를 합쳐 재정렬한 값.")
 
 
 if __name__ == "__main__":
