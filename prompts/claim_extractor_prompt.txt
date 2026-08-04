@@ -11,6 +11,10 @@
 - 서로 다른 대상(예: 등급별/연령대별/지역별 항목)이나 서로 다른 시점을 가리키는 수치는, 같은
   문장·같은 단락에 나란히 나오더라도 절대 하나로 합치지 말고 각각 별도의 claim으로 만듭니다.
   기사에 숫자가 5개, 10개가 나오면 claim도 그만큼 나오는 게 정상입니다.
+- 실제 기사는 문단이 여러 개고 수천 자가 넘는 경우가 흔합니다. 앞쪽 한두 문단에서 몇 개
+  뽑았다고 거기서 멈추지 말고, 기사 끝까지 모든 문단을 다 확인해서 수치가 있는 문장을
+  전부 뽑으세요. 중간에 인용구·배경설명·다른 사람 발언처럼 수치가 없는 문장이 여러 개
+  섞여 있어도, 그 다음 문단에 수치가 또 나오면 계속 이어서 뽑아야 합니다.
 - claim_type은 다음 4가지 중 하나로 분류합니다.
   - "규모": 특정 시점의 절대적인 값/수량 (예: "55.8kg을 기록했다")
   - "증감률": 이전 대비 증가/감소 비율이나 양 (예: "1.1% 감소")
@@ -99,6 +103,22 @@
   {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "2등급 시스템", "statistic_expression": "복구율", "value": 47.1, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
   {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "3등급 시스템", "statistic_expression": "복구율", "value": 39.8, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
   {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "4등급 시스템", "statistic_expression": "복구율", "value": 22.4, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+
+[예시 입력 — 여러 문단에 수치가 흩어진 실제 기사 발췌]
+기사: "건설업과 도소매업을 중심으로 내수 부진이 장기화하면서 지난달 취업자 수가 1년 전에 비해 5만명 넘게 줄었다. 취업자 수는 코로나 사태의 직격탄을 맞은 2021년 2월(-47만3000명) 이후 3년 10개월 만에 감소세로 돌아섰다. 15일 통계청이 발표한 '2024년 12월 및 연간 고용 동향'에 따르면, 지난달 취업자 수는 2804만1000명으로 전년 동월 대비 5만2000명 감소했다. 통계청은 '건설업, 도소매업 등 내수 업종을 중심으로 취업자 수가 크게 줄었다'고 했다. 연령별로는 청년층에 고용 한파가 집중됐다. 고용률은 지난달 61.4%로 1년 전(61.7%)에 비해 0.3%포인트 떨어졌다. 지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다."
+
+[예시 출력]
+(4개 문단에 수치가 흩어져 있고 중간에 통계청 인용구·전환 문장처럼 수치 없는 문장이 섞여
+있어도, 앞쪽 한두 개만 뽑고 멈추지 않고 끝 문단까지 다 확인해서 6개 claim을 모두 뽑습니다.
+마지막 문장은 실업률·청년실업률 두 수치가 한 문장에 있으므로 앞서 배운 대로 나눕니다.)
+[
+  {"sentence": "건설업과 도소매업을 중심으로 내수 부진이 장기화하면서 지난달 취업자 수가 1년 전에 비해 5만명 넘게 줄었다.", "claim_type": "규모", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수", "value": 50000, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "취업자 수는 코로나 사태의 직격탄을 맞은 2021년 2월(-47만3000명) 이후 3년 10개월 만에 감소세로 돌아섰다.", "claim_type": "비교", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수 증감", "value": null, "comparison_operator": "미만", "comparison_target": "2021년 2월", "comparison_value": 473000, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "15일 통계청이 발표한 '2024년 12월 및 연간 고용 동향'에 따르면, 지난달 취업자 수는 2804만1000명으로 전년 동월 대비 5만2000명 감소했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수", "value": 28041000, "comparison_operator": "감소", "comparison_target": "전년 동월", "comparison_value": 52000, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
+  {"sentence": "고용률은 지난달 61.4%로 1년 전(61.7%)에 비해 0.3%포인트 떨어졌다.", "claim_type": "증감률", "period": "2024년 12월", "unit": "%", "population": "전체", "statistic_expression": "고용률", "value": 61.4, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": 61.7, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
+  {"sentence": "지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "%", "population": "전체", "statistic_expression": "실업률", "value": 3.8, "comparison_operator": "초과", "comparison_target": "2022년 1월", "comparison_value": 4.1, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
+  {"sentence": "지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "%", "population": "청년", "statistic_expression": "청년 실업률", "value": 5.9, "comparison_operator": "미만", "comparison_target": "6%", "comparison_value": 6, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"}
 ]
 
 ## 추출할 기사
