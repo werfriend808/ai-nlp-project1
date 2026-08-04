@@ -22,10 +22,18 @@ table_catalog.json의 embedding_text는 최초 1회만 임베딩해서 캐시 �
 
 from __future__ import annotations
 
+import os
+
+# 임베딩 모델(SentenceTransformer)과 리랭커(CrossEncoder)를 같은 프로세스에서 함께 로딩하면
+# Windows에서 OpenMP 런타임(libiomp5md.dll)이 중복 로드되어 세그폴트가 난다(2026-08-03 확인,
+# test_mapping.py가 임베딩 모델 로딩 직후 예외 없이 죽던 원인). torch가 로딩되기 전에
+# 미리 설정해야 하므로 다른 import보다 먼저 둔다.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -142,14 +150,20 @@ def build_table_embedding_cache(
 ) -> dict:
     """table_catalog.json의 embedding_text를 최초 1회 임베딩해서 캐시 파일로 저장한다.
 
-    이미 캐시가 있고 표 개수·모델명이 그대로면 재임베딩하지 않는다 (배치 임베딩 원칙).
-    모델을 바꾸면(EMBEDDING_MODEL 변경) 캐시가 자동으로 무효화되어 재생성된다.
+    이미 캐시가 있고 표별 embedding_text·모델명이 그대로면 재임베딩하지 않는다(배치 임베딩
+    원칙). 모델을 바꾸거나(EMBEDDING_MODEL 변경) 표를 추가/삭제하거나 기존 표의
+    embedding_text 내용만 수정해도 캐시가 자동으로 무효화되어 재생성된다 — 예전엔 표
+    개수만 비교해서, 표 개수 변화 없이 embedding_text만 고치면(카탈로그 메타데이터 보강
+    작업에서 흔함) 캐시가 갱신 안 된 채로 조용히 재사용되는 버그가 있었다(2026-08-05,
+    keywords만 보강한 6개 표 때문에 force=True를 수동으로 줘야 했던 사례로 확인).
     """
     tables = _load_catalog(catalog_path)
+    current_texts = {t["tblId"]: t["embedding_text"] for t in tables}
 
     if cache_path.exists() and not force:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if cached.get("model") == EMBEDDING_MODEL and len(cached.get("entries", [])) == len(tables):
+        cached_texts = {e["table_id"]: e.get("embedding_text") for e in cached.get("entries", [])}
+        if cached.get("model") == EMBEDDING_MODEL and cached_texts == current_texts:
             return cached
 
     texts = [t["embedding_text"] for t in tables]

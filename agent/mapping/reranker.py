@@ -29,6 +29,12 @@ Academy of Artificial Intelligence) 제작이다. "임베딩/리랭커 둘 다 �
 from __future__ import annotations
 
 import os
+
+# embedding_search.py와 동일한 이유(OpenMP 런타임 중복 로드로 인한 세그폴트, 2026-08-03 확인) —
+# 이 모듈만 단독 import될 때도 안전하도록 여기에도 동일하게 설정한다.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 from dataclasses import replace
 from typing import Optional
 
