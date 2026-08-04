@@ -207,6 +207,169 @@ class KosisApiClient:
             prd_se=row.get("PRD_SE"),
         )
 
+    def fetch_series(
+        self, table_id: str, slots: Slots, start_period: str, end_period: str
+    ) -> list[KosisApiResponse]:
+        """단일 시점이 아니라 넓은 기간(start_period~end_period) 전체의 시계열을 한 번의
+        HTTP 호출로 가져온다. "역대 최대"/"N년 만에 최고" 같은 극값 검증에 쓰기 위한 것 —
+        __call__()은 "응답이 정확히 1행이어야 한다"는 계약이라 여러 행이 나오면 일부러
+        에러를 던지는데, 이 메서드는 반대로 여러 행이 나오는 걸 정상으로 취급한다(별도
+        메서드로 분리해서 __call__()의 기존 계약은 그대로 유지, 2026-08-06 추가).
+
+        실측 확인: DT_1DA7102S에 startPrdDe=1999/endPrdDe=2025로 한 번 요청하니 26행이
+        한 번의 호출로 그대로 옴 — 연도별로 26번 나눠 부를 필요가 없었음.
+        """
+        if table_id not in self._table_params:
+            raise KeyError(
+                f"'{table_id}'가 table_params.json에 없습니다. "
+                f"C가 먼저 이 표의 파라미터를 조사해서 table_params.json에 추가해야 합니다."
+            )
+        base = self._table_params[table_id]
+
+        params = {
+            "method": "getList",
+            "apiKey": self.api_key,
+            "format": "json",
+            "jsonVD": "Y",
+            "orgId": base["orgId"],
+            "tblId": base.get("tblId", table_id),
+            "prdSe": slots.get("prd_se") or base.get("prdSe", "Y"),
+            "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
+            "startPrdDe": start_period,
+            "endPrdDe": end_period,
+        }
+        for dim_name, dim in base.get("dimensions", {}).items():
+            kosis_param = dim["kosis_param"]
+            user_value = slots.get(dim_name)
+            code_map = dim.get("code_map", {})
+            code = code_map.get(user_value, user_value) if user_value is not None else dim.get("default_value")
+            if code is not None:
+                params[kosis_param] = code
+
+        response = requests.get(KOSIS_BASE_URL, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+
+        if isinstance(data, dict) and "err" in data:
+            raise KosisApiError(f"[{data.get('err')}] {data.get('errMsg', '알 수 없는 오류')}")
+        if not isinstance(data, list) or len(data) == 0:
+            raise KosisApiError(
+                f"'{table_id}' 시계열 조회 결과가 없습니다({start_period}~{end_period}). 요청 파라미터: "
+                f"{ {k: v for k, v in params.items() if k != 'apiKey'} }"
+            )
+
+        results = []
+        for row in data:
+            raw_value = _to_float(row.get("DT"))
+            if raw_value is None:
+                continue  # 결측치 행은 시계열 비교에서 조용히 제외 (단일값 조회와 달리 에러로 안 죽임)
+            period = row.get("PRD_DE")
+            if not period:
+                continue
+            results.append(
+                KosisApiResponse(
+                    raw_value=raw_value,
+                    unit=row.get("UNIT_NM", ""),
+                    period=period,
+                    org_id=str(base["orgId"]),
+                    itm_id=row.get("ITM_ID", ""),
+                    obj_l1=row.get("C1"),
+                    obj_l2=row.get("C2"),
+                    prd_se=row.get("PRD_SE"),
+                )
+            )
+        if not results:
+            raise KosisApiError(f"'{table_id}' 시계열 응답에 유효한 값이 하나도 없습니다.")
+        return results
+
+    def fetch_by_codes(
+        self, table_id: str, slots: Slots, dim_name: str, codes: list[str]
+    ) -> list[KosisApiResponse]:
+        """단일 코드가 아니라 같은 축(dim_name)의 코드 여러 개를 "+"로 묶어서 한 번의
+        HTTP 호출로 가져온다. "20대"(20~24세+25~29세 등) 같은 다중코드 합산에 쓰기
+        위한 것 — fetch_series()와 같은 이유로 __call__()과 별도 메서드로 분리
+        (2026-08-06 추가, 원래는 코드별로 __call__()을 여러 번 부르던 걸 fetch_series()와
+        일관되게 맞추기 위해 리팩터링).
+
+        실측 확인: DT_1B04005N에 objL2="25+30"으로 요청하니 2행(20~24세/25~29세)이
+        한 번의 호출로 그대로 옴.
+        """
+        if table_id not in self._table_params:
+            raise KeyError(
+                f"'{table_id}'가 table_params.json에 없습니다. "
+                f"C가 먼저 이 표의 파라미터를 조사해서 table_params.json에 추가해야 합니다."
+            )
+        base = self._table_params[table_id]
+        dim = base.get("dimensions", {}).get(dim_name)
+        if dim is None:
+            raise KeyError(f"'{table_id}'의 dimensions에 '{dim_name}' 축이 없습니다.")
+
+        params = {
+            "method": "getList",
+            "apiKey": self.api_key,
+            "format": "json",
+            "jsonVD": "Y",
+            "orgId": base["orgId"],
+            "tblId": base.get("tblId", table_id),
+            "prdSe": slots.get("prd_se") or base.get("prdSe", "Y"),
+            "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
+            dim["kosis_param"]: "+".join(codes),
+        }
+        for other_name, other_dim in base.get("dimensions", {}).items():
+            if other_name == dim_name:
+                continue
+            kosis_param = other_dim["kosis_param"]
+            user_value = slots.get(other_name)
+            code_map = other_dim.get("code_map", {})
+            code = code_map.get(user_value, user_value) if user_value is not None else other_dim.get("default_value")
+            if code is not None:
+                params[kosis_param] = code
+
+        period = slots.get("period")
+        if period:
+            params["startPrdDe"] = slots.get("start_period", period)
+            params["endPrdDe"] = slots.get("end_period", period)
+        else:
+            params["startPrdDe"] = base.get("startPrdDe")
+            params["endPrdDe"] = base.get("endPrdDe")
+
+        response = requests.get(KOSIS_BASE_URL, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+
+        if isinstance(data, dict) and "err" in data:
+            raise KosisApiError(f"[{data.get('err')}] {data.get('errMsg', '알 수 없는 오류')}")
+        if not isinstance(data, list) or len(data) == 0:
+            raise KosisApiError(
+                f"'{table_id}' 다중코드 조회 결과가 없습니다({dim_name}={codes}). 요청 파라미터: "
+                f"{ {k: v for k, v in params.items() if k != 'apiKey'} }"
+            )
+
+        results = []
+        for row in data:
+            raw_value = _to_float(row.get("DT"))
+            if raw_value is None:
+                continue
+            row_period = row.get("PRD_DE")
+            if not row_period:
+                continue
+            results.append(
+                KosisApiResponse(
+                    raw_value=raw_value,
+                    unit=row.get("UNIT_NM", ""),
+                    period=row_period,
+                    org_id=str(base["orgId"]),
+                    itm_id=row.get("ITM_ID", ""),
+                    obj_l1=row.get("C1"),
+                    obj_l2=row.get("C2"),
+                    prd_se=row.get("PRD_SE"),
+                )
+            )
+        if not results:
+            raise KosisApiError(f"'{table_id}' 다중코드 응답에 유효한 값이 하나도 없습니다.")
+        return results
+
+
 
 if __name__ == "__main__":
     #   python -m agent.kosis.api_client                        → 농가표, 20~24세 인구 조회

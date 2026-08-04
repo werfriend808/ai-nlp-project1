@@ -1,0 +1,148 @@
+"""
+tests/test_pipeline_1_4.py — 1~4단계 파이프라인 연결(agent/pipeline/pipeline_1_4.py) 단위 테스트
+
+agent.mapping.embedding_search/reranker(e5-large + BGE reranker)를 한 프로세스에서 같이
+로딩하면 이 환경에서 세그폴트가 재현되는 문제(2026-08-04 확인, transformers 5.14.1 버전
+이슈로 추정 — 원인 규명은 보류 중)가 있어서, 3단계(search_and_rerank)는 실제 모델을 호출
+하지 않고 미리 정해둔 TableCandidate로 모킹한다. 4단계 슬롯필링(fill_slots/dimension_hints/
+LLM 2차)은 실제 HCX API를 그대로 호출한다 — 여기는 임베딩/리랭커 모델과 무관해서 영향 없음.
+
+실행 (프로젝트 루트에서, HCX_API_KEY 필요):
+    python -m tests.test_pipeline_1_4
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+from unittest.mock import patch
+
+from agent.interfaces import Claim, TableCandidate
+import agent.pipeline.pipeline_1_4 as pipeline_1_4
+
+TABLE_PARAMS_PATH = Path(__file__).parent.parent / "agent" / "kosis" / "table_params.json"
+with open(TABLE_PARAMS_PATH, encoding="utf-8") as f:
+    TABLE_PARAMS = json.load(f)
+
+ARTICLE_DATE = date(2025, 1, 6)
+
+
+def _resolve(sentence: str, table_id: str, table_name: str = "테스트표") -> pipeline_1_4.Stage4Result:
+    """search_and_rerank를 모킹해서 지정한 table_id가 항상 최상위 후보로 나온 것처럼 만든다."""
+    candidate = TableCandidate(
+        table_id=table_id, table_name=table_name, score=0.9, required_slots=[], source_meta="keyword"
+    )
+    claim = Claim(sentence=sentence, claim_type="규모")
+    with patch.object(pipeline_1_4, "search_and_rerank", return_value=[candidate]):
+        return pipeline_1_4.resolve_claim_1_to_4(
+            claim, ARTICLE_DATE, embedding_cache={}, document_texts={}, table_params=TABLE_PARAMS
+        )
+
+
+def case_01_no_candidates_means_no_table_match():
+    claim = Claim(sentence="아무 표에도 안 걸리는 문장", claim_type="규모")
+    with patch.object(pipeline_1_4, "search_and_rerank", return_value=[]):
+        result = pipeline_1_4.resolve_claim_1_to_4(
+            claim, ARTICLE_DATE, embedding_cache={}, document_texts={}, table_params=TABLE_PARAMS
+        )
+    assert result.status == "3단계_매칭없음", result.status
+
+
+def case_02_unverified_embedding_only_match_is_flagged():
+    candidate = TableCandidate(
+        table_id="DT_1DA7102S", table_name="성/연령별 실업률", score=0.4,
+        required_slots=[], source_meta="embedding-only, unverified",
+    )
+    claim = Claim(sentence="아무 문장", claim_type="규모")
+    with patch.object(pipeline_1_4, "search_and_rerank", return_value=[candidate]):
+        result = pipeline_1_4.resolve_claim_1_to_4(
+            claim, ARTICLE_DATE, embedding_cache={}, document_texts={}, table_params=TABLE_PARAMS
+        )
+    assert result.status == "3단계_매칭_불충분", result.status
+
+
+def case_03_period_missing_blocks_stage5():
+    """DT_1DA7102S는 region 축이 없어서(gender/age뿐) region 미해결은 안 걸려야 하지만,
+    period가 아예 없으면 4단계 미해결이어야 한다."""
+    result = _resolve("청년 실업률이 심각한 수준이다", "DT_1DA7102S")
+    assert result.status == "4단계_미해결", result.status
+    assert "period" in result.missing_slots, result.missing_slots
+    assert "region" not in result.missing_slots, "DT_1DA7102S엔 region 축 자체가 없음"
+
+
+def case_04_full_slots_ready_for_stage5():
+    result = _resolve("2024년 청년 실업률이 6%에 육박했다", "DT_1DA7102S")
+    assert result.status == "5단계_진행가능", (result.status, result.missing_slots)
+    assert result.slots.get("period") == "2024"
+    assert result.dimension_hints.get("age") == "청년(15~29세)"
+    assert result.kosis_slots is not None
+
+
+def case_05_comparison_keyword_without_calc_type_is_unresolved():
+    """'대비'(비교 의도 키워드)가 있는데 calc_type을 못 뽑으면 미해결이어야 한다."""
+    result = _resolve("2024년 전년 대비 청년 실업률 수치다", "DT_1DA7102S")
+    if result.status == "4단계_미해결":
+        assert "calc_type" in result.missing_slots, result.missing_slots
+    else:
+        # LLM이 '증감률' 등으로 calc_type을 실제로 뽑아낸 경우도 정상이라 실패로 안 봄
+        assert result.slots.get("calc_type"), "비교 의도인데 calc_type도 안 뽑히고 미해결도 아님"
+
+
+def case_06_region_required_when_table_has_real_region_axis():
+    """DT_1B04005N은 region 축에 실제 18개 지역 코드가 있어서(전국 하나뿐 아님) region이
+    없으면 미해결이어야 한다."""
+    result = _resolve("2024년 20대 인구는 630만명이었다", "DT_1B04005N")
+    assert result.status == "4단계_미해결", (result.status, result.missing_slots)
+    assert "region" in result.missing_slots, result.missing_slots
+
+
+def case_07_decade_age_detected_as_special_resolution():
+    result = _resolve("2024년 전국 20대 인구는 630만명이었다", "DT_1B04005N")
+    assert result.special_resolution == "나이대_다중코드", result.special_resolution
+
+
+def case_08_since_event_extremum_detected():
+    result = _resolve("코로나 이후 청년 실업률이 최고치를 기록했다", "DT_1DA7102S")
+    assert result.special_resolution == "극값_이벤트기준", result.special_resolution
+
+
+def case_09_all_time_extremum_detected():
+    result = _resolve("작년 수출액이 역대 최대를 기록했다", "DT_1DA7102S")
+    assert result.special_resolution == "극값_역대", result.special_resolution
+
+
+CASES = [
+    case_01_no_candidates_means_no_table_match,
+    case_02_unverified_embedding_only_match_is_flagged,
+    case_03_period_missing_blocks_stage5,
+    case_04_full_slots_ready_for_stage5,
+    case_05_comparison_keyword_without_calc_type_is_unresolved,
+    case_06_region_required_when_table_has_real_region_axis,
+    case_07_decade_age_detected_as_special_resolution,
+    case_08_since_event_extremum_detected,
+    case_09_all_time_extremum_detected,
+]
+
+
+def main() -> None:
+    print(f"총 {len(CASES)}건 실행 (3단계는 모킹, 4단계는 실제 HCX API 호출)")
+    print("=" * 70)
+    results = []
+    for case in CASES:
+        try:
+            case()
+            results.append((case.__name__, "PASS", ""))
+        except Exception as e:  # noqa: BLE001 - 테스트 러너라 실패 원인만 보고 계속 진행
+            results.append((case.__name__, "FAIL", str(e)))
+
+    for name, status, detail in results:
+        mark = "✅" if status == "PASS" else "❌"
+        print(f"{mark} {status}  {name}" + (f" — {detail}" if detail else ""))
+
+    passed = sum(1 for _, s, _ in results if s == "PASS")
+    print(f"\n{passed}/{len(results)} PASS")
+
+
+if __name__ == "__main__":
+    main()
