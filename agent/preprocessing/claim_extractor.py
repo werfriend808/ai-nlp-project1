@@ -51,6 +51,13 @@ MODEL = "HCX-DASH-002"
 PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "claim_extractor_prompt.txt"
 SYSTEM_PROMPT = "아래 지시사항을 정확히 따르고, 반드시 지정된 JSON 배열 형식으로만 응답하세요."
 
+# 실측 확인(2026-08-04, verify_claim_extractor_on_golden.py): 기사가 이 길이를 넘어가면
+# temperature=0으로 결정적으로 만들어도 gold 골든셋 대비 recall이 28.8%까지 떨어짐 —
+# few-shot 예시들은 전부 이 정도 이하 짧은 발췌문이었고 거기선 잘 뽑히는 걸로 봐서,
+# "모델이 이 크기 이상을 한 번에 훑을 때 일부만 뽑고 마는" 커버리지 문제로 판단.
+# 그래서 이보다 길면 아래에서 문단 단위로 잘라 각각 호출한 뒤 합친다.
+CHUNK_SIZE = 3000
+
 
 class ClaimExtractorError(RuntimeError):
     """추출 응답을 JSON 배열로 파싱하지 못한 경우."""
@@ -169,8 +176,35 @@ def _salvage_claims(reply: str) -> list[Claim]:
     return claims
 
 
-def extract_claims(article_text: str, *, model: str = MODEL, max_tokens: int = 4096) -> list[Claim]:
-    """기사 본문 하나를 받아 수치 기반 주장 문장들을 Claim 리스트로 돌려줍니다.
+def _split_into_chunks(text: str, chunk_size: int = CHUNK_SIZE) -> list[str]:
+    """text를 chunk_size 근처에서 문장 끝("다.") 경계를 찾아 자른다 (문장 중간이 잘리는 것 방지).
+
+    겹침(overlap) 없이 순서대로 이어붙이는 방식 — 겹치면 같은 claim이 두 청크에서 중복
+    추출될 수 있는데, 그러면 병합 시 중복 제거 로직이 따로 필요해진다. 대신 겹침이 없으면
+    "이는 ~"처럼 청크 경계 바로 다음에서 앞 청크 문장을 참조하는 극히 드문 경우만 맥락을
+    일부 잃는데, 그래도 그 claim의 수치 자체는 청크 안에 있어 대부분 그대로 뽑힌다.
+    """
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks: list[str] = []
+    start = 0
+    n = len(text)
+    while start < n:
+        end = min(start + chunk_size, n)
+        if end < n:
+            boundary = text.rfind("다.", start + chunk_size // 2, end)
+            if boundary != -1:
+                end = boundary + 2
+        chunks.append(text[start:end])
+        start = end
+    return chunks
+
+
+def _extract_claims_single(
+    chunk_text: str, *, model: str, max_tokens: int, temperature: float
+) -> list[Claim]:
+    """청크 하나(또는 짧아서 안 쪼갠 기사 전체)를 HCX에 보내 Claim 리스트로 파싱한다.
 
     실패 처리 3단계:
     1) 한 번 더 같은 요청을 재시도 (드문 비결정적 생성 오류 대응).
@@ -180,12 +214,16 @@ def extract_claims(article_text: str, *, model: str = MODEL, max_tokens: int = 4
     3) 그것도 하나도 못 건지면 ClaimExtractorError.
     """
     template = _load_prompt_template()
-    prompt = template.replace("{article_text}", article_text)
+    prompt = template.replace("{article_text}", chunk_text)
 
     last_reply = ""
     for _ in range(2):
         last_reply = call_hcx(
-            model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt, max_tokens=max_tokens
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            user_content=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
         try:
             return _parse_claims(last_reply)
@@ -197,6 +235,43 @@ def extract_claims(article_text: str, *, model: str = MODEL, max_tokens: int = 4
         return salvaged
 
     raise ClaimExtractorError(f"응답 파싱 실패(재시도+구제 포함): {last_reply!r}")
+
+
+def extract_claims(
+    article_text: str, *, model: str = MODEL, max_tokens: int = 4096, temperature: float = 0.0
+) -> list[Claim]:
+    """기사 본문 하나를 받아 수치 기반 주장 문장들을 Claim 리스트로 돌려줍니다.
+
+    temperature 기본값을 hcx_client 기본(0.2)보다 낮춰 0.0으로 둔다 — 동일 입력인데도
+    실행마다 어떤 claim을 뽑을지가 달라지는 비결정성이 실측 확인됨
+    (verify_claim_extractor_on_golden.py, 2026-08-04).
+
+    CHUNK_SIZE(3000자)보다 긴 기사는 문단 단위로 잘라 청크별로 따로 호출한 뒤 결과를
+    합친다. temperature=0으로도 recall이 28.8%에 그쳐서(few-shot 예시 보강도 무효과),
+    원인이 비결정성이 아니라 "모델이 긴 입력을 한 번에 훑을 때 일부만 뽑고 마는" 커버리지
+    문제로 판단했고, 각 청크를 few-shot 예시와 비슷한 짧은 크기로 줄여서 정면 대응한다.
+    청크 사이에 겹침은 없어서(위 _split_into_chunks 참고) 중복 제거 로직은 불필요.
+
+    실패 처리(청크별로 독립 적용): 한 청크가 ClaimExtractorError로 실패해도 나머지 청크는
+    계속 처리한다 — 기사 전체를 버리는 것보다, 실패한 청크분만 놓치는 게 낫다.
+    모든 청크가 실패하면 ClaimExtractorError를 그대로 올린다.
+    """
+    chunks = _split_into_chunks(article_text)
+
+    all_claims: list[Claim] = []
+    errors: list[Exception] = []
+    for chunk in chunks:
+        try:
+            all_claims.extend(
+                _extract_claims_single(chunk, model=model, max_tokens=max_tokens, temperature=temperature)
+            )
+        except ClaimExtractorError as e:
+            errors.append(e)
+
+    if not all_claims and errors:
+        raise errors[0]
+
+    return all_claims
 
 
 if __name__ == "__main__":
