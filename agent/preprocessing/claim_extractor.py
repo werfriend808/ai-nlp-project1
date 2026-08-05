@@ -100,16 +100,48 @@ def _to_optional_float(value: object) -> Optional[float]:
         return None
 
 
+# interfaces.py의 ClaimType(2단계 계약, 4종). claim_extractor.py 안에서만 방어적으로
+# 참조하는 로컬 사본이라 팀 합의 없이 여기서 그대로 씀 — interfaces.py 자체는 안 건드림.
+_KNOWN_CLAIM_TYPES = {"규모", "증감률", "비교", "전망"}
+
+
+def _normalize_claim_type(raw: object) -> Optional[str]:
+    """HCX가 claim_type을 null로 주면 예전엔 claim_type=str(item["claim_type"])가 그대로
+    문자열 "None"을 만들어버렸다(다운스트림이 "None"을 진짜 값처럼 취급하는 버그,
+    calc_type_router 도입 배경이 된 100건 실측 조사에서 9/84건 재현됨). 여기서 null과
+    "배경"/"규정"처럼 4종 스키마 밖 값을 전부 None으로 통일해서, 다운스트림(calc_type
+    라우팅 등)이 "판단불가"로 처리할 수 있는 명확한 신호로 만든다."""
+    if raw is None:
+        return None
+    text = str(raw)
+    return text if text in _KNOWN_CLAIM_TYPES else None
+
+
+# interfaces.py의 ComparisonOperator(5종: 증가/감소/동일/초과/미만) 밖에서 실측 조사(100건
+# 표본) 중 반복 관측된 동의어 하나만 정규화한다. "하락"(3건)은 "감소"의 동의어가 명확해서
+# 매핑하지만, "혼합"/"완화"/"약화"/"회복"/"2년 연속"(1건씩)은 표본이 너무 작고 방향이
+# 모호해서 지금은 새 스키마를 만들지 않고 원문 그대로 둔다(개인/CALC_TYPE_ROUTING_DESIGN.md
+# Q3-6/7 참고).
+_COMPARISON_OPERATOR_SYNONYMS = {"하락": "감소"}
+
+
+def _normalize_comparison_operator(raw: object) -> Optional[str]:
+    if raw is None:
+        return None
+    text = str(raw)
+    return _COMPARISON_OPERATOR_SYNONYMS.get(text, text)
+
+
 def _item_to_claim(item: dict) -> Claim:
     return Claim(
         sentence=str(item["sentence"]),
-        claim_type=str(item["claim_type"]),
+        claim_type=_normalize_claim_type(item.get("claim_type")),
         period=item.get("period"),
         unit=item.get("unit"),
         population=item.get("population"),
         statistic_expression=item.get("statistic_expression"),
         value=_to_optional_float(item.get("value")),
-        comparison_operator=item.get("comparison_operator"),
+        comparison_operator=_normalize_comparison_operator(item.get("comparison_operator")),
         comparison_target=item.get("comparison_target"),
         comparison_value=_to_optional_float(item.get("comparison_value")),
         region=item.get("region"),
@@ -120,7 +152,7 @@ def _item_to_claim(item: dict) -> Claim:
 
 def _parse_claims(reply: str) -> list[Claim]:
     parsed = _extract_json_array(reply)
-    return [_item_to_claim(item) for item in parsed]
+    return [c for c in (_item_to_claim(item) for item in parsed) if c.claim_type is not None]
 
 
 def _iter_top_level_objects(array_text: str):
@@ -170,9 +202,11 @@ def _salvage_claims(reply: str) -> list[Claim]:
     claims: list[Claim] = []
     for obj_text in _iter_top_level_objects(sanitized):
         try:
-            claims.append(_item_to_claim(json.loads(obj_text)))
+            claim = _item_to_claim(json.loads(obj_text))
         except (KeyError, ValueError, TypeError, json.JSONDecodeError):
             continue
+        if claim.claim_type is not None:
+            claims.append(claim)
     return claims
 
 

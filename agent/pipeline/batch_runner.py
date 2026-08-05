@@ -456,6 +456,34 @@ def run_article(
         print(f"{'-' * 60}")
         print(f"주장: \"{claim.sentence}\" (claim_type={claim.claim_type})")
 
+        if claim.claim_type == "전망":
+            # 미래 예측 주장은 애초에 공식 통계로 검증할 대상이 없다 — 3~8단계를 태워봐야
+            # 표 매핑도 안 되고(과거 통계표에 "전망치"가 없음) API 호출만 낭비되므로,
+            # calc_type 라우팅 조사에서 드러난 이 케이스(100건 실측 중 8/84)는 여기서
+            # 바로 판단불가로 끝낸다 (calc_type_router.route_calc_type도 "전망"은 None을
+            # 반환해 같은 원칙을 공유함).
+            print("[분류] claim_type='전망'(미래 예측) → 3~8단계 건너뛰고 즉시 판단불가 처리")
+            verdict = Verdict(verdict="판단불가", gap_type=None, reason="미래 예측 주장은 공식 통계로 검증 불가")
+            insert_verification(
+                _build_verification_record(
+                    article=article, claim=claim, top=None, generic_slots=None,
+                    table_params=table_params, computed=None, verdict=verdict, explanation=None,
+                    cls_result=cls_result, catalog_by_id=catalog_by_id,
+                    verification_possible="불가", ambiguity_reason="미래 예측 주장(claim_type=전망)은 검증 대상 아님",
+                )
+            )
+            results.append(
+                {
+                    "article": article["label"],
+                    "claim_sentence": claim.sentence,
+                    "table_name": None,
+                    "verdict": "판단불가",
+                    "gap_type": None,
+                    "classifier_score": cls_result.score,
+                }
+            )
+            continue
+
         try:
             candidates = search_and_rerank(
                 claim,
