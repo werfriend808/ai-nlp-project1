@@ -119,6 +119,23 @@ class KosisCalculator:
             calc_type="최댓값검증", raw_value=max_response.raw_value, unit=unit, period=max_response.period
         )
 
+    def compute_min_check(
+        self, current: KosisApiResponse, historical: list[KosisApiResponse]
+    ) -> ComputedResult:
+        """최솟값검증: "역대 최저"/"코로나 이후 최저" 같은 극값 주장을 검증한다.
+        compute_max_check()와 완전히 동일한 구조이고 max()만 min()으로 바뀐다 — 자세한
+        설계 근거(current를 historical에 포함해서 넘기는 이유, judge()가 어떻게 쓰는지)는
+        compute_max_check() docstring 참고.
+        """
+        all_values = historical if current in historical else historical + [current]
+        if not all_values:
+            raise CalculationError("최솟값 검증에는 최소 1개 이상의 KosisApiResponse가 필요합니다.")
+        unit = _check_same_unit(all_values)
+        min_response = min(all_values, key=lambda r: r.raw_value)
+        return ComputedResult(
+            calc_type="최솟값검증", raw_value=min_response.raw_value, unit=unit, period=min_response.period
+        )
+
 
 if __name__ == "__main__":
     # 브리프 워크드 예시(65세 이상 고령 농가 비율 64.2%)를 KosisApiResponse 리스트로 재현.

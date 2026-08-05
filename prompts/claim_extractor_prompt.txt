@@ -4,6 +4,11 @@
 ## 추출 규칙
 - 기사 본문에서 구체적인 수치(값·비율·순위 등)를 포함한 문장을 모두 찾습니다.
 - 수치가 전혀 없는 배경 설명 문장은 추출하지 않습니다.
+- "왜 그런 현상이 생겼는지"를 설명하는 원인/배경 서술 문장은, 다른 문장에서 이미 언급된
+  수치를 다시 인용하거나 언급만 하더라도 추출하지 않습니다 (예: "...때문이다"/"...영향이다"
+  형태로 이유를 설명하는 문장 — 그 자체가 새로운 통계 주장이 아닙니다).
+- 법령·제도·의무사항을 서술하는 문장은 "30일 전", "1년 이내"처럼 숫자가 포함돼 있어도
+  추출하지 않습니다 — 이건 실제로 조사·측정된 통계값이 아니라 규정에 명시된 기준값입니다.
 - sentence는 절대 요약하거나 다시 쓰지 말고, 기사 원문 문장을 그대로 사용합니다.
   "이는", "이 중", "전달보다" 등 지시어로 바로 앞 문장에 의존하는 경우에만, 원문 그대로인
   앞 문장과 해당 문장을 이어붙여 sentence로 씁니다 (문장을 새로 만들거나 내용을 요약하는 게
@@ -119,6 +124,23 @@
   {"sentence": "고용률은 지난달 61.4%로 1년 전(61.7%)에 비해 0.3%포인트 떨어졌다.", "claim_type": "증감률", "period": "2024년 12월", "unit": "%", "population": "전체", "statistic_expression": "고용률", "value": 61.4, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": 61.7, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
   {"sentence": "지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "%", "population": "전체", "statistic_expression": "실업률", "value": 3.8, "comparison_operator": "초과", "comparison_target": "2022년 1월", "comparison_value": 4.1, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
   {"sentence": "지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "%", "population": "청년", "statistic_expression": "청년 실업률", "value": 5.9, "comparison_operator": "미만", "comparison_target": "6%", "comparison_value": 6, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"}
+]
+
+[예시 입력 — 원인 설명/규정 서술 문장은 수치가 있어도 제외하는 경우]
+기사: "지난해 'N잡러'(부업을 가진 직장인)는 68만명으로 5년 전보다 40% 늘었다. 'N잡러'가
+빠르게 늘어난 것은 직장인들의 월급은 거의 오르지 않고 있는데 생활 물가만 급등하면서
+본업 하나만으로는 버티기 어려운 사람이 늘었기 때문이다. 한편 공정거래위원회는 온라인
+정기 결제 대금을 올리거나 무료 서비스를 유료로 전환하는 경우, 처음에 소비자 동의를
+받았다 하더라도 시행 30일 전에 소비자 동의를 다시 한번 받아야 한다고 밝혔다."
+
+[예시 출력]
+(두 번째 문장은 "...때문이다"로 끝나는 원인 설명이라 그 안에 새 수치가 없으므로(앞 문장의
+"N잡러"를 다시 가리킬 뿐) 제외합니다. 세 번째 문장은 "30일"이라는 숫자가 있지만 실제 조사된
+통계치가 아니라 공정위가 정한 제도상 기준일이라 역시 제외합니다. 첫 문장만 실제 통계
+주장이라 claim으로 남습니다.)
+[
+  {"sentence": "지난해 'N잡러'(부업을 가진 직장인)는 68만명으로 5년 전보다 40% 늘었다.", "claim_type": "규모", "period": "작년", "unit": "명", "population": "N잡러(부업을 가진 직장인)", "statistic_expression": "N잡러 수", "value": 680000, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "지난해 'N잡러'(부업을 가진 직장인)는 68만명으로 5년 전보다 40% 늘었다.", "claim_type": "증감률", "period": "작년", "unit": "%", "population": "N잡러(부업을 가진 직장인)", "statistic_expression": "N잡러 수", "value": 40, "comparison_operator": "증가", "comparison_target": "5년 전", "comparison_value": null, "region": null, "source_org": null, "source_report": null}
 ]
 
 ## 추출할 기사

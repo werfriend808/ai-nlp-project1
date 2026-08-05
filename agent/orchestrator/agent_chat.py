@@ -52,6 +52,14 @@ from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fa
 from agent.orchestrator.clarify_rules import CLARIFY_QUESTIONS
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
+from agent.shared.extreme_value_patterns import (
+    TIME_ANCHOR_YEARS as _TIME_ANCHOR_YEARS,
+    SINCE_EVENT_RE as _SINCE_EVENT_RE,
+    N_YEARS_SINCE_RE as _N_YEARS_SINCE_RE,
+    ALL_TIME_RE as _ALL_TIME_RE,
+    resolve_since_event_start_year as _resolve_since_event_start_year,
+    resolve_n_years_since_start_year as _resolve_n_years_since_start_year,
+)
 
 TABLE_PARAMS_PATH = Path(__file__).parent.parent / "kosis" / "table_params.json"
 
@@ -405,24 +413,13 @@ def resolve_decade_age_responses(
 # 그 사건이 언제 시작됐는지를 먼저 알아야 하는데, 이건 "작년"/"지난달"처럼 매번 달라지는
 # 상대 시점이 아니라 고정된 역사적 사실이라 정확한 사전 하나로 충분하다 — LLM에 맡기면
 # 매번 값이 오락가락(비결정적)할 수 있는 걸 굳이 LLM에 맡길 이유가 없다(2026-08-06 설계).
+#
+# 정규식 상수(_TIME_ANCHOR_YEARS/_SINCE_EVENT_RE/_N_YEARS_SINCE_RE/_ALL_TIME_RE)와 순수
+# 판별 함수(_resolve_since_event_start_year/_resolve_n_years_since_start_year)는
+# agent/shared/extreme_value_patterns.py로 옮겼다(2026-08-05, calc_type_router.py도 같이
+# 씀 — 위 import 구문 참고). 실제 시계열 fetch(client.fetch_series 호출)는 표/API 정보가
+# 필요해서 여기 그대로 남는다.
 # ---------------------------------------------------------------------------
-_TIME_ANCHOR_YEARS: dict[str, int] = {
-    "코로나": 2020,
-    "코로나19": 2020,
-    "팬데믹": 2020,
-}
-_SINCE_EVENT_RE = re.compile(r"(코로나(?:19)?|팬데믹)\s*이후")
-
-
-def _resolve_since_event_start_year(question: str) -> Optional[int]:
-    """"코로나 이후"처럼 사건을 기준점으로 삼는 표현에서 시작 연도를 찾는다. 매칭 안 되면 None."""
-    normalized_question = _normalize_whitespace(question)
-    m = _SINCE_EVENT_RE.search(normalized_question)
-    if not m:
-        return None
-    anchor = m.group(1)
-    key = "코로나" if anchor.startswith("코로나") else anchor
-    return _TIME_ANCHOR_YEARS.get(key)
 
 
 def resolve_max_since_event_responses(
@@ -442,20 +439,6 @@ def resolve_max_since_event_responses(
     return start_year, responses
 
 
-_N_YEARS_SINCE_RE = re.compile(r"(\d+)년\s*만에")
-
-
-def _resolve_n_years_since_start_year(question: str, article_year: int) -> Optional[int]:
-    """"8년 만에 최대"처럼 숫자로 명시된 기간 표현에서 시작 연도를 계산한다(기사 작성
-    연도 - N). "코로나 이후"(고정 이벤트)와 달리 매번 다른 숫자가 오는 진짜 상대 표현이라
-    기사 작성 시점 기준으로 계산해야 한다. 매칭 안 되면 None."""
-    normalized_question = _normalize_whitespace(question)
-    m = _N_YEARS_SINCE_RE.search(normalized_question)
-    if not m:
-        return None
-    return article_year - int(m.group(1))
-
-
 def resolve_max_n_years_responses(
     table_id: str, question: str, base_slots: dict, client, *, article_year: int, current_year: int
 ) -> Optional[tuple[int, list]]:
@@ -466,9 +449,6 @@ def resolve_max_n_years_responses(
         return None
     responses = client.fetch_series(table_id, base_slots, str(start_year), str(current_year))
     return start_year, responses
-
-
-_ALL_TIME_RE = re.compile(r"역대")
 
 
 def resolve_max_all_time_responses(
