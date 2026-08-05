@@ -76,7 +76,14 @@ _NUMBER_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(조|억|만|천)?")
 _DIGITS_RE = re.compile(r"\d+")
 # 숫자 바로 뒤에 이 마커가 오면 "23만8천명"의 "명"처럼 claim.unit과 일치하는 값이 아닌 한
 # 기간/시점 표현("46개월 만에", "3년 만에", "2024년")이지 비교 대상 수치가 아니다.
-_DURATION_MARKER_RE = re.compile(r"^(개월|년|일|주|시간|분기)")
+_DURATION_MARKER_RE = re.compile(r"^(개월|년|일|주|시간|분기|세)")
+# "국내 어린이(0~14세) 수가 역대 최저치"처럼 나이대 범위("0~14세")는 그 자체로 하나의
+# 묶음이라, 위 _DURATION_MARKER_RE만으로는 범위의 시작 숫자("0")까지는 못 거른다(끝 숫자
+# "14"만 "세" 마커로 걸러짐). 그러면 claim.value가 없어 정규식 폴백으로 넘어갔을 때 "0"이
+# 엉뚱하게 claim 수치로 뽑혀서, 실제로는 수치 없는 주장인데도 규칙 필터가 확신에 찬
+# "불일치"를 내버리는 버그가 있었음(2026-08-05, 판정 골든셋 채점 중 재현). 범위 표현
+# 전체를 후보에서 제외해서 막는다.
+_AGE_RANGE_RE = re.compile(r"\d+\s*[~\-]\s*\d+\s*세")
 
 # "1.1% 감소했다"처럼 claim_type="증감률" 문장은 숫자 자체엔 부호가 없고 방향은 단어로만
 # 표현됨. ComputedResult 쪽(calculator.py compute_change/compute_change_rate)은 감소를
@@ -100,6 +107,27 @@ def _extract_json_object(text: str) -> dict:
     if not match:
         raise JudgeError(f"응답에서 JSON 객체를 찾지 못했습니다: {text!r}")
     return json.loads(match.group(0))
+
+
+# HCX가 gap_type을 한글 대신 영어로 응답하는 경우가 간헐적으로 있음(실측: "population" —
+# 판정 골든셋 채점 중 재현, 2026-08-05). 프롬프트 재작성으로 100% 막긴 어려워서, 파싱
+# 단계에서 흔한 영단어를 한글로 정규화해 불필요한 JudgeError를 줄인다.
+_GAP_TYPE_ALIASES = {
+    "population": "모집단",
+    "numeric": "수치",
+    "number": "수치",
+    "value": "수치",
+    "period": "기간",
+    "time": "기간",
+    "exaggeration": "과장표현",
+}
+
+
+def _normalize_gap_type(gap_type: object) -> Optional[str]:
+    if gap_type in (None, "None", "none", ""):
+        return None
+    key = str(gap_type).strip().lower()
+    return _GAP_TYPE_ALIASES.get(key, gap_type)
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +184,12 @@ def _extract_claim_number(claim: Claim) -> Optional[float]:
         return _apply_direction(claim.value, claim)
 
     chunks = _find_compound_numbers(claim.sentence)
+    age_range_spans = [m.span() for m in _AGE_RANGE_RE.finditer(claim.sentence)]
+    chunks = [
+        (value, start, end)
+        for value, start, end in chunks
+        if not any(span_start <= start and end <= span_end for span_start, span_end in age_range_spans)
+    ]
 
     if claim.unit:
         unit_pattern = re.compile(rf"^\s*{re.escape(claim.unit)}")
@@ -213,12 +247,53 @@ def _is_percent(claim: Claim, computed: ComputedResult) -> bool:
 
 
 def _numeric_gap(claim_value: float, claim: Claim, computed: ComputedResult) -> float:
-    """%류는 %p(절대 차이), 그 외는 상대오차(%)로 통일해서 반환."""
-    if _is_percent(claim, computed):
-        return abs(claim_value - computed.raw_value)
-    if computed.raw_value == 0:
-        return abs(claim_value - computed.raw_value)
-    return abs(claim_value - computed.raw_value) / abs(computed.raw_value) * 100
+    """항상 절대 차이를 반환 (%류는 %p, 그 외는 원래 단위 그대로)."""
+    return abs(claim_value - computed.raw_value)
+
+
+def _decimal_places(value: float) -> int:
+    """value를 문자열로 표현했을 때 소수점 아래 유효자릿수. repr()은 float을 원래
+    입력과 왕복 변환 가능한 최단 표현으로 돌려주므로("49.1" -> repr 49.1, 49.10 아님)
+    기사에 실제로 적힌 소수점 정밀도를 그대로 복원할 수 있다."""
+    text = repr(float(value))
+    if "e" in text or "E" in text:
+        return 0
+    if "." not in text:
+        return 0
+    frac = text.split(".", 1)[1].rstrip("0")
+    return len(frac)
+
+
+def _trailing_zero_count(value: float) -> int:
+    """정수부 끝에 붙은 0 개수. "9384000"처럼 큰 수 끝이 0으로 딱 떨어지면 반올림된
+    값(예: 천 단위 반올림)일 가능성이 높다고 본다."""
+    int_text = str(abs(int(round(value))))
+    stripped = int_text.rstrip("0")
+    return len(int_text) - len(stripped) if int_text != "0" else 0
+
+
+def _implied_tolerance(claim_value: float, is_percent: bool) -> float:
+    """claim_value가 기사에 실제로 적힌 유효자릿수를 보고 "이 정도 반올림 오차는
+    허용"이라는 임계값을 동적으로 추정한다.
+
+    (2026-08-05, 판정 골든셋 채점 중 실측 근거로 도입 — 고정된 NUMERIC_TOLERANCE 하나로는
+    "91,155건 vs 91,151건"(4건 차이, 사람은 불일치로 봄)과 "9,384,000명 vs 9,384,325명"
+    (325명 차이, 사람은 반올림으로 보고 일치로 봄)을 구분할 수 없었다. 실제로는 절대
+    오차 크기가 아니라 "기사 숫자가 끝자리 0으로 반올림된 값처럼 보이는가"가 기준이었음
+    — 91,155는 끝자리가 0이 아니라 정확한 값으로, 9,384,000은 끝이 000이라 반올림된
+    값으로 사람이 판단한 것으로 재현됨.)
+
+    - %류(퍼센트/퍼센트포인트): 소수점 자릿수만 본다. "10%"처럼 정수로만 적혀도 "±5"
+      같은 느슨한 값이 아니라 NUMERIC_TOLERANCE(0.1%p)를 그대로 쓴다 — 퍼센트는 정수로
+      적어도 통상 정밀한 값이지 "10의 자리로 반올림"한 게 아니기 때문.
+    - 그 외(명/건 등 절대량): 정수부 끝자리 0 개수로 반올림 단위를 추정. 끝자리가 0이
+      아니면(예: 91155) 정확한 값으로 보고 허용오차를 최소 단위(0.5)로 좁힌다.
+    """
+    if is_percent:
+        decimals = _decimal_places(claim_value)
+        return 0.5 * (10 ** -decimals) if decimals > 0 else NUMERIC_TOLERANCE
+    trailing_zeros = _trailing_zero_count(claim_value)
+    return 0.5 * (10 ** trailing_zeros) if trailing_zeros > 0 else 0.5
 
 
 _RATE_CALC_TYPES = ("증감", "증감률")
@@ -272,9 +347,11 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
     if _claim_computed_type_mismatch(claim, computed):
         return None  # 수준값 vs 변화율처럼 종류가 다른 값 비교 → 규칙으로 확정하지 않고 LLM 위임
 
+    is_pct = _is_percent(claim, computed)
     gap = _numeric_gap(claim_value, claim, computed)
-    clear_threshold = NUMERIC_TOLERANCE * CLEAR_GAP_MULTIPLIER
-    gap_unit = "%p" if _is_percent(claim, computed) else "%(상대오차)"
+    tolerance = _implied_tolerance(claim_value, is_pct)
+    clear_threshold = tolerance * CLEAR_GAP_MULTIPLIER
+    gap_unit = "%p" if is_pct else (claim.unit or computed.unit or "")
 
     if gap > clear_threshold:
         return Verdict(
@@ -282,11 +359,12 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
             gap_type="수치",
             reason=(
                 f"기사 수치({claim_value})와 통계 계산값({computed.raw_value}{computed.unit}) "
-                f"차이가 {gap:.2f}{gap_unit}로 허용 오차를 크게 초과함 (규칙 기반 판정, LLM 미호출)."
+                f"차이가 {gap:.2f}{gap_unit}로 허용 오차(반올림 단위 추정 ±{tolerance:g}{gap_unit})를 "
+                "크게 초과함 (규칙 기반 판정, LLM 미호출)."
             ),
         )
 
-    if gap <= NUMERIC_TOLERANCE:
+    if gap <= tolerance:
         # 엣지케이스 방어: computed.period가 아예 없으면(5단계 필드 누락 등) "시점 불일치 없음"
         # 으로 잘못 확정하지 말고 규칙 필터를 포기하고 LLM에 위임한다. (실제로 이 가드가 없으면
         # computed.period=""일 때도 "일치"로 확정 판정해버리는 버그가 있었음 — 검증 완료.)
@@ -297,7 +375,7 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
         period_mismatch = claim_gran is not None and computed_gran is not None and claim_gran != computed_gran
         unit_mismatch = (
             bool(claim.unit) and bool(computed.unit) and claim.unit != computed.unit
-            and not _is_percent(claim, computed)
+            and not is_pct
         )
         if not period_mismatch and not unit_mismatch:
             return Verdict(
@@ -305,8 +383,8 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
                 gap_type=None,
                 reason=(
                     f"기사 수치({claim_value})와 통계 계산값({computed.raw_value}{computed.unit}) "
-                    f"차이가 허용 오차({NUMERIC_TOLERANCE}{gap_unit}) 이내이고 시점·단위 불일치도 "
-                    "없음 (규칙 기반 판정, LLM 미호출)."
+                    f"차이가 허용 오차(반올림 단위 추정 ±{tolerance:g}{gap_unit}) 이내이고 시점·단위 "
+                    "불일치도 없음 (규칙 기반 판정, LLM 미호출)."
                 ),
             )
 
@@ -338,10 +416,8 @@ def _judge_with_llm(claim: Claim, computed: ComputedResult, *, model: str = MODE
         verdict = str(parsed["verdict"])
         if verdict not in ("일치", "불일치", "판단불가"):
             raise ValueError(f"알 수 없는 verdict 값: {verdict!r}")
-        gap_type = parsed.get("gap_type")
-        if gap_type in (None, "None", "none", ""):
-            gap_type = None
-        elif gap_type not in ("수치", "기간", "모집단", "과장표현"):
+        gap_type = _normalize_gap_type(parsed.get("gap_type"))
+        if gap_type is not None and gap_type not in ("수치", "기간", "모집단", "과장표현"):
             raise ValueError(f"알 수 없는 gap_type 값: {gap_type!r}")
         return Verdict(verdict=verdict, gap_type=gap_type, reason=str(parsed.get("reason", "")))
     except (KeyError, ValueError, json.JSONDecodeError) as e:
@@ -415,9 +491,7 @@ def judge_complex(
         verdict = str(parsed["verdict"])
         if verdict not in ("일치", "불일치", "판단불가"):
             raise ValueError(f"알 수 없는 verdict 값: {verdict!r}")
-        gap_type = parsed.get("gap_type")
-        if gap_type in (None, "None", "none", ""):
-            gap_type = None
+        gap_type = _normalize_gap_type(parsed.get("gap_type"))
         return Verdict(verdict=verdict, gap_type=gap_type, reason=str(parsed.get("reason", "")))
     except (KeyError, ValueError, json.JSONDecodeError) as e:
         raise JudgeError(f"응답 파싱 실패: {reply!r}") from e
@@ -527,3 +601,23 @@ if __name__ == "__main__":
     print(f"[케이스6 - is_percent 오판 방어] 규칙 기반 1차 필터 결과: {rb6}")
     assert rb6 is None, "명 단위인데도 %p로 오판해서 규칙으로 확정해버림 (회귀)"
     print("  → 통과: 238000(추출값)이 정확히 합산됐고, '명' 단위를 %로 오판하지 않아 LLM에 위임함.")
+
+    # 케이스 7 — 회귀 방지: claim.value가 없고 문장에 실제 claim 수치가 없는데
+    # "(0~14세)" 같은 나이대 범위 표현만 있을 때, 범위 숫자를 엉뚱하게 claim 수치로
+    # 오인해서 규칙 필터가 확신에 찬 오답을 내지 않는지 (판정 골든셋 채점 중 실제로
+    # 재현된 버그 — "0"이 claim 수치로 뽑혀서 큰 값과 비교돼 거짓 "불일치"가 나왔었음)
+    claim7 = Claim(
+        sentence="지난달 말 기준 국내 어린이(0~14세) 수가 역대 최저치를 기록했다는 소식이 전해졌다.",
+        claim_type="규모", period="2025년", unit=None, population="어린이",
+    )
+    claim7_value = _extract_claim_number(claim7)
+    print(f"[케이스7 - 나이대 범위 오인 방어] 추출값: {claim7_value}")
+    assert claim7_value is None, f"나이대 범위(0~14세)를 claim 수치로 잘못 뽑음 (회귀, 실제 {claim7_value})"
+    print("  → 통과: 수치 없는 주장을 '0'/'14'로 오인하지 않고 None(LLM 위임) 반환.")
+
+    # 케이스 8 — 회귀 방지: HCX가 gap_type을 영어("population")로 응답해도 한글로
+    # 정규화되는지 (판정 골든셋 채점 중 실제로 재현된 JudgeError 원인)
+    normalized = _normalize_gap_type("population")
+    print(f"[케이스8 - gap_type 영어 응답 정규화] 'population' -> {normalized!r}")
+    assert normalized == "모집단", f"gap_type 영어 정규화 회귀 (기대 '모집단', 실제 {normalized!r})"
+    print("  → 통과: 영어 응답도 허용된 한글 gap_type으로 정규화됨.")
