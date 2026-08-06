@@ -89,12 +89,21 @@ def case_05_comparison_keyword_without_calc_type_is_unresolved():
         assert result.slots.get("calc_type"), "비교 의도인데 calc_type도 안 뽑히고 미해결도 아님"
 
 
-def case_06_region_required_when_table_has_real_region_axis():
-    """DT_1B04005N은 region 축에 실제 18개 지역 코드가 있어서(전국 하나뿐 아님) region이
-    없으면 미해결이어야 한다."""
-    result = _resolve("2024년 20대 인구는 630만명이었다", "DT_1B04005N")
+def case_06_region_required_when_no_safe_national_default():
+    """DT_1R11006_FRM101의 country 축은 default_value가 어떤 나라 라벨과도 안 맞아
+    (안전한 "전국류" 기본값이 없음) 국가 언급이 없으면 여전히 미해결이어야 한다."""
+    result = _resolve("2024년 수출액이 크게 늘었다", "DT_1R11006_FRM101")
     assert result.status == "4단계_미해결", (result.status, result.missing_slots)
     assert "region" in result.missing_slots, result.missing_slots
+
+
+def case_06b_region_not_required_when_default_is_national():
+    """DT_1B04005N의 region 기본값은 "전국"이라, 지역 언급이 없어도 조용히 전국으로
+    채워져서 5단계로 진행 가능해야 한다 (2026-08-05 실제 기사 테스트로 발견한 버그 수정
+    — "2020년 인구주택총조사 응답률 96.3%"처럼 전국 단위 통계가 지역 미언급을 이유로
+    불필요하게 미해결 처리되던 것)."""
+    result = _resolve("2024년 인구는 630만명이었다", "DT_1B04005N")
+    assert "region" not in result.missing_slots, result.missing_slots
 
 
 def case_07_decade_age_detected_as_special_resolution():
@@ -112,16 +121,37 @@ def case_09_all_time_extremum_detected():
     assert result.special_resolution == "극값_역대", result.special_resolution
 
 
+def case_10_extremum_detected_does_not_require_calc_type():
+    """극값(N년만에 등)이 감지됐으면 "증가" 같은 비교 키워드가 있어도 calc_type 미해결로
+    막으면 안 된다 (2026-08-05 실제 기사 "10년 만에 처음이다"에서 발견한 통합 누락 수정)."""
+    result = _resolve("2024년 청년 실업률 증가는 8년 만에 처음이다", "DT_1DA7102S")
+    assert result.special_resolution == "극값_N년만에", result.special_resolution
+    assert "calc_type" not in result.missing_slots, result.missing_slots
+    assert result.status == "5단계_진행가능", (result.status, result.missing_slots)
+
+
+def case_11_relative_month_without_year_resolves_via_article_date():
+    """"지난 10월"처럼 연도 없이 상대적으로 월만 가리키는 표현은 article_date(2025-01-06)
+    기준으로 "2024년 10월"로 계산돼야 한다 (2026-08-05 실제 배치에서 이런 표현이 계속
+    period 미해결로 빠지는 걸 확인하고 추가한 _resolve_relative_month_period 회귀 테스트)."""
+    result = _resolve("지난 10월 청년 실업률이 6%에 육박했다", "DT_1DA7102S")
+    assert result.slots.get("period") == "202410", result.slots
+    assert result.status == "5단계_진행가능", (result.status, result.missing_slots)
+
+
 CASES = [
     case_01_no_candidates_means_no_table_match,
     case_02_unverified_embedding_only_match_is_flagged,
     case_03_period_missing_blocks_stage5,
     case_04_full_slots_ready_for_stage5,
     case_05_comparison_keyword_without_calc_type_is_unresolved,
-    case_06_region_required_when_table_has_real_region_axis,
+    case_06_region_required_when_no_safe_national_default,
+    case_06b_region_not_required_when_default_is_national,
     case_07_decade_age_detected_as_special_resolution,
     case_08_since_event_extremum_detected,
     case_09_all_time_extremum_detected,
+    case_10_extremum_detected_does_not_require_calc_type,
+    case_11_relative_month_without_year_resolves_via_article_date,
 ]
 
 
