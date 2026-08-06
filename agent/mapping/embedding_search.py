@@ -31,6 +31,23 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
+# Hugging Face Hub CDN(CloudFront)으로의 연결이 SSL 소켓 connect() 단계에서 무한 대기하는
+# 현상을 실측으로 확인함(2026-08-05, 로컬 네트워크의 IPv6 라우팅 문제로 추정 — 같은 호스트에
+# IPv4로는 즉시 연결되는데 IPv6로는 연결 자체가 안 됨). socket.getaddrinfo가 IPv4 주소만
+# 반환하도록 패치하고 기본 타임아웃을 걸어서, 최악의 경우에도 무한 멈춤 대신 타임아웃
+# 예외로 끝나게 한다. torch/sentence-transformers가 로딩되기 전에 걸어야 하므로 여기서 설정.
+import socket  # noqa: E402
+
+if not getattr(socket, "_ipv4_only_patched", False):
+    _original_getaddrinfo = socket.getaddrinfo
+
+    def _getaddrinfo_ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
+        return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+    socket.getaddrinfo = _getaddrinfo_ipv4_only
+    socket.setdefaulttimeout(30)
+    socket._ipv4_only_patched = True
+
 import hashlib
 import json
 import math

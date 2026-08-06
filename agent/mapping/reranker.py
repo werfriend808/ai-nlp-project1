@@ -36,6 +36,20 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
+# embedding_search.py와 동일한 이유(HF Hub CDN 연결이 IPv6에서 무한 대기, 2026-08-05 확인) —
+# 이 모듈만 단독 import될 때도 안전하도록 여기에도 동일하게 설정한다.
+import socket  # noqa: E402
+
+if not getattr(socket, "_ipv4_only_patched", False):
+    _original_getaddrinfo = socket.getaddrinfo
+
+    def _getaddrinfo_ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
+        return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+    socket.getaddrinfo = _getaddrinfo_ipv4_only
+    socket.setdefaulttimeout(30)
+    socket._ipv4_only_patched = True
+
 from dataclasses import replace
 from pathlib import Path
 from typing import Optional
