@@ -529,6 +529,30 @@ def _extract_month_period(text: str) -> Optional[str]:
     return f"{year}{month}"
 
 
+# "지난 10월"/"올 5월"/"이번 3월"처럼 연도 없이 월만 상대적으로 가리키는 표현.
+# _MONTH_EXPR_RE는 문장에 연도가 그대로 적혀있는 경우("24년 10월")만 잡으므로, 연도가
+# 기준일(article_date/오늘) 기준으로 계산돼야 하는 이런 표현은 따로 처리해야 한다
+# (2026-08-05, 실제 배치에서 "지난 10월"/"지난 1월"이 계속 period 미해결로 빠지는 걸 확인).
+_RELATIVE_MONTH_RE = re.compile(r"(지난|올해?|이번)\s*(\d{1,2})월")
+
+
+def _resolve_relative_month_period(text: str, reference_date: date) -> Optional[str]:
+    """"지난 N월"은 기준일보다 앞선 가장 최근 N월(같은 해 또는 작년)로, "올/이번 N월"은
+    기준일과 같은 해의 N월로 계산한다."""
+    m = _RELATIVE_MONTH_RE.search(text)
+    if not m:
+        return None
+    keyword, month_digits = m.groups()
+    month = int(month_digits)
+    if not 1 <= month <= 12:
+        return None
+    if keyword == "지난":
+        year = reference_date.year if month < reference_date.month else reference_date.year - 1
+    else:  # "올"/"올해"/"이번"
+        year = reference_date.year
+    return f"{year}{month:02d}"
+
+
 # ---------------------------------------------------------------------------
 # 툴 1: 통계표 매핑 — 실전1(3단계)의 search_and_rerank를 그대로 재사용
 # ---------------------------------------------------------------------------

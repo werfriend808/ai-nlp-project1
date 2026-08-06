@@ -29,6 +29,7 @@ Academy of Artificial Intelligence) 제작이다. "임베딩/리랭커 둘 다 �
 from __future__ import annotations
 
 import json
+import math
 import os
 
 # embedding_search.py와 동일한 이유(OpenMP 런타임 중복 로드로 인한 세그폴트, 2026-08-03 확인) —
@@ -168,6 +169,25 @@ def _merge_candidates(
     return list(merged.values())
 
 
+def _is_verified(candidate: TableCandidate) -> bool:
+    return "(embedding-only, unverified)" not in (candidate.source_meta or "")
+
+
+# keyword_search가 실제로 검증한 후보에 주는 가중치. bge-reranker-v2-m3의 predict() 출력이
+# 로짓/확률 중 어느 스케일인지 코드만으로는 보장이 안 돼서(model config에 따라 다름), 먼저
+# 시그모이드로 (0,1) 범위에 강제로 맞춘 뒤 이 값을 더한다 — 그래야 원본 스케일과 무관하게
+# 가중치 크기가 항상 같은 의미를 가진다. 2026-08-05 원화환율(DT_731Y001) 실측 사례로 확인:
+# keyword_search가 score=1.0으로 정확히 찾은 표를, embedding-only(unverified) 후보가 rerank
+# 단계에서 근거 없이 밀어내는 문제가 있었음 — 리랭커가 정상 로딩된 환경에서는 이 가중치가
+# 전혀 반영되지 않고 있었다(리랭커 모델을 못 쓸 때의 항등 폴백에만 "검증 후보 우선" 로직이
+# 있었음). 값(0.05)은 첫 도입치라 실측 재검증하면서 조정 가능.
+_VERIFIED_BONUS = 0.05
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + math.exp(-x))
+
+
 def rerank(
     claim: Claim,
     candidates: list[TableCandidate],
@@ -193,20 +213,22 @@ def rerank(
         # score 크기만으로 정렬하면 keyword_search가 검증한 후보를 밀어낸다.
         # 검증된 후보를 항상 먼저 두고, 그 안에서만 score 내림차순으로 정렬한다.
         def _sort_key(c: TableCandidate) -> tuple[bool, float]:
-            unverified = "(embedding-only, unverified)" in (c.source_meta or "")
-            return (unverified, -c.score)
+            return (not _is_verified(c), -c.score)
 
         return sorted(candidates, key=_sort_key)[:top_k]
 
     reranked: list[TableCandidate] = []
     for cand, score in zip(candidates, scores):
+        adjusted = _sigmoid(score)
+        if _is_verified(cand):
+            adjusted = min(adjusted + _VERIFIED_BONUS, 1.0)
         reranked.append(
             TableCandidate(
                 table_id=cand.table_id,
                 table_name=cand.table_name,
-                score=score,
+                score=adjusted,
                 required_slots=cand.required_slots,
-                source_meta=f"{cand.source_meta} | reranked",
+                source_meta=f"{cand.source_meta} | reranked(raw={score:.3f})",
             )
         )
 
