@@ -15,3 +15,7 @@ openpyxl>=3.1.5
 python-dotenv>=1.2.2
 requests>=2.34.2
 sentence-transformers>=5.6.1
+# db/fetch_article_text.py(프론트 "기사 팩트체크 뷰어"용 원문 재수집)가 씀. 없어도
+# db/export_json.py는 안 죽고 data_set.csv 스크랩 본문으로 폴백함(export_article_texts
+# 참고).
+trafilatura>=2.2.0
