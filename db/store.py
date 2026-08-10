@@ -102,10 +102,16 @@ def init_db(path: Path = DB_PATH) -> None:
 def insert_verification(record: dict, path: Path = DB_PATH) -> None:
     """record: _COLUMNS에 해당하는 키만 골라서 저장 (없는 키는 None으로 채움).
     result_id가 이미 있으면(재실행) 덮어씀 — INSERT OR REPLACE.
-    kosis_dimension이 dict로 들어오면 JSON 문자열로 직렬화."""
+
+    SQLite는 list/dict를 못 담아서 JSON 문자열로 직렬화한다. kosis_dimension이 대표
+    사례지만, 2단계 claim_extractor가 (예: "대구·전남·울산 등 늘었다"처럼 지역이 여러 개인
+    문장에서) region 등 원래 문자열이어야 할 필드를 배열로 반환하는 경우가 실제로 있어서
+    (실측: sqlite3.ProgrammingError로 배치 전체가 죽던 버그) 모든 필드에 방어적으로 적용한다.
+    """
     row = dict(record)
-    if isinstance(row.get("kosis_dimension"), (dict, list)):
-        row["kosis_dimension"] = json.dumps(row["kosis_dimension"], ensure_ascii=False)
+    for key, value in row.items():
+        if isinstance(value, (dict, list)):
+            row[key] = json.dumps(value, ensure_ascii=False)
     row.setdefault("created_at", datetime.now(timezone.utc).isoformat())
 
     values = [row.get(col) for col in _COLUMNS]

@@ -520,15 +520,18 @@ def run_article(
         # 된 매칭을 억지로 쓰지 않고 "매칭 없음"으로 처리한다.
         if top.source_meta and "unverified" in top.source_meta:
             print(f"[3단계 매핑] 최상위 후보가 검증 안 된 임베딩 전용 매칭(신뢰도 낮음) → 매칭 없음으로 처리")
-            insert_verification(
-                _build_verification_record(
-                    article=article, claim=claim, top=top, generic_slots=None,
-                    table_params=table_params, computed=None, verdict=None, explanation=None,
-                    cls_result=cls_result, catalog_by_id=catalog_by_id,
-                    verification_possible="애매",
-                    ambiguity_reason="표 매칭 신뢰도가 낮아 검증 안 된 임베딩 전용 매칭임",
+            try:
+                insert_verification(
+                    _build_verification_record(
+                        article=article, claim=claim, top=top, generic_slots=None,
+                        table_params=table_params, computed=None, verdict=None, explanation=None,
+                        cls_result=cls_result, catalog_by_id=catalog_by_id,
+                        verification_possible="애매",
+                        ambiguity_reason="표 매칭 신뢰도가 낮아 검증 안 된 임베딩 전용 매칭임",
+                    )
                 )
-            )
+            except Exception as e:
+                print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
             results.append(
                 {
                     "article": article["label"],
@@ -556,14 +559,17 @@ def run_article(
         outcome = run_stage_7_8(claim, top, computed)
         if outcome is not None:
             verdict, explanation = outcome
-            insert_verification(
-                _build_verification_record(
-                    article=article, claim=claim, top=top, generic_slots=slots,
-                    table_params=table_params, computed=computed, verdict=verdict,
-                    explanation=explanation, cls_result=cls_result, catalog_by_id=catalog_by_id,
-                    verification_possible="가능", ambiguity_reason=None,
+            try:
+                insert_verification(
+                    _build_verification_record(
+                        article=article, claim=claim, top=top, generic_slots=slots,
+                        table_params=table_params, computed=computed, verdict=verdict,
+                        explanation=explanation, cls_result=cls_result, catalog_by_id=catalog_by_id,
+                        verification_possible="가능", ambiguity_reason=None,
+                    )
                 )
-            )
+            except Exception as e:
+                print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
             results.append(
                 {
                     "article": article["label"],
