@@ -46,6 +46,7 @@ agent/pipeline/batch_runner.py — 1→2→3→4→5→6→7→8단계 전체 �
 from __future__ import annotations
 
 import csv
+import io
 import json
 import random
 import sys
@@ -121,8 +122,17 @@ def load_articles_from_csv(
     손으로 쓴 ARTICLES(알려진 이슈 재현용)와 달리, 실제 기사라 어떤 clarify 질문이
     나올지 미리 알 수 없어서 여러 슬롯을 한 번에 답하는 범용 문구를 그대로 재사용한다.
     """
-    with open(path, encoding="utf-8") as f:
-        rows = [r for r in csv.DictReader(f) if r.get("검색 구분 레이블", "").strip().lower() == "true"]
+    # data_set.csv는 여러 차례 Excel에서 내보낸 조각을 이어붙인 흔적이 있어서, 파일 맨 앞뿐
+    # 아니라 중간 행에도 BOM(U+FEFF)이 섞여 있는 경우가 실측 확인됨(2026-08-10, --csv 배치
+    # 실행 중 재현 — 기사제목에 낀 BOM을 print()가 그대로 출력하려다 Windows 콘솔(cp949)
+    # 인코딩 실패로 크래시). encoding="utf-8-sig"는 파일 시작 위치의 BOM만 제거하므로, 읽은
+    # 텍스트 전체에서 남은 BOM을 한 번 더 제거해서 중간에 낀 것까지 잡는다.
+    with open(path, encoding="utf-8-sig") as f:
+        text = f.read().replace("﻿", "")
+    rows = [
+        r for r in csv.DictReader(io.StringIO(text))
+        if r.get("검색 구분 레이블", "").strip().lower() == "true"
+    ]
 
     random.Random(seed).shuffle(rows)
 
@@ -643,5 +653,18 @@ def main(use_csv_sample: bool = False, csv_n: int = 15) -> None:
     print(f"\n[DB] {len(all_results)}건을 data/verifications.db에 저장했습니다.")
 
 
+def _parse_csv_n(argv: list[str], default: int = 15) -> int:
+    """--csv-n 30 / --csv-n=30 형식으로 CSV 샘플 건수를 지정할 수 있게 한다.
+    (프론트엔드 데모용 데이터 export를 위해 15건 고정값을 CLI에서 조절 가능하게 함 —
+    1~8단계 전체는 judge/explain의 LLM 호출까지 있어 pipeline_1_4.py보다 건당 오래
+    걸리고 병렬화/재시작 기능도 아직 없으니, 너무 큰 값은 권장하지 않는다.)"""
+    for i, arg in enumerate(argv):
+        if arg == "--csv-n" and i + 1 < len(argv):
+            return int(argv[i + 1])
+        if arg.startswith("--csv-n="):
+            return int(arg.split("=", 1)[1])
+    return default
+
+
 if __name__ == "__main__":
-    main(use_csv_sample="--csv" in sys.argv)
+    main(use_csv_sample="--csv" in sys.argv, csv_n=_parse_csv_n(sys.argv))
