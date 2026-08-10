@@ -132,6 +132,11 @@ RELATIVE_YEAR_OFFSET = {
 # "여"(-쯤/-남짓)가 "4년여 전"처럼 낄 수 있어서 agent_chat.py의 "N년여 만에"와 같은 이유로 허용.
 _N_YEARS_AGO_RE = re.compile(r"(\d+)년\s*여?\s*전")
 
+# 절대 연도인데 LLM이 "2024" 대신 "2024년"처럼 접미사를 붙여서 응답하는 포맷 흔들림이
+# 있어서(2026-08-06, test_slot_filler_module.py case_02에서 실측 확인), is_valid_period()가
+# 4자리 숫자만 허용하다 보니 멀쩡한 절대 연도가 그냥 버려지던 문제를 여기서 먼저 벗겨낸다.
+_ABSOLUTE_YEAR_WITH_SUFFIX_RE = re.compile(r"(\d{4})년")
+
 
 def normalize_time_expressions(extracted: dict, article_date: date) -> dict:
     period_val = extracted.get("period")
@@ -139,6 +144,12 @@ def normalize_time_expressions(extracted: dict, article_date: date) -> dict:
         return extracted
 
     period_str = str(period_val)
+
+    # -1) "2024년"처럼 절대 연도에 "년" 접미사가 붙은 경우 먼저 벗겨낸다 (상대 표현 아님).
+    absolute_year_match = _ABSOLUTE_YEAR_WITH_SUFFIX_RE.fullmatch(period_str)
+    if absolute_year_match:
+        extracted["period"] = absolute_year_match.group(1)
+        return extracted
 
     # 0) "N년 전"(숫자 가변) — 연 단위 계산 가능, 파이썬으로 직접 계산
     n_years_ago_match = _N_YEARS_AGO_RE.search(period_str)
@@ -180,6 +191,25 @@ def is_valid_period(value) -> bool:
     return False
 
 
+def _normalize_whitespace(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def is_region_grounded(value, user_input: str) -> bool:
+    """region 값이 실제로 원문 문장에 등장하는지 확인한다 (공백 무시 비교).
+
+    표별 세부 슬롯(agent_chat.py의 dimension_hints LLM 2차 폴백)은 근거 quote가 원문에
+    있는지 대조해서 환각을 막는데, 이 공용 region 슬롯엔 그런 방어가 전혀 없었다 —
+    2026-08-06 300개 배치 실측에서 "7월 1~10일 수출이... 증가했다"처럼 지역 언급 자체가
+    없는 문장에도 계속 region="서울"이 지어내지는 걸 확인(5단계_진행가능 결과 중 지역명이
+    있는 13건 중 4건이 이런 식으로 문장에 없는 값이었음). period처럼 값 자체의 형식이
+    아니라 "원문에 실제로 있는가"만 확인하면 되므로 정규식이 아니라 단순 포함 검사로
+    충분하다."""
+    if value is None:
+        return True
+    return _normalize_whitespace(str(value)) in _normalize_whitespace(user_input)
+
+
 def fill_slots(user_input: str, existing_slots: dict, article_date: date) -> dict:
     prompt = build_extraction_prompt(user_input)
     raw = call_hcx(prompt)
@@ -198,6 +228,9 @@ def fill_slots(user_input: str, existing_slots: dict, article_date: date) -> dic
             continue
         if slot == "period" and not is_valid_period(value):
             # 이상한 값이면 무시하고 기존 값 유지 (덮어쓰지 않음)
+            continue
+        if slot == "region" and not is_region_grounded(value, user_input):
+            # 원문에 없는 지역명(환각)이면 무시하고 기존 값 유지 (덮어쓰지 않음)
             continue
         merged[slot] = value
 

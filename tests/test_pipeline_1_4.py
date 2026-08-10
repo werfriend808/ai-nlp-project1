@@ -139,6 +139,30 @@ def case_11_relative_month_without_year_resolves_via_article_date():
     assert result.status == "5단계_진행가능", (result.status, result.missing_slots)
 
 
+def case_11b_n_years_manui_form_detected_as_extremum():
+    """"16년 만의 최고치"처럼 "만에"가 아니라 "만의"(관형형)로 쓰인 경우도 극값으로
+    감지돼야 한다 (2026-08-06, 300개 배치 실측에서 이 활용형 때문에 극값이 감지 안 되고
+    calc_type 미해결로 빠지던 실제 사례("2009년 3월 이후 16년 만의 최고치") 발견)."""
+    result = _resolve("청년 실업률 증가는 2009년 이후 16년 만의 최고치다", "DT_1DA7102S")
+    assert result.special_resolution == "극값_N년만에", result.special_resolution
+    assert "calc_type" not in result.missing_slots, result.missing_slots
+
+
+def case_12_country_dimension_hint_satisfies_region_requirement():
+    """국가별 수출입 표(DT_1R11006_FRM101)처럼 region-like 축 이름이 "country"인 표는,
+    범용 슬롯(slots["region"])이 아니라 표별 dimension_hints["country"]로 지역 요구사항이
+    채워질 수 있어야 한다 (2026-08-06, 실제 300개 배치에서 "대(對)미국 수출액" 문장이
+    dimension_hints={"country": "미국"}까지 정확히 뽑혔는데도 missing_slots가 slots["region"]만
+    보다가 "region" 미해결로 잘못 막던 버그 발견 — 국가별 수출입 표로 간 20건 전부 이 버그로
+    막혀있었음)."""
+    result = _resolve(
+        "지난 1~10일 대(對)미국 수출액은 34억7300만달러로 전년 동기 대비 0.6% 감소했다.",
+        "DT_1R11006_FRM101",
+    )
+    assert result.dimension_hints.get("country") == "미국", result.dimension_hints
+    assert "region" not in result.missing_slots, result.missing_slots
+
+
 CASES = [
     case_01_no_candidates_means_no_table_match,
     case_02_unverified_embedding_only_match_is_flagged,
@@ -152,6 +176,8 @@ CASES = [
     case_09_all_time_extremum_detected,
     case_10_extremum_detected_does_not_require_calc_type,
     case_11_relative_month_without_year_resolves_via_article_date,
+    case_11b_n_years_manui_form_detected_as_extremum,
+    case_12_country_dimension_hint_satisfies_region_requirement,
 ]
 
 
