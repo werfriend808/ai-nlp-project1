@@ -54,12 +54,19 @@ def _extract_json_object(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def classify(article_text: str, *, model: str = MODEL) -> ClassificationResult:
-    """기사 본문 하나를 받아 1단계 분류 결과(label/score/reason)를 돌려줍니다."""
+def classify(article_text: str, *, model: str = MODEL, temperature: float = 0.0) -> ClassificationResult:
+    """기사 본문 하나를 받아 1단계 분류 결과(label/score/reason)를 돌려줍니다.
+
+    temperature=0.0: 기본값(call_hcx의 0.2)을 두면 같은 기사를 넣어도 판정이 흔들리거나
+    reason이 원문에 없는 내용을 지어내는 경우가 있어(2026-08-10 실기사 검증에서 발견 —
+    "빚 못 갚은 자영업자" 기사의 reason에 원문에 없는 "멕시코"가 등장) 결정적으로 고정한다.
+    """
     template = _load_prompt_template()
     prompt = template.replace("{article_text}", article_text)
 
-    reply = call_hcx(model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt)
+    reply = call_hcx(
+        model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt, temperature=temperature
+    )
 
     try:
         parsed = _extract_json_object(reply)
