@@ -69,9 +69,9 @@ from db.store import insert_verification, make_result_id
 
 TABLE_PARAMS_PATH = Path(__file__).parent.parent / "kosis" / "table_params.json"
 TABLE_CATALOG_PATH = Path(__file__).parent.parent / "mapping" / "table_catalog.json"
-# 예전엔 "data_set.csv"라는 존재하지 않는 파일을 가리키고 있어서 --csv 모드가 항상
-# FileNotFoundError로 실패했음 (실제 파일명은 data.csv) — 여기서 같이 고침.
-DATA_CSV_PATH = Path(__file__).parent.parent.parent / "data" / "data.csv"
+# "data.csv"라는 존재하지 않는 파일을 가리키고 있어서 --csv 모드가 항상 FileNotFoundError로
+# 실패했음 (실제 파일명은 data_set.csv, data/ 디렉터리에 이것만 있음) — 여기서 다시 고침.
+DATA_CSV_PATH = Path(__file__).parent.parent.parent / "data" / "data_set.csv"
 # ARTICLES의 시나리오들이 공통으로 쓰는 되묻기 답변 — region/period/calc_type을 한 번에
 # 채워주는 발화라, CSV에서 무작위로 뽑은 실제 기사에도 동일하게 재사용한다.
 DEFAULT_CLARIFY_REPLY = "전국 기준으로 작년 대비 증감률 알려줘"
