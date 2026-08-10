@@ -26,15 +26,14 @@ from __future__ import annotations
 import csv
 import json
 import random
-import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
 from agent.interfaces import Claim, TableCandidate
-from agent.preprocessing.classifier import classify, ClassifierError
-from agent.preprocessing.claim_extractor import extract_claims, ClaimExtractorError
+from agent.preprocessing.classifier import classify
+from agent.preprocessing.claim_extractor import extract_claims
 from agent.mapping.keyword_search import keyword_search
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
 from agent.mapping.reranker import search_and_rerank, load_document_texts
@@ -46,6 +45,7 @@ from agent.orchestrator.agent_chat import (
     _normalize_short_reply,
     _normalize_year_expression,
     _extract_month_period,
+    _resolve_relative_month_period,
     _wants_comparison,
     _resolve_decade_age_codes,
     _resolve_since_event_start_year,
@@ -73,13 +73,29 @@ class Stage4Result:
     kosis_slots: Optional[dict] = None  # 5단계 api_client에 그대로 넘길 수 있는 최종 슬롯
 
 
+_NATIONAL_DEFAULT_LABELS = ("전국",)
+
+
+def _has_safe_national_default(dim: dict) -> bool:
+    """default_value가 "전국"류 라벨을 가리키면, 지역 언급이 없어도 조용히 그 값으로
+    채워도 안전하다. 배치 파이프라인엔 되물어볼 사용자가 없으므로(agent_chat.py의 챗봇과
+    달리), 안전한 기본값이 있는데도 "미해결"로 막는 건 과잉이다 — 2026-08-05, "2020년
+    인구주택총조사 응답률 96.3%"처럼 전국 단위 통계인데 지역 미언급을 이유로 불필요하게
+    미해결 처리되던 버그를 실제 기사 테스트에서 발견해서 수정."""
+    default = dim.get("default_value")
+    code_map = dim.get("code_map", {})
+    labels = [label for label, code in code_map.items() if code == default]
+    return any(label in _NATIONAL_DEFAULT_LABELS for label in labels)
+
+
 def _needs_region_for_table(table_id: str, table_params: dict) -> bool:
-    """ChatSession._needs_region()과 동일한 판단 — code_map이 "전국" 하나뿐인 표는
-    지역을 물어봐도 의미가 없으므로 필수로 안 본다."""
+    """표에 실제 지역 축(코드 2개 이상)이 있고, 그 기본값이 "전국"류 안전한 기본값이
+    아닐 때만 필수로 본다. 기본값이 "전국"이면(예: DT_1B04005N) 지역 언급이 없어도
+    조용히 전국으로 채워도 안전하므로 미해결로 막지 않는다."""
     dims = table_params.get(table_id, {}).get("dimensions", {})
     for dim_name in _REGION_LIKE_DIMENSIONS:
         dim = dims.get(dim_name)
-        if dim and len(set(dim.get("code_map", {}).values())) > 1:
+        if dim and len(set(dim.get("code_map", {}).values())) > 1 and not _has_safe_national_default(dim):
             return True
     return False
 
@@ -143,10 +159,23 @@ def resolve_claim_1_to_4(
     month_period = _extract_month_period(claim.sentence)
     if month_period:
         slots["period"] = month_period
+    elif not slots.get("period"):
+        # "지난 10월"/"올 5월"처럼 연도 없이 상대적으로 월만 가리키는 표현은 기사 날짜
+        # 기준으로 계산해야 해서 _extract_month_period(절대 연도 표현)와 분리돼 있다.
+        relative_month_period = _resolve_relative_month_period(claim.sentence, article_date)
+        if relative_month_period:
+            slots["period"] = relative_month_period
+
+    special_resolution = _detect_special_resolution(claim.sentence, top.table_id, table_params)
 
     # 4-3) 되묻기 미해결 판정: agent_chat.py의 tool_reask 우선순위와 동일한 필요조건
     needs_region = _needs_region_for_table(top.table_id, table_params)
-    needs_calc_type = _wants_comparison(claim.sentence)
+    # 극값(역대/이벤트기준/N년만에)이 이미 감지됐으면 "이 claim은 최댓값검증이 필요하다"는
+    # 걸 이미 알고 있는 것이므로, calc_type 슬롯이 따로 안 채워졌다고 미해결로 막지 않는다
+    # (2026-08-05 실제 기사에서 발견 — "10년 만에 처음이다"가 극값_N년만에는 정확히
+    # 감지됐는데 calc_type만 안 채워졌다는 이유로 미해결 처리되던 모순을 수정).
+    is_extremum = bool(special_resolution) and special_resolution.startswith("극값")
+    needs_calc_type = _wants_comparison(claim.sentence) and not is_extremum
 
     missing_slots = []
     if not slots.get("period"):
@@ -155,8 +184,6 @@ def resolve_claim_1_to_4(
         missing_slots.append("region")
     if needs_calc_type and not slots.get("calc_type"):
         missing_slots.append("calc_type")
-
-    special_resolution = _detect_special_resolution(claim.sentence, top.table_id, table_params)
 
     if missing_slots:
         return Stage4Result(
@@ -189,31 +216,45 @@ def run_article_1_4(
     document_texts: dict,
     table_params: dict,
     verbose: bool = True,
-) -> list[Stage4Result]:
+) -> dict:
     """기사 1건을 1단계(분류)→2단계(주장추출)→주장별 3~4단계까지 돌린다.
-    1단계에서 무관 판정되면 빈 리스트를 반환한다."""
+
+    반환값은 {"article_title", "classify_score", "skip_stage", "claim_results"} 형태.
+    skip_stage가 None이 아니면 1~2단계에서 걸러진 것(claim_results는 빈 리스트).
+    claim_results는 Stage4Result 리스트 — 기존 all_results 취합(print_summary용)과
+    JSONL 구조화 출력(분석용) 양쪽에서 그대로 재사용한다.
+    """
+    title = article.get("label", article.get("article_title", "(제목 없음)"))
     if verbose:
         print(f"\n{'=' * 60}")
-        print(article.get("label", article.get("article_title", "(제목 없음)")))
+        print(title)
+
+    base = {"article_title": title, "classify_score": None, "skip_stage": None, "claim_results": []}
 
     try:
         cls_result = classify(article["article_text"])
-    except ClassifierError as e:
+    except Exception as e:  # noqa: BLE001 - HCX 네트워크 순간 끊김 등도 이 기사 하나만
+        # 스킵하고 배치 전체는 계속 진행 (2026-08-05, 실제 배치 실행 중
+        # requests.exceptions.ConnectionError로 전체가 죽는 걸 실측으로 발견해서 방어 추가)
         if verbose:
-            print(f"[1단계] 분류 실패 ({e}) → 기사 스킵")
-        return []
+            print(f"[1단계] 분류 실패 ({type(e).__name__}: {e}) → 기사 스킵")
+        base["skip_stage"] = f"1단계_분류실패({type(e).__name__})"
+        return base
 
+    base["classify_score"] = cls_result.score
     if not cls_result.label:
         if verbose:
             print(f"[1단계] 무관한 기사로 판정(score={cls_result.score:.2f}) → 스킵")
-        return []
+        base["skip_stage"] = "1단계_무관"
+        return base
 
     try:
         claims = extract_claims(article["article_text"])
-    except ClaimExtractorError as e:
+    except Exception as e:  # noqa: BLE001 - 위와 동일한 이유
         if verbose:
-            print(f"[2단계] 주장 추출 실패 ({e}) → 기사 스킵")
-        return []
+            print(f"[2단계] 주장 추출 실패 ({type(e).__name__}: {e}) → 기사 스킵")
+        base["skip_stage"] = f"2단계_추출실패({type(e).__name__})"
+        return base
 
     if verbose:
         print(f"[1단계] 관련 기사 판정(score={cls_result.score:.2f})")
@@ -221,17 +262,42 @@ def run_article_1_4(
 
     results = []
     for claim in claims:
-        result = resolve_claim_1_to_4(
-            claim,
-            article["published_date"],
-            embedding_cache=embedding_cache,
-            document_texts=document_texts,
-            table_params=table_params,
-        )
+        try:
+            result = resolve_claim_1_to_4(
+                claim,
+                article["published_date"],
+                embedding_cache=embedding_cache,
+                document_texts=document_texts,
+                table_params=table_params,
+            )
+        except Exception as e:  # noqa: BLE001 - HCX/KOSIS 네트워크 순간 끊김 등으로 claim
+            # 하나가 실패해도 나머지 claim/기사는 계속 처리 (2026-08-05, 실제 배치 실행 중
+            # ConnectionError로 전체 배치가 죽는 걸 실측으로 발견해서 방어 추가)
+            if verbose:
+                print(f"  - \"{claim.sentence}\" → 처리오류 ({type(e).__name__}: {e})")
+            results.append(Stage4Result(claim=claim, status="처리오류"))
+            continue
         results.append(result)
         if verbose:
             _print_claim_result(result)
-    return results
+    base["claim_results"] = results
+    return base
+
+
+def _result_to_json_row(article_title: str, r: Stage4Result) -> dict:
+    return {
+        "type": "claim",
+        "article_title": article_title,
+        "sentence": r.claim.sentence,
+        "status": r.status,
+        "table_id": r.table.table_id if r.table else None,
+        "table_name": r.table.table_name if r.table else None,
+        "table_source_meta": r.table.source_meta if r.table else None,
+        "missing_slots": r.missing_slots,
+        "special_resolution": r.special_resolution,
+        "slots": r.slots,
+        "dimension_hints": r.dimension_hints,
+    }
 
 
 def _print_claim_result(r: Stage4Result) -> None:
@@ -287,7 +353,7 @@ def print_summary(all_results: list[Stage4Result]) -> None:
     for r in all_results:
         counts[r.status] = counts.get(r.status, 0) + 1
 
-    for status in ("5단계_진행가능", "4단계_미해결", "3단계_매칭_불충분", "3단계_매칭없음"):
+    for status in ("5단계_진행가능", "4단계_미해결", "3단계_매칭_불충분", "3단계_매칭없음", "처리오류"):
         n = counts.get(status, 0)
         print(f"  {status}: {n}건 ({n / total * 100:.1f}%)")
 
@@ -306,7 +372,7 @@ def print_summary(all_results: list[Stage4Result]) -> None:
         print(f"[특수 처리 감지] {special_breakdown} (5단계에서 다중코드/시계열 조회 필요)")
 
 
-def main(use_csv_sample: bool = False, csv_n: int = 15) -> None:
+def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42, out_path: Optional[str] = None) -> None:
     with open(TABLE_PARAMS_PATH, encoding="utf-8") as f:
         table_params = json.load(f)
 
@@ -314,25 +380,56 @@ def main(use_csv_sample: bool = False, csv_n: int = 15) -> None:
     document_texts = load_document_texts()
 
     if use_csv_sample:
-        articles = load_articles_from_csv(n=csv_n)
+        articles = load_articles_from_csv(n=csv_n, seed=csv_seed)
     else:
         from agent.pipeline.batch_runner import ARTICLES  # 시나리오 재사용(읽기 전용)
 
         articles = ARTICLES
 
+    out_file = open(out_path, "w", encoding="utf-8") if out_path else None
+
     all_results: list[Stage4Result] = []
-    for article in articles:
-        all_results.extend(
-            run_article_1_4(
+    try:
+        for article in articles:
+            article_result = run_article_1_4(
                 article,
                 embedding_cache=embedding_cache,
                 document_texts=document_texts,
                 table_params=table_params,
             )
-        )
+            all_results.extend(article_result["claim_results"])
+
+            if out_file is None:
+                continue
+            title = article_result["article_title"]
+            if article_result["skip_stage"]:
+                row = {
+                    "type": "skip",
+                    "article_title": title,
+                    "classify_score": article_result["classify_score"],
+                    "skip_stage": article_result["skip_stage"],
+                }
+                out_file.write(json.dumps(row, ensure_ascii=False) + "\n")
+            else:
+                for r in article_result["claim_results"]:
+                    row = _result_to_json_row(title, r)
+                    out_file.write(json.dumps(row, ensure_ascii=False) + "\n")
+            out_file.flush()
+    finally:
+        if out_file:
+            out_file.close()
 
     print_summary(all_results)
 
 
 if __name__ == "__main__":
-    main(use_csv_sample="--csv" in sys.argv)
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", action="store_true", help="ARTICLES 대신 data_set.csv 실제 기사 샘플 사용")
+    parser.add_argument("--n", type=int, default=15, help="--csv일 때 샘플 기사 수 (기본 15)")
+    parser.add_argument("--seed", type=int, default=42, help="--csv 샘플링 랜덤 시드 (기본 42, 같은 시드면 매번 동일 샘플)")
+    parser.add_argument("--out", type=str, default=None, help="주장별 결과를 JSONL로 저장할 경로 (분석용, 생략 가능)")
+    args = parser.parse_args()
+
+    main(use_csv_sample=args.csv, csv_n=args.n, csv_seed=args.seed, out_path=args.out)

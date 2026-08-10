@@ -143,5 +143,24 @@
   {"sentence": "지난해 'N잡러'(부업을 가진 직장인)는 68만명으로 5년 전보다 40% 늘었다.", "claim_type": "증감률", "period": "작년", "unit": "%", "population": "N잡러(부업을 가진 직장인)", "statistic_expression": "N잡러 수", "value": 40, "comparison_operator": "증가", "comparison_target": "5년 전", "comparison_value": null, "region": null, "source_org": null, "source_report": null}
 ]
 
+[예시 입력 — 실제 오탐 재현 사례: "~라는 분석이 나온다"처럼 숫자 없는 해석성 문장은 제외 (단,
+같은 문단의 바로 다음 문장이라도 실제 수치가 있으면 반드시 별도로 추출해야 함 — 앞 문장이
+해석성이라고 해서 뒤따르는 문장까지 통째로 건너뛰면 안 됨)]
+기사: "지역 중소 제조업체들의 설비 투자 심리가 살아나고 있다는 신호가 곳곳에서 확인된다.
+보수적인 투자 기조를 유지해온 업체들이 낮아진 금리를 기회로 삼아 움직이기 시작했다는
+분석이 나온다. 중소기업중앙회에 따르면 올해 1분기 중소제조업 설비투자 실행률은 41.2%로
+지난해 같은 기간 평균인 33%를 웃돌았다. 반면 신규 채용 계획 응답률은 과거 평균인 52%보다
+낮은 47%로 나타났다."
+
+[예시 출력]
+(두 번째 문장은 "~라는 분석이 나온다"로 끝나는 해석성 문장이고 "낮아진 금리를 기회로"처럼
+정성적 표현만 있을 뿐 구체적 수치가 전혀 없어서 제외합니다. 하지만 그 바로 다음 문장(세 번째
+문장)에는 41.2%/33%라는 실제 수치가 있으므로 앞 문장이 해석성이었다고 해서 같이 건너뛰지
+않고 정상적으로 추출합니다. 네 번째 문장도 47%/52% 수치가 있어 마찬가지로 추출합니다.)
+[
+  {"sentence": "중소기업중앙회에 따르면 올해 1분기 중소제조업 설비투자 실행률은 41.2%로 지난해 같은 기간 평균인 33%를 웃돌았다.", "claim_type": "비교", "period": "올해 1분기", "unit": "%", "population": "중소제조업", "statistic_expression": "설비투자 실행률", "value": 41.2, "comparison_operator": "초과", "comparison_target": "지난해 같은 기간 평균", "comparison_value": 33, "region": null, "source_org": "중소기업중앙회", "source_report": null},
+  {"sentence": "반면 신규 채용 계획 응답률은 과거 평균인 52%보다 낮은 47%로 나타났다.", "claim_type": "비교", "period": "올해 1분기", "unit": "%", "population": "중소제조업", "statistic_expression": "신규 채용 계획 응답률", "value": 47, "comparison_operator": "미만", "comparison_target": "과거 평균", "comparison_value": 52, "region": null, "source_org": "중소기업중앙회", "source_report": null}
+]
+
 ## 추출할 기사
 {article_text}

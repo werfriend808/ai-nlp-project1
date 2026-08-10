@@ -109,8 +109,15 @@ def explain(
     verdict: Verdict,
     *,
     model: str = MODEL,
+    temperature: float = 0.0,
 ) -> Explanation:
-    """8단계 메인 진입점. 이미 나온 판정(Verdict)을 사람이 읽을 수 있는 설명으로 풀어냄."""
+    """8단계 메인 진입점. 이미 나온 판정(Verdict)을 사람이 읽을 수 있는 설명으로 풀어냄.
+
+    temperature 기본값을 hcx_client 기본(0.2)보다 낮춰 0.0으로 둔다 — 41건 평가셋 채점 중
+    같은 입력을 그대로 다시 넣었는데도(explainer_scoring_report.md 참고) 단순 뺄셈/단위환산을
+    실행마다 다르게 틀리는 비결정성이 실측 확인됨. explain()은 이미 계산이 끝난 숫자를
+    "설명"만 하는 단계라 창의성이 필요 없어서, claim_extractor.py와 같은 이유로 0.0을 쓴다.
+    """
     template = _load_prompt_template()
     prompt = (
         template.replace("{claim_sentence}", claim.sentence)
@@ -125,7 +132,10 @@ def explain(
         .replace("{verdict_reason}", verdict.reason)
     )
 
-    reply = call_hcx(model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt, max_tokens=1024)
+    reply = call_hcx(
+        model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt,
+        max_tokens=1024, temperature=temperature,
+    )
 
     try:
         parsed = _extract_json_object(reply)
