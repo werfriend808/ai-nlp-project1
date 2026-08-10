@@ -246,7 +246,10 @@ def _print_claim_result(r: Stage4Result) -> None:
 
 
 def load_articles_from_csv(path: Path = DATA_CSV_PATH, n: int = 15, seed: int = 42) -> list[dict]:
-    with open(path, encoding="utf-8") as f:
+    # data_set.csv 맨 앞에 BOM(﻿)이 붙어있어 encoding="utf-8"로 열면 첫 컬럼명이
+    # "﻿기사제목"으로 읽혀 row.get("기사제목")이 항상 빈 문자열을 반환하던 버그.
+    # "utf-8-sig"는 BOM을 자동으로 벗겨내서 컬럼명이 정상적으로 "기사제목"이 된다.
+    with open(path, encoding="utf-8-sig") as f:
         rows = [r for r in csv.DictReader(f) if r.get("검색 구분 레이블", "").strip().lower() == "true"]
 
     random.Random(seed).shuffle(rows)
