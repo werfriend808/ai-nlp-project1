@@ -87,8 +87,16 @@ def make_result_id(article_title: str, claim_sentence: str) -> str:
 
 def init_db(path: Path = DB_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    # sqlite3.Connection을 "with conn:"으로 쓰면 커밋/롤백만 해줄 뿐 연결 자체는 닫지
+    # 않는다 — 매 호출마다 커넥션이 열린 채로 남아, Windows에서는 파일이 계속 "사용 중"으로
+    # 잠겨서(예: 테스트가 임시 DB 파일을 지우려 할 때 WinError 32) 문제가 된다. try/finally로
+    # close()를 명시해서 커밋 동작은 그대로 유지하면서 연결은 확실히 반환한다.
+    conn = sqlite3.connect(path)
+    try:
         conn.execute(_SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def insert_verification(record: dict, path: Path = DB_PATH) -> None:
@@ -105,19 +113,26 @@ def insert_verification(record: dict, path: Path = DB_PATH) -> None:
     columns_sql = ", ".join(_COLUMNS)
 
     init_db(path)
-    with sqlite3.connect(path) as conn:
+    conn = sqlite3.connect(path)
+    try:
         conn.execute(
             f"INSERT OR REPLACE INTO verifications ({columns_sql}) VALUES ({placeholders})",
             values,
         )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def fetch_all(path: Path = DB_PATH) -> list[dict]:
     init_db(path)
-    with sqlite3.connect(path) as conn:
+    conn = sqlite3.connect(path)
+    try:
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM verifications ORDER BY id").fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
