@@ -26,6 +26,8 @@ from __future__ import annotations
 import csv
 import json
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -177,10 +179,19 @@ def resolve_claim_1_to_4(
     is_extremum = bool(special_resolution) and special_resolution.startswith("극값")
     needs_calc_type = _wants_comparison(claim.sentence) and not is_extremum
 
+    # region 요구사항은 범용 슬롯(slots["region"], 국내 시도용)뿐 아니라 표별 세부 힌트
+    # (combined_hints["country"] 등)로도 채워질 수 있다 — 2026-08-06, 실제 300개 배치에서
+    # "대(對)미국 수출액" 문장이 dimension_hints={"country": "미국"}까지 정확히 뽑혔는데도
+    # slots["region"]만 확인해서 미해결 처리되던 버그 발견(국가별 수출입 표로 간 20건 전부
+    # 이 버그로 막혀있었음).
+    region_satisfied = bool(slots.get("region")) or any(
+        combined_hints.get(dim_name) for dim_name in _REGION_LIKE_DIMENSIONS
+    )
+
     missing_slots = []
     if not slots.get("period"):
         missing_slots.append("period")
-    if needs_region and not slots.get("region"):
+    if needs_region and not region_satisfied:
         missing_slots.append("region")
     if needs_calc_type and not slots.get("calc_type"):
         missing_slots.append("calc_type")
@@ -300,6 +311,32 @@ def _result_to_json_row(article_title: str, r: Stage4Result) -> dict:
     }
 
 
+def _load_processed_titles(out_path: str) -> set[str]:
+    """out_path에 이미 기록된 article_title들을 읽어서 반환한다.
+
+    2026-08-06, 2507건 전체 배치처럼 12시간 넘게 걸리는 실행 도중 컴퓨터가 꺼지거나
+    세그폴트로 죽으면 처음부터 다시 돌려야 하는 문제가 있어서 추가 — main()이 시작할 때
+    이 함수로 이미 처리된 기사를 걸러내고, 파일을 이어쓰기(append) 모드로 열어서 중단된
+    지점부터 재개할 수 있게 한다. 파일이 없거나 비어 있으면 빈 집합을 반환(처음부터 시작)."""
+    path = Path(out_path)
+    if not path.exists():
+        return set()
+    titles: set[str] = set()
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # 중단 시점에 마지막 줄이 덜 써졌을 수 있음 — 그 줄만 무시
+            title = row.get("article_title")
+            if title:
+                titles.add(title)
+    return titles
+
+
 def _print_claim_result(r: Stage4Result) -> None:
     print(f"  - \"{r.claim.sentence}\" → {r.status}", end="")
     if r.table:
@@ -369,7 +406,13 @@ def print_summary(all_results: list[Stage4Result]) -> None:
         print(f"[특수 처리 감지] {special_breakdown} (5단계에서 다중코드/시계열 조회 필요)")
 
 
-def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42, out_path: Optional[str] = None) -> None:
+def main(
+    use_csv_sample: bool = False,
+    csv_n: int = 15,
+    csv_seed: int = 42,
+    out_path: Optional[str] = None,
+    workers: int = 5,
+) -> None:
     with open(TABLE_PARAMS_PATH, encoding="utf-8") as f:
         table_params = json.load(f)
 
@@ -383,22 +426,55 @@ def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42, out_
 
         articles = ARTICLES
 
-    out_file = open(out_path, "w", encoding="utf-8") if out_path else None
+    # 재시작(resume): out_path에 이미 기록된 기사는 건너뛴다 — 2507건 전체처럼 몇 시간씩
+    # 걸리는 실행이 컴퓨터 종료/크래시로 중단돼도 처음부터 다시 안 돌리기 위함(2026-08-06).
+    if out_path:
+        already_done = _load_processed_titles(out_path)
+        if already_done:
+            before = len(articles)
+            articles = [
+                a for a in articles
+                if a.get("label", a.get("article_title", "(제목 없음)")) not in already_done
+            ]
+            print(f"[재시작] 이미 처리된 {before - len(articles)}건 건너뜀, 남은 {len(articles)}건 처리")
 
+    # 기사당 실제 작업 시간 대부분이 HCX API 응답을 기다리는 네트워크 I/O라서(2026-08-06,
+    # 300개를 순차 실행하니 밤새 걸리는 걸 실측으로 확인), 기사 단위로 스레드풀을 돌려서
+    # 여러 기사의 대기 시간을 겹치게 한다 — CPU 연산이 아니라 I/O 대기라 GIL 영향 없이 거의
+    # 그대로 배수 효과가 남. workers는 공용 HCX API 키의 동시 요청 한도를 모르는 상태라
+    # 보수적으로 기본 5.
+    #
+    # 리랭커(BAAI/bge-reranker-v2-m3)는 프로세스당 1회만 로딩되는 lazy singleton인데,
+    # 여러 스레드가 동시에 첫 로딩을 시도하면 경쟁 상태가 생길 수 있어서, 스레드풀을 띄우기
+    # 전에 더미 claim으로 미리 한 번 로딩해둔다.
+    search_and_rerank(
+        Claim(sentence="워밍업", claim_type="규모"),
+        keyword_fn=keyword_search,
+        embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
+        top_k=1,
+        document_texts=document_texts,
+    )
+
+    # "a"(이어쓰기): 파일이 없으면 새로 만들고, 있으면 재시작으로 보고 뒤에 이어붙인다.
+    out_file = open(out_path, "a", encoding="utf-8") if out_path else None
+    write_lock = threading.Lock()
     all_results: list[Stage4Result] = []
-    try:
-        for article in articles:
-            article_result = run_article_1_4(
-                article,
-                embedding_cache=embedding_cache,
-                document_texts=document_texts,
-                table_params=table_params,
-            )
+    results_lock = threading.Lock()
+
+    def _process(article: dict) -> None:
+        article_result = run_article_1_4(
+            article,
+            embedding_cache=embedding_cache,
+            document_texts=document_texts,
+            table_params=table_params,
+        )
+        with results_lock:
             all_results.extend(article_result["claim_results"])
 
-            if out_file is None:
-                continue
-            title = article_result["article_title"]
+        if out_file is None:
+            return
+        title = article_result["article_title"]
+        with write_lock:
             if article_result["skip_stage"]:
                 row = {
                     "type": "skip",
@@ -412,6 +488,12 @@ def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42, out_
                     row = _result_to_json_row(title, r)
                     out_file.write(json.dumps(row, ensure_ascii=False) + "\n")
             out_file.flush()
+
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_process, article) for article in articles]
+            for future in as_completed(futures):
+                future.result()  # 스레드 안에서 난 예외를 여기서 다시 던져서 조용히 묻히지 않게 함
     finally:
         if out_file:
             out_file.close()
@@ -427,6 +509,7 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=15, help="--csv일 때 샘플 기사 수 (기본 15)")
     parser.add_argument("--seed", type=int, default=42, help="--csv 샘플링 랜덤 시드 (기본 42, 같은 시드면 매번 동일 샘플)")
     parser.add_argument("--out", type=str, default=None, help="주장별 결과를 JSONL로 저장할 경로 (분석용, 생략 가능)")
+    parser.add_argument("--workers", type=int, default=5, help="기사 처리 동시 스레드 수 (기본 5, HCX API 호출 대기시간을 겹쳐서 배치 속도 향상)")
     args = parser.parse_args()
 
-    main(use_csv_sample=args.csv, csv_n=args.n, csv_seed=args.seed, out_path=args.out)
+    main(use_csv_sample=args.csv, csv_n=args.n, csv_seed=args.seed, out_path=args.out, workers=args.workers)

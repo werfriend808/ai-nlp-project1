@@ -40,8 +40,12 @@ def case_02_period_only_absolute_year():
 
 
 def case_03_calc_type_only():
+    """calc_type 어휘가 4개(증감/증감률/비율/최댓값검증)로 정리(2026-08-05)되면서 "평균"은
+    더 이상 유효한 값이 아니다 — "합계"처럼 표 구조상 내부 조립 방식으로 처리되지, 사용자가
+    요청하는 calc_type 슬롯 값이 아니므로 null이 정답이다 (예전 기대값 "평균"은 그 정리
+    이전 기준이라 2026-08-06 테스트도 같이 갱신)."""
     slots = fill_slots("평균 알려줘", {}, ARTICLE_DATE)
-    assert slots.get("calc_type") == "평균", f"calc_type 추출 실패: {slots}"
+    assert slots.get("calc_type") is None, f"calc_type이 유효하지 않은 값으로 채워짐: {slots}"
 
 
 def case_04_nothing_in_utterance():
@@ -115,6 +119,15 @@ def case_12_empty_string_utterance_should_not_crash():
     assert isinstance(slots, dict), f"빈 문자열 입력에서 dict가 반환되지 않음: {slots}"
 
 
+def case_13_region_hallucination_without_mention_should_be_discarded():
+    """지역 언급이 전혀 없는 문장에서 LLM이 region을 지어내는 환각 방지 확인
+    (2026-08-06, 300개 실제 기사 배치에서 "7월 1~10일 수출이... 증가했다" 같은 문장에
+    계속 region="서울"이 근거 없이 채워지는 걸 실측으로 확인하고 is_region_grounded()
+    가드 추가 — C가 slot_filler.py에 반영)."""
+    slots = fill_slots("7월 1~10일 수출이 전년 같은 달 대비 9.5% 증가했다.", {}, ARTICLE_DATE)
+    assert slots.get("region") is None, f"문장에 없는 지역명이 채워짐(환각): {slots}"
+
+
 CASES = [
     case_01_region_only,
     case_02_period_only_absolute_year,
@@ -128,6 +141,7 @@ CASES = [
     case_10_existing_slots_preserved_on_partial_update,
     case_11_unrelated_utterance_does_not_pollute_existing,
     case_12_empty_string_utterance_should_not_crash,
+    case_13_region_hallucination_without_mention_should_be_discarded,
 ]
 
 
