@@ -141,13 +141,30 @@ def backfill_source_org(claims: list[Claim]) -> list[Claim]:
     실제 데이터에서 확인된 패턴(2026-08-05): 한 기사 안 첫 문장엔 "한국은행에 따르면"처럼
     출처가 명시되고, 뒤따르는 문장들은 "전월 대비...올랐다"처럼 출처를 반복 안 함 —
     claim_extractor가 문장 단위로 source_org를 채우다 보니 뒤쪽 claim들이 비어버린다.
-    같은 기사 안에서는 보통 주 출처가 하나이므로, 다수결로 역채움한다."""
+    같은 기사 안에서는 보통 주 출처가 하나이므로, 다수결로 역채움한다.
+
+    ⚠️ 2026-08-10 실측 버그: 순수 빈도 다수결만 쓰면, 한 기사에 "정부 관계자 발언"과
+    "공식 통계 발표"처럼 서로 다른 출처가 섞여 있을 때(예: "최상목 부총리" 인용문 2건 +
+    "통계청 3월 소비자물가 동향" 인용 1건) 더 자주 언급된 개인 발언(최상목)이 다수결로
+    이겨버려서, 실제로는 통계청이 출처인 뒤쪽 claim들(오징어채 40.3% 등 품목별 물가
+    상승률)까지 "최상목"으로 잘못 채워지는 문제를 발견했다. classify_source("최상목")도
+    "통계청"이 채워졌어야 할 claim도 결과적으로 최소 uncertain 처리라 필터링 자체는
+    맞게 되지만, 원래는 kosis_verified로 통과해야 할 claim이 잘못 걸러진 것.
+    그래서 단순 빈도가 아니라, "검증된 기관(classify_source==kosis_verified)이 하나라도
+    있으면 그걸 우선"하도록 바꾼다 — 인용된 개인 발언보다 실제 통계 발표기관이 수치의
+    진짜 출처일 가능성이 높다는 판단."""
     orgs_in_article = [c.source_org for c in claims if c.source_org]
     if not orgs_in_article:
         return claims
 
     from collections import Counter
-    dominant = Counter(orgs_in_article).most_common(1)[0][0]
+
+    counts = Counter(orgs_in_article)
+    verified_orgs = [org for org in counts if classify_source(org) == "kosis_verified"]
+    if verified_orgs:
+        dominant = max(verified_orgs, key=lambda o: counts[o])
+    else:
+        dominant = counts.most_common(1)[0][0]
 
     filled: list[Claim] = []
     for c in claims:
@@ -174,5 +191,24 @@ if __name__ == "__main__":
     print("\nbackfill 후:")
     for s in filled:
         print(s.source_org)
+
+    # 2026-08-10 실측 회귀 테스트: "최상목 부총리" 기사 재현 —
+    # 개인 발언(최상목, 2건)이 공식 통계 발표(통계청, 1건)보다 더 자주 언급돼도
+    # 통계청이 backfill 우선순위를 가져야 한다.
+    mixed_source_samples = [
+        Claim(sentence="정부가 요금 동결", claim_type="규모", source_org="최상목"),
+        Claim(sentence="최상목 인용문", claim_type="규모", source_org="최상목"),
+        Claim(sentence="가공식품 외식 물가 인상", claim_type="규모", source_org=None),
+        Claim(sentence="오징어채 40.3% 초콜릿 15.5%", claim_type="증감률", source_org=None),
+        Claim(sentence="통계청 2.1% 상승", claim_type="증감률", source_org="통계청"),
+    ]
+    mixed_filled = backfill_source_org(mixed_source_samples)
+    assert mixed_filled[2].source_org == "통계청", (
+        f"기대: 통계청, 실제: {mixed_filled[2].source_org} — 다수결이 개인 발언을 "
+        f"잘못 우선시키는 회귀가 재발했습니다."
+    )
+    assert mixed_filled[3].source_org == "통계청"
+    print("\n[회귀 테스트 통과] 혼합 출처(개인 발언 다수 + 공식 통계 소수)에서 "
+          "공식 통계가 backfill 우선순위를 가져감 확인")
 
     print("\n최종 통과:", [c.source_org for c in filter_verifiable_claims(backfill_source_org(samples))])
