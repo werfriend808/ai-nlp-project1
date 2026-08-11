@@ -48,3 +48,16 @@ export const VERDICT_COUNT_BOX_CLASS: Record<"일치" | "불일치" | "애매", 
   불일치: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
   애매: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
 };
+
+export const VERDICT_ICON: Record<"일치" | "불일치" | "애매", string> = {
+  일치: "✅",
+  불일치: "❌",
+  애매: "🔍",
+};
+
+// 기사 목록 테이블 행의 왼쪽 강조 테두리 색.
+export const VERDICT_ACCENT_BORDER_CLASS: Record<"일치" | "불일치" | "애매", string> = {
+  일치: "border-l-emerald-500",
+  불일치: "border-l-red-500",
+  애매: "border-l-amber-500",
+};
