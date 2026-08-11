@@ -64,8 +64,13 @@ export function ArticleTextViewer({ articleText, claims }: ArticleTextViewerProp
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-lg border border-gray-200 bg-white p-5 text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
-        {paragraphs.map((paragraphSegments, pIndex) => (
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex items-center gap-2 border-b border-gray-100 px-6 py-4 dark:border-gray-800">
+          <span className="h-2 w-2 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
+          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">기사 원문</span>
+        </div>
+        <div className="p-6 text-gray-900 dark:text-gray-100">
+          {paragraphs.map((paragraphSegments, pIndex) => (
           // <p> 대신 <div>를 쓰는 이유: 아래 판정 카드(<div>, block 요소)가 주장을 클릭하면
           // 문단 중간에 끼어드는데, <p> 안에는 block 요소를 넣을 수 없어 브라우저가 <p>를
           // 강제로 끊어버려 레이아웃이 어긋난다. <div>는 이 제약이 없다.
@@ -103,7 +108,8 @@ export function ArticleTextViewer({ articleText, claims }: ArticleTextViewerProp
               );
             })}
           </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {unmatched.length > 0 && (
