@@ -88,6 +88,48 @@ def _load_table_params(path: Path = TABLE_PARAMS_PATH) -> dict:
         return json.load(f)
 
 
+def _validate_period_format(
+    table_id: str, prd_se: Optional[str], period: Optional[str], *, param_name: str = "period"
+) -> None:
+    """표의 주기(prdSe)와 요청하려는 시점(period) 문자열의 자릿수/형식이 맞는지 확인.
+
+    KOSIS는 표의 주기에 따라 시점 형식이 다르다 — 연간(Y)은 'YYYY'(4자리), 월간(M)은
+    'YYYYMM'(6자리), 분기(Q)는 'YYYY'+분기2자리(table_params.json에 등록된 기존 Q표들의
+    실측값 — 예: DT_1TEC_P112·DT_311Y001 — 을 확인한 결과 분기는 01~04로 zero-padded).
+    형식이 안 맞으면 KOSIS가 엉뚱한 시점의 데이터를 주거나(사후 방어는 __call__()의
+    PRD_DE 불일치 체크가 우연히 잡아줄 뿐) 알기 어려운 에러를 내므로, 요청을 보내기 전에
+    미리 막는다. prdSe가 Y/M/Q가 아닌 표(예: F=격년, D=일단위)는 아직 규칙이 정의되지
+    않았으므로 이 함수는 검증을 건너뛴다(조용히 틀린 값을 통과시키는 게 아니라, 애초에
+    이 함수가 판단할 수 있는 범위 밖이라는 뜻).
+    """
+    if not period:
+        return
+    period_str = str(period)
+
+    if prd_se == "Y":
+        ok = len(period_str) == 4 and period_str.isdigit()
+        expected = "4자리 연도(예: '2024')"
+    elif prd_se == "M":
+        ok = len(period_str) == 6 and period_str.isdigit()
+        expected = "6자리 연월 YYYYMM(예: '202401')"
+    elif prd_se == "Q":
+        ok = (
+            len(period_str) == 6
+            and period_str.isdigit()
+            and period_str[4:] in ("01", "02", "03", "04")
+        )
+        expected = "6자리 YYYY+분기2자리(01~04)(예: '202403' = 2024년 3분기)"
+    else:
+        return
+
+    if not ok:
+        raise KosisApiError(
+            f"'{table_id}' 표는 prdSe='{prd_se}'인데 {param_name}='{period_str}'가 그 형식과 "
+            f"맞지 않습니다 (기대: {expected}). slots에 채워진 period/start_period/end_period "
+            f"값을 이 표의 주기에 맞게 다시 확인하세요."
+        )
+
+
 class KosisApiClient:
     """
     __call__(table_id, slots) -> KosisApiResponse  (값 하나)
@@ -147,11 +189,16 @@ class KosisApiClient:
 
         period = slots.get("period")
         if period:
-            params["startPrdDe"] = slots.get("start_period", period)
-            params["endPrdDe"] = slots.get("end_period", period)
+            start_prd_de = slots.get("start_period", period)
+            end_prd_de = slots.get("end_period", period)
         else:
-            params["startPrdDe"] = base.get("startPrdDe")
-            params["endPrdDe"] = base.get("endPrdDe")
+            start_prd_de = base.get("startPrdDe")
+            end_prd_de = base.get("endPrdDe")
+
+        _validate_period_format(table_id, params["prdSe"], start_prd_de, param_name="startPrdDe")
+        _validate_period_format(table_id, params["prdSe"], end_prd_de, param_name="endPrdDe")
+        params["startPrdDe"] = start_prd_de
+        params["endPrdDe"] = end_prd_de
 
         response = requests.get(KOSIS_BASE_URL, params=params, timeout=self.timeout)
         response.raise_for_status()
@@ -226,6 +273,10 @@ class KosisApiClient:
             )
         base = self._table_params[table_id]
 
+        prd_se = slots.get("prd_se") or base.get("prdSe", "Y")
+        _validate_period_format(table_id, prd_se, start_period, param_name="start_period")
+        _validate_period_format(table_id, prd_se, end_period, param_name="end_period")
+
         params = {
             "method": "getList",
             "apiKey": self.api_key,
@@ -233,7 +284,7 @@ class KosisApiClient:
             "jsonVD": "Y",
             "orgId": base["orgId"],
             "tblId": base.get("tblId", table_id),
-            "prdSe": slots.get("prd_se") or base.get("prdSe", "Y"),
+            "prdSe": prd_se,
             "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
             "startPrdDe": start_period,
             "endPrdDe": end_period,
@@ -304,6 +355,8 @@ class KosisApiClient:
         if dim is None:
             raise KeyError(f"'{table_id}'의 dimensions에 '{dim_name}' 축이 없습니다.")
 
+        prd_se = slots.get("prd_se") or base.get("prdSe", "Y")
+
         params = {
             "method": "getList",
             "apiKey": self.api_key,
@@ -311,7 +364,7 @@ class KosisApiClient:
             "jsonVD": "Y",
             "orgId": base["orgId"],
             "tblId": base.get("tblId", table_id),
-            "prdSe": slots.get("prd_se") or base.get("prdSe", "Y"),
+            "prdSe": prd_se,
             "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
             dim["kosis_param"]: "+".join(codes),
         }
@@ -327,11 +380,16 @@ class KosisApiClient:
 
         period = slots.get("period")
         if period:
-            params["startPrdDe"] = slots.get("start_period", period)
-            params["endPrdDe"] = slots.get("end_period", period)
+            start_prd_de = slots.get("start_period", period)
+            end_prd_de = slots.get("end_period", period)
         else:
-            params["startPrdDe"] = base.get("startPrdDe")
-            params["endPrdDe"] = base.get("endPrdDe")
+            start_prd_de = base.get("startPrdDe")
+            end_prd_de = base.get("endPrdDe")
+
+        _validate_period_format(table_id, prd_se, start_prd_de, param_name="startPrdDe")
+        _validate_period_format(table_id, prd_se, end_prd_de, param_name="endPrdDe")
+        params["startPrdDe"] = start_prd_de
+        params["endPrdDe"] = end_prd_de
 
         response = requests.get(KOSIS_BASE_URL, params=params, timeout=self.timeout)
         response.raise_for_status()

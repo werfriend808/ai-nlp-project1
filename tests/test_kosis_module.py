@@ -15,7 +15,7 @@ CalculationError/KosisApiError가 "기대한 실패"로 표시된 케이스에�
 
 from __future__ import annotations
 
-from agent.kosis.api_client import KosisApiClient, KosisApiError
+from agent.kosis.api_client import KosisApiClient, KosisApiError, _validate_period_format
 from agent.kosis.calculator import KosisCalculator, CalculationError
 
 client = KosisApiClient()
@@ -163,6 +163,70 @@ def case_17_future_year_should_fail():
     raise AssertionError("미래 연도인데 예외가 안 났음")
 
 
+# ---------------------------------------------------------------------------
+# period 형식 검증 (_validate_period_format) — 네트워크 호출 없이 순수 로직만 확인.
+# prdSe(Y/M/Q)와 period 자릿수가 안 맞으면 KOSIS에 요청을 보내기도 전에
+# KosisApiError로 막혀야 한다 ("202401 vs 2024" 형식 불일치 버그의 재발 방지).
+# ---------------------------------------------------------------------------
+
+def case_18_period_format_year_ok():
+    _validate_period_format("DT_1DA7102S", "Y", "2024")  # 예외 없이 통과해야 함
+
+
+def case_19_period_format_month_ok():
+    _validate_period_format("DT_402Y014", "M", "202412")
+
+
+def case_20_period_format_quarter_ok():
+    _validate_period_format("DT_1TEC_P112", "Q", "202403")
+
+
+def case_21_period_format_month_table_with_year_period_should_fail():
+    """월간(M) 표에 연도만(4자리) 들어오면 형식 불일치로 에러가 나야 정상 —
+    실제로 재현된 '202401 vs 2024' 버그를 사전에 막는 케이스."""
+    try:
+        _validate_period_format("DT_402Y014", "M", "2024")
+    except KosisApiError:
+        return  # 기대한 실패
+    raise AssertionError("월간 표에 4자리 연도 period인데 예외가 안 났음")
+
+
+def case_22_period_format_year_table_with_month_period_should_fail():
+    try:
+        _validate_period_format("DT_1DA7102S", "Y", "202401")
+    except KosisApiError:
+        return  # 기대한 실패
+    raise AssertionError("연간 표에 6자리 period인데 예외가 안 났음")
+
+
+def case_23_period_format_quarter_invalid_suffix_should_fail():
+    """분기 표인데 분기 접미사가 01~04 범위 밖(예: 05)이면 형식 불일치로 에러."""
+    try:
+        _validate_period_format("DT_1TEC_P112", "Q", "202405")
+    except KosisApiError:
+        return  # 기대한 실패
+    raise AssertionError("분기 표에 잘못된 분기 접미사인데 예외가 안 났음")
+
+
+def case_24_period_format_unknown_prdse_skipped():
+    """F(격년)/D(일단위)처럼 아직 형식 규칙이 정의되지 않은 prdSe는 검증을 건너뛰어야
+    한다 — 규칙이 없다고 조용히 틀린 값을 넘기는 게 아니라, 이 함수가 판단할 수 있는
+    범위 밖이라는 뜻(자동 변환/보정과는 다름)."""
+    _validate_period_format("DT_1SSSA022R", "F", "anything")
+    _validate_period_format("DT_731Y001", "D", "20250502")
+
+
+def case_25_period_format_call_integration_should_fail_before_network():
+    """__call__() 레벨에서도 검증이 적용되는지 확인 — 월간 표(DT_402Y014)에 4자리
+    연도만 period로 넘기면 실제 HTTP 요청 전에 KosisApiError가 나야 정상."""
+    try:
+        client("DT_402Y014", {"period": "2024"})
+    except KosisApiError as e:
+        assert "DT_402Y014" in str(e) and "prdSe" in str(e)
+        return  # 기대한 실패
+    raise AssertionError("월간 표에 연도만 넘겼는데 __call__에서 예외가 안 났음")
+
+
 CASES = [
     case_01_unemployment_2024_youth,
     case_02_unemployment_2023_youth,
@@ -181,6 +245,14 @@ CASES = [
     case_15_unknown_table_id_should_fail,
     case_16_region_all_returns_many_rows_should_fail,
     case_17_future_year_should_fail,
+    case_18_period_format_year_ok,
+    case_19_period_format_month_ok,
+    case_20_period_format_quarter_ok,
+    case_21_period_format_month_table_with_year_period_should_fail,
+    case_22_period_format_year_table_with_month_period_should_fail,
+    case_23_period_format_quarter_invalid_suffix_should_fail,
+    case_24_period_format_unknown_prdse_skipped,
+    case_25_period_format_call_integration_should_fail_before_network,
 ]
 
 
