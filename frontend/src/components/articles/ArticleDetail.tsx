@@ -8,12 +8,13 @@ import { InsightsPanel } from "./InsightsPanel";
 interface ArticleDetailProps {
   group: ArticleGroup;
   articleText: string | undefined;
+  tableOrgIds: Record<string, string>;
   onBack: () => void;
 }
 
 const VERDICT_ORDER = ["불일치", "애매", "일치"] as const;
 
-export function ArticleDetail({ group, articleText, onBack }: ArticleDetailProps) {
+export function ArticleDetail({ group, articleText, tableOrgIds, onBack }: ArticleDetailProps) {
   const counts = new Map<(typeof VERDICT_ORDER)[number], number>();
   for (const r of group.records) {
     const label = verdictCountLabel(r.verification_result);
@@ -24,12 +25,13 @@ export function ArticleDetail({ group, articleText, onBack }: ArticleDetailProps
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_320px]">
       <div className="flex flex-col gap-4">
         <div>
-          <nav className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
+          <nav className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
             <button
               type="button"
               onClick={onBack}
-              className="font-medium text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-indigo-400"
+              className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1 font-medium text-gray-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-indigo-800 dark:hover:bg-indigo-900/30 dark:hover:text-indigo-400"
             >
+           
               검증 기사 목록
             </button>
             <span>/</span>
@@ -72,7 +74,7 @@ export function ArticleDetail({ group, articleText, onBack }: ArticleDetailProps
         )}
       </div>
 
-      <InsightsPanel group={group} />
+      <InsightsPanel group={group} tableOrgIds={tableOrgIds} />
     </div>
   );
 }

@@ -7,7 +7,7 @@ interface ConfidenceDotsProps {
 export function ConfidenceDots({ filled, total = 4, label }: ConfidenceDotsProps) {
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-xs font-medium text-gray-500 dark:text-gray-400">신뢰도 (Confidence)</span>
+      <span className="text-xs font-medium text-gray-500 dark:text-gray-400">통계 기사 확실성</span>
       <div className="flex items-center gap-2">
         <div className="flex gap-1.5">
           {Array.from({ length: total }).map((_, i) => (

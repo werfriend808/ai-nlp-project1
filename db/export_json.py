@@ -25,7 +25,9 @@ from db.store import DB_PATH, fetch_all
 DEFAULT_OUT_PATH = Path(__file__).parent.parent / "data" / "verifications_export.json"
 DEFAULT_ARTICLES_OUT_PATH = Path(__file__).parent.parent / "data" / "articles_export.json"
 DEFAULT_DATES_OUT_PATH = Path(__file__).parent.parent / "data" / "article_dates_export.json"
+DEFAULT_ORG_IDS_OUT_PATH = Path(__file__).parent.parent / "data" / "table_org_ids_export.json"
 DATA_CSV_PATH = Path(__file__).parent.parent / "data" / "data_set.csv"
+TABLE_CATALOG_PATH = Path(__file__).parent.parent / "agent" / "mapping" / "table_catalog.json"
 
 
 def export_to_json(out_path: Path = DEFAULT_OUT_PATH, db_path: Path = DB_PATH) -> int:
@@ -116,6 +118,31 @@ def export_article_dates(
     return len(dates)
 
 
+def export_table_org_ids(
+    out_path: Path = DEFAULT_ORG_IDS_OUT_PATH,
+    db_path: Path = DB_PATH,
+    catalog_path: Path = TABLE_CATALOG_PATH,
+) -> int:
+    """verifications.db에서 실제로 매칭된 kosis_table_id들에 대해서만 orgId를 골라
+    {tblId: orgId} JSON으로 내보낸다. db/store.py 스키마엔 orgId가 없어서(kosis_table_id/
+    kosis_table만 저장), KOSIS 표 상세 페이지로 바로 연결되는 딥링크
+    (statHtml.do?orgId=...&tblId=...)를 만들려면 agent/mapping/table_catalog.json에서
+    orgId를 따로 가져와야 한다."""
+    rows = fetch_all(db_path)
+    tbl_ids_needed = {r["kosis_table_id"] for r in rows if r.get("kosis_table_id")}
+
+    if not catalog_path.exists():
+        org_ids: dict[str, str] = {}
+    else:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        org_id_by_tbl = {t["tblId"]: t["orgId"] for t in catalog.get("tables", [])}
+        org_ids = {tbl_id: org_id_by_tbl[tbl_id] for tbl_id in tbl_ids_needed if tbl_id in org_id_by_tbl}
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(org_ids, ensure_ascii=False, indent=2), encoding="utf-8")
+    return len(org_ids)
+
+
 def export_article_texts(
     out_path: Path = DEFAULT_ARTICLES_OUT_PATH,
     db_path: Path = DB_PATH,
@@ -166,6 +193,12 @@ def main() -> None:
         help="기사 작성일(제목→YYYY-MM-DD) JSON 출력 경로",
     )
     parser.add_argument(
+        "--org-ids-out",
+        type=Path,
+        default=DEFAULT_ORG_IDS_OUT_PATH,
+        help="KOSIS 표 orgId(tblId→orgId) JSON 출력 경로",
+    )
+    parser.add_argument(
         "--no-live-fetch",
         action="store_true",
         help="URL 재접속 없이 data_set.csv 스크랩 본문만 사용 (오프라인/네트워크 없을 때)",
@@ -180,6 +213,9 @@ def main() -> None:
 
     date_count = export_article_dates(args.dates_out)
     print(f"[export] 기사 작성일 {date_count}건을 {args.dates_out}에 저장했습니다.")
+
+    org_id_count = export_table_org_ids(args.org_ids_out)
+    print(f"[export] KOSIS 표 orgId {org_id_count}건을 {args.org_ids_out}에 저장했습니다.")
 
 
 if __name__ == "__main__":
