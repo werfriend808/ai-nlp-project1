@@ -1,14 +1,15 @@
 import type { ArticleGroup } from "../../lib/articles";
 import { verdictCountLabel } from "../../lib/verdictColors";
+import { kosisTableUrl } from "../../lib/kosis";
 import { ScoreGauge } from "../dashboard/ScoreGauge";
 import { ConfidenceDots } from "../dashboard/ConfidenceDots";
 
 interface InsightsPanelProps {
   group: ArticleGroup;
+  tableOrgIds: Record<string, string>;
 }
 
-// 이 기사에서 검증에 쓰인 KOSIS 표들을 중복 없이 뽑는다. orgId는 export에 없어서 정확한
-// 딥링크(statHtml.do?orgId=...&tblId=...)는 못 만들고, KOSIS 통합검색으로 연결한다.
+// 이 기사에서 검증에 쓰인 KOSIS 표들을 중복 없이 뽑는다.
 function uniqueKosisTables(group: ArticleGroup): { id: string; name: string }[] {
   const seen = new Map<string, string>();
   for (const r of group.records) {
@@ -29,7 +30,7 @@ function summaryText(total: number, 일치: number, 불일치: number): string {
   return `🔍 이 기사의 수치 주장 ${total}건은 표 매칭 신뢰도가 낮거나 KOSIS로 검증하기 어려운 주제입니다.`;
 }
 
-export function InsightsPanel({ group }: InsightsPanelProps) {
+export function InsightsPanel({ group, tableOrgIds }: InsightsPanelProps) {
   const total = group.records.length;
   const 일치 = group.records.filter((r) => verdictCountLabel(r.verification_result) === "일치").length;
   const 불일치 = group.records.filter((r) => verdictCountLabel(r.verification_result) === "불일치").length;
@@ -45,7 +46,7 @@ export function InsightsPanel({ group }: InsightsPanelProps) {
   const kosisTables = uniqueKosisTables(group);
 
   return (
-    <div className="sticky top-20 flex h-fit flex-col gap-5 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div className="sticky top-24 flex h-fit flex-col gap-5 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900 ">
       <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
         <span className="h-2 w-2 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
         <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">Fact-Check Insights</span>
@@ -61,9 +62,13 @@ export function InsightsPanel({ group }: InsightsPanelProps) {
 
         <div>
           <p className="mb-3 text-xs font-medium text-gray-500 dark:text-gray-400">핵심 지표</p>
-          <div className="flex items-center justify-between gap-4">
-            <ScoreGauge value={matchRate} colorClass={scoreColorClass} />
-            <ConfidenceDots filled={confidenceFilled} label={confidenceLabel} />
+          <div className="flex flex-col gap-4">
+            <div className="flex justify-center">
+              <ScoreGauge value={matchRate} colorClass={scoreColorClass} />
+            </div>
+            <div className="flex justify-start">
+              <ConfidenceDots filled={confidenceFilled} label={confidenceLabel} />
+            </div>
           </div>
         </div>
 
@@ -76,7 +81,7 @@ export function InsightsPanel({ group }: InsightsPanelProps) {
               {kosisTables.map((t) => (
                 <li key={t.id}>
                   <a
-                    href={`https://kosis.kr/search/search.do?query=${encodeURIComponent(t.name)}`}
+                    href={kosisTableUrl(t.id, tableOrgIds[t.id], t.name)}
                     target="_blank"
                     rel="noreferrer"
                     className="text-xs text-indigo-600 hover:underline dark:text-indigo-400"

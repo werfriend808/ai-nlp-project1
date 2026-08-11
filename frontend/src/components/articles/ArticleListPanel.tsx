@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   dominantVerdict,
   dominantVerdictCount,
@@ -19,14 +19,29 @@ type SortMode = "심각도순" | "최신순";
 const FILTER_TABS: FilterTab[] = ["전체", "불일치", "검토 필요"];
 const SORT_MODES: SortMode[] = ["심각도순", "최신순"];
 const SEVERITY_RANK: Record<"불일치" | "애매" | "일치", number> = { 불일치: 0, 애매: 1, 일치: 2 };
+const PAGE_SIZE = 20;
+const MAX_PAGE_BUTTONS = 10;
 
 function formatDate(iso: string): string {
   return iso ? iso.slice(0, 10).replaceAll("-", ".") : "—";
 }
 
+// 페이지 번호 버튼을 최대 MAX_PAGE_BUTTONS개까지만 보여준다. 전체 페이지가 그보다 많으면
+// 현재 페이지가 가운데쯤 오도록 윈도우를 옮긴다 (예: 25페이지 중 20페이지에 있으면
+// 16~25 같은 식으로 뒤쪽 구간을 보여줌).
+function pageWindow(current: number, total: number, max: number): number[] {
+  if (total <= max) return Array.from({ length: total }, (_, i) => i + 1);
+  const half = Math.floor(max / 2);
+  let start = Math.max(1, current - half);
+  const end = Math.min(total, start + max - 1);
+  start = Math.max(1, end - max + 1);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
 export function ArticleListPanel({ groups, articleDates, onSelect }: ArticleListPanelProps) {
   const [filter, setFilter] = useState<FilterTab>("전체");
   const [sortMode, setSortMode] = useState<SortMode>("심각도순");
+  const [page, setPage] = useState(1);
 
   // 기사 작성일(articleDates, data_set.csv 기반)을 우선 쓰고, 없으면 검증 실행 시각으로
   // 대신한다 — "최근 업데이트"(검증한 시점)가 아니라 "기사 자체의 날짜"를 보여주기 위함.
@@ -47,6 +62,17 @@ export function ArticleListPanel({ groups, articleDates, onSelect }: ArticleList
     }
     return copy;
   }, [filtered, sortMode, articleDates]);
+
+  // 필터/정렬이 바뀌면 목록 자체가 달라지니 1페이지로 되돌린다 — 안 그러면 예를 들어
+  // 3페이지를 보다가 필터를 바꿨을 때 존재하지 않는 페이지에 멈춰있을 수 있다.
+  useEffect(() => {
+    setPage(1);
+  }, [filter, sortMode]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const paged = sorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageNumbers = pageWindow(currentPage, totalPages, MAX_PAGE_BUTTONS);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
@@ -98,7 +124,7 @@ export function ArticleListPanel({ groups, articleDates, onSelect }: ArticleList
               </tr>
             </thead>
             <tbody>
-              {sorted.map((group) => {
+              {paged.map((group) => {
                 const verdict = dominantVerdict(group);
                 return (
                   <tr
@@ -129,6 +155,41 @@ export function ArticleListPanel({ groups, articleDates, onSelect }: ArticleList
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-1 border-t border-gray-100 px-5 py-3 dark:border-gray-800">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-400 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-gray-700 dark:hover:bg-gray-800"
+          >
+            &lsaquo;
+          </button>
+          {pageNumbers.map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => setPage(n)}
+              className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-medium transition ${
+                n === currentPage
+                  ? "bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100"
+                  : "text-gray-400 hover:bg-gray-50 dark:text-gray-500 dark:hover:bg-gray-800"
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 text-gray-400 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-gray-700 dark:hover:bg-gray-800"
+          >
+            &rsaquo;
+          </button>
         </div>
       )}
     </div>

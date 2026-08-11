@@ -626,7 +626,7 @@ def print_review_summary(results: list[dict]) -> None:
         )
 
 
-def main(use_csv_sample: bool = False, csv_n: int = 15) -> None:
+def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> None:
     try:
         client = KosisApiClient()
     except RuntimeError as e:
@@ -641,7 +641,7 @@ def main(use_csv_sample: bool = False, csv_n: int = 15) -> None:
     catalog_by_id = _load_table_catalog_by_id()
     embedding_cache = build_table_embedding_cache()
 
-    articles = load_articles_from_csv(n=csv_n) if use_csv_sample else ARTICLES
+    articles = load_articles_from_csv(n=csv_n, seed=csv_seed) if use_csv_sample else ARTICLES
 
     all_results: list[dict] = []
     for article in articles:
@@ -653,18 +653,36 @@ def main(use_csv_sample: bool = False, csv_n: int = 15) -> None:
     print(f"\n[DB] {len(all_results)}건을 data/verifications.db에 저장했습니다.")
 
 
+def _parse_int_flag(argv: list[str], flag: str, default: int) -> int:
+    """"{flag} 30" / "{flag}=30" 두 형식 다 지원하는 정수 CLI 인자 파서."""
+    for i, arg in enumerate(argv):
+        if arg == flag and i + 1 < len(argv):
+            return int(argv[i + 1])
+        if arg.startswith(f"{flag}="):
+            return int(arg.split("=", 1)[1])
+    return default
+
+
 def _parse_csv_n(argv: list[str], default: int = 15) -> int:
     """--csv-n 30 / --csv-n=30 형식으로 CSV 샘플 건수를 지정할 수 있게 한다.
     (프론트엔드 데모용 데이터 export를 위해 15건 고정값을 CLI에서 조절 가능하게 함 —
     1~8단계 전체는 judge/explain의 LLM 호출까지 있어 pipeline_1_4.py보다 건당 오래
     걸리고 병렬화/재시작 기능도 아직 없으니, 너무 큰 값은 권장하지 않는다.)"""
-    for i, arg in enumerate(argv):
-        if arg == "--csv-n" and i + 1 < len(argv):
-            return int(argv[i + 1])
-        if arg.startswith("--csv-n="):
-            return int(arg.split("=", 1)[1])
-    return default
+    return _parse_int_flag(argv, "--csv-n", default)
+
+
+def _parse_csv_seed(argv: list[str], default: int = 42) -> int:
+    """--csv-seed 7 / --csv-seed=7 형식으로 random.Random 시드를 지정한다.
+    load_articles_from_csv가 시드를 안 바꾸면 항상 같은 42로 고정돼서, --csv-n을
+    반복 실행해도 매번 같은 기사만 뽑힌다 — 다른 기사 조합을 보고 싶으면 시드를
+    바꿔야 한다 (같은 시드+더 큰 csv_n은 기존 샘플을 그대로 포함해서 확장하지만,
+    시드를 바꾸면 완전히 다른 무작위 샘플이 뽑힌다)."""
+    return _parse_int_flag(argv, "--csv-seed", default)
 
 
 if __name__ == "__main__":
-    main(use_csv_sample="--csv" in sys.argv, csv_n=_parse_csv_n(sys.argv))
+    main(
+        use_csv_sample="--csv" in sys.argv,
+        csv_n=_parse_csv_n(sys.argv),
+        csv_seed=_parse_csv_seed(sys.argv),
+    )
