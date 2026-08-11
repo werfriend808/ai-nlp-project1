@@ -409,7 +409,10 @@ def _judge_with_llm(claim: Claim, computed: ComputedResult, *, model: str = MODE
         .replace("{computed_period}", computed.period)
     )
 
-    reply = call_hcx(model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt)
+    # 2026-08-11 재현성 문제 대응: temperature 기본값(hcx_client의 0.2)을 두면 같은
+    # claim+계산값을 넣어도 판정이 흔들릴 수 있어 0.0으로 고정 (seed는 hcx_client
+    # 기본값 42가 자동 적용됨).
+    reply = call_hcx(model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt, temperature=0.0)
 
     try:
         parsed = _extract_json_object(reply)
@@ -484,7 +487,9 @@ def judge_complex(
         '"reason": "여러 주장/통계를 종합한 판단 근거"}'
     )
 
-    reply = call_hcx(model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt, max_tokens=1536)
+    reply = call_hcx(
+        model=model, system_prompt=SYSTEM_PROMPT, user_content=prompt, max_tokens=1536, temperature=0.0
+    )
 
     try:
         parsed = _extract_json_object(reply)

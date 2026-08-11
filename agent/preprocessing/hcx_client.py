@@ -55,12 +55,20 @@ def call_hcx(
     *,
     temperature: float = 0.2,
     max_tokens: int = 1024,
+    seed: Optional[int] = 42,
     api_key: Optional[str] = None,
     timeout: int = 60,
 ) -> str:
     """system/user 메시지 한 쌍을 CLOVA Studio에 보내고 assistant 응답 텍스트만 돌려줍니다.
 
     model 예: "HCX-DASH-002", "HCX-003"
+
+    seed: 2026-08-11 재현성 문제 대응. CLOVA Studio API는 seed를 안 보내면(=0과 동일)
+    출력이 매번 무작위화된다 — temperature=0.0으로 낮춰도 이것과는 별개 문제라, 같은
+    기사를 여러 번 넣었을 때 claim 개수/내용이 흔들리는 현상(실측: 4건→2건→4건)의
+    유력한 원인이었다. 1~4294967295 사이 고정값을 주면 같은 입력에 항상 같은 결과가
+    나온다(공식 문서: "출력 일관성 수준을 조정"). None으로 넘기면 기존처럼 seed를
+    아예 안 보낸다(무작위 필요한 특수 상황 대비).
     """
     api_key = api_key or os.environ.get("HCX_API_KEY")
     if not api_key:

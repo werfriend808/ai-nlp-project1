@@ -33,8 +33,18 @@ SLOT_DESCRIPTIONS = {
 
 
 def call_hcx(prompt: str) -> str:
-    """HCX-DASH-002 호출 후 응답 텍스트(content)만 뽑아서 리턴"""
-    payload = {"messages": [{"role": "user", "content": prompt}]}
+    """HCX-DASH-002 호출 후 응답 텍스트(content)만 뽑아서 리턴
+
+    2026-08-11 재현성 문제 대응: 이 함수는 agent/preprocessing/hcx_client.py의 공용
+    호출부를 안 쓰고 여기서 별도로 requests를 직접 호출하고 있었다 — temperature도
+    seed도 하나도 안 넘겨서 CLOVA Studio 기본값(temperature=0.5, seed=무작위)을 그대로
+    쓰던 상태였다. 1·2·8단계와 동일하게 temperature=0.0 + seed 고정으로 맞춘다.
+    """
+    payload = {
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+        "seed": 42,
+    }
     response = requests.post(URL, headers=HEADERS, json=payload)
     response.raise_for_status()  # 상태코드 200 아니면 여기서 에러 터짐
     data = response.json()
