@@ -24,6 +24,7 @@ from db.store import DB_PATH, fetch_all
 
 DEFAULT_OUT_PATH = Path(__file__).parent.parent / "data" / "verifications_export.json"
 DEFAULT_ARTICLES_OUT_PATH = Path(__file__).parent.parent / "data" / "articles_export.json"
+DEFAULT_DATES_OUT_PATH = Path(__file__).parent.parent / "data" / "article_dates_export.json"
 DATA_CSV_PATH = Path(__file__).parent.parent / "data" / "data_set.csv"
 
 
@@ -72,6 +73,49 @@ def _load_csv_article_texts(csv_path: Path = DATA_CSV_PATH) -> dict[str, str]:
     return result
 
 
+def _load_csv_article_dates(csv_path: Path = DATA_CSV_PATH) -> dict[str, str]:
+    """data_set.csv에서 기사제목 -> 작성일("YYYY-MM-DD")을 매핑한다. db/store.py 스키마에는
+    기사 작성일이 저장되지 않아서(검증 실행 시각인 created_at만 있음), 원문 텍스트와
+    마찬가지로 CSV에서 직접 다시 읽어와야 한다. 날짜 형식이 이상하면(파싱 실패) 그 기사는
+    건너뛴다 — 프론트가 latestCreatedAt 등으로 폴백한다."""
+    if not csv_path.exists():
+        return {}
+
+    with open(csv_path, encoding="utf-8-sig") as f:
+        text = f.read().replace("﻿", "")
+
+    result: dict[str, str] = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        title = row.get("기사제목", "")
+        raw_date = row.get("작성일", "")
+        if not title or not raw_date:
+            continue
+        try:
+            y, m, d = (int(v) for v in raw_date.split("-"))
+            result[title] = f"{y:04d}-{m:02d}-{d:02d}"
+        except ValueError:
+            continue
+    return result
+
+
+def export_article_dates(
+    out_path: Path = DEFAULT_DATES_OUT_PATH,
+    db_path: Path = DB_PATH,
+    csv_path: Path = DATA_CSV_PATH,
+) -> int:
+    """verifications.db에 있는 article_title들에 대해서만 작성일을 골라 {제목: "YYYY-MM-DD"}
+    JSON으로 내보낸다."""
+    rows = fetch_all(db_path)
+    titles_needed = {r["article_title"] for r in rows}
+
+    all_dates = _load_csv_article_dates(csv_path)
+    dates = {title: all_dates[title] for title in titles_needed if title in all_dates}
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(dates, ensure_ascii=False, indent=2), encoding="utf-8")
+    return len(dates)
+
+
 def export_article_texts(
     out_path: Path = DEFAULT_ARTICLES_OUT_PATH,
     db_path: Path = DB_PATH,
@@ -116,6 +160,12 @@ def main() -> None:
         help="기사 원문(제목→본문) JSON 출력 경로",
     )
     parser.add_argument(
+        "--dates-out",
+        type=Path,
+        default=DEFAULT_DATES_OUT_PATH,
+        help="기사 작성일(제목→YYYY-MM-DD) JSON 출력 경로",
+    )
+    parser.add_argument(
         "--no-live-fetch",
         action="store_true",
         help="URL 재접속 없이 data_set.csv 스크랩 본문만 사용 (오프라인/네트워크 없을 때)",
@@ -127,6 +177,9 @@ def main() -> None:
 
     article_count = export_article_texts(args.articles_out, fetch_live=not args.no_live_fetch)
     print(f"[export] 기사 원문 {article_count}건을 {args.articles_out}에 저장했습니다.")
+
+    date_count = export_article_dates(args.dates_out)
+    print(f"[export] 기사 작성일 {date_count}건을 {args.dates_out}에 저장했습니다.")
 
 
 if __name__ == "__main__":
