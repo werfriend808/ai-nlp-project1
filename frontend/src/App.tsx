@@ -16,6 +16,7 @@ type DateRangeOption = (typeof DATE_RANGE_OPTIONS)[number];
 const EXPORT_JSON_PATH = "/data/verifications.json";
 const ARTICLES_JSON_PATH = "/data/articles.json";
 const ARTICLE_DATES_JSON_PATH = "/data/articleDates.json";
+const TABLE_ORG_IDS_JSON_PATH = "/data/tableOrgIds.json";
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   // Vite dev 서버는 없는 경로도 SPA 폴백으로 index.html(200 text/html)을 돌려주기 때문에
@@ -33,6 +34,7 @@ function App() {
   const [records, setRecords] = useState<VerificationRecord[]>(MOCK_VERIFICATIONS);
   const [articleTexts, setArticleTexts] = useState<Record<string, string>>(MOCK_ARTICLE_TEXTS);
   const [articleDates, setArticleDates] = useState<Record<string, string>>(MOCK_ARTICLE_DATES);
+  const [tableOrgIds, setTableOrgIds] = useState<Record<string, string>>({});
   const [usingMockData, setUsingMockData] = useState(true);
   const [selectedArticle, setSelectedArticle] = useState<string | null>(null);
   const [reviewFilterActive, setReviewFilterActive] = useState(false);
@@ -51,11 +53,13 @@ function App() {
       fetchJson<VerificationRecord[]>(EXPORT_JSON_PATH),
       fetchJson<Record<string, string>>(ARTICLES_JSON_PATH),
       fetchJson<Record<string, string>>(ARTICLE_DATES_JSON_PATH),
-    ]).then(([verifications, articles, dates]) => {
+      fetchJson<Record<string, string>>(TABLE_ORG_IDS_JSON_PATH),
+    ]).then(([verifications, articles, dates, orgIds]) => {
       if (cancelled || !verifications || verifications.length === 0) return;
       setRecords(verifications);
       setArticleTexts(articles ?? {});
       setArticleDates(dates ?? {});
+      setTableOrgIds(orgIds ?? {});
       setUsingMockData(false);
     });
 
@@ -153,6 +157,7 @@ function App() {
           <ArticleDetail
             group={selectedGroup}
             articleText={articleTexts[selectedGroup.articleTitle]}
+            tableOrgIds={tableOrgIds}
             onBack={handleBack}
           />
         ) : (
