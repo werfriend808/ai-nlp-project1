@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent.preprocessing.classifier import classify
-from agent.preprocessing.claim_extractor import extract_claims
+from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
 from agent.mapping.reranker import search_and_rerank
@@ -457,6 +457,7 @@ def run_article(
 
     try:
         claims = extract_claims(article["article_text"])
+        claims = recover_missed_claims(article["article_text"], claims)
         print(f"[2단계 claim_extractor] {len(claims)}개 주장 추출")
     except Exception as e:
         print(f"[2단계 claim_extractor] 실패 ({type(e).__name__}: {e}) → 이 기사 스킵")
