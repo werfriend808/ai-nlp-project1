@@ -97,9 +97,25 @@ def _extract_json_object(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def _build_calc_summary(computed: ComputedResult) -> str:
+def _format_period_label(period: Optional[str], prd_se: Optional[str] = None) -> str:
+    """judge.py의 동명 함수와 같은 이유(2026-08-12) — prd_se를 안 넘기면(기본값) 원본
+    문자열 그대로 반환한다. 6자리 period가 월(YYYYMM)인지 분기(YYYY+분기코드)인지 여기서
+    모르면 LLM이 임의로(대부분 틀리게) "N월부터 N월까지"로 설명해버리는 문제가 있었다."""
+    if not period:
+        return period or "명시 안 됨"
+    if "~" in period:
+        return "~".join(_format_period_label(p, prd_se) for p in period.split("~"))
+    if prd_se == "Q" and re.fullmatch(r"\d{6}", period):
+        return f"{period[:4]}년 {int(period[4:])}분기"
+    if prd_se == "M" and re.fullmatch(r"\d{6}", period):
+        return f"{period[:4]}년 {int(period[4:])}월"
+    return period
+
+
+def _build_calc_summary(computed: ComputedResult, prd_se: Optional[str] = None) -> str:
     """계산 과정 요약 (예: "2023~2024 기준 증감률 -3.2%"). Explanation.calc_summary에 그대로 씀."""
-    return f"{computed.period} 기준 {computed.calc_type} {computed.raw_value}{computed.unit}"
+    period_label = _format_period_label(computed.period, prd_se)
+    return f"{period_label} 기준 {computed.calc_type} {computed.raw_value}{computed.unit}"
 
 
 def explain(
@@ -110,6 +126,7 @@ def explain(
     *,
     model: str = MODEL,
     temperature: float = 0.0,
+    prd_se: Optional[str] = None,
 ) -> Explanation:
     """8단계 메인 진입점. 이미 나온 판정(Verdict)을 사람이 읽을 수 있는 설명으로 풀어냄.
 
@@ -126,7 +143,7 @@ def explain(
         .replace("{computed_calc_type}", computed.calc_type)
         .replace("{computed_value}", str(computed.raw_value))
         .replace("{computed_unit}", computed.unit)
-        .replace("{computed_period}", computed.period)
+        .replace("{computed_period}", _format_period_label(computed.period, prd_se))
         .replace("{verdict}", verdict.verdict)
         .replace("{gap_type}", verdict.gap_type or "없음")
         .replace("{verdict_reason}", verdict.reason)
@@ -161,7 +178,7 @@ def explain(
     return Explanation(
         claim_sentence=claim.sentence,
         table_name=table.table_name,
-        calc_summary=_build_calc_summary(computed),
+        calc_summary=_build_calc_summary(computed, prd_se),
         verdict=verdict.verdict,
         explanation_text=explanation_text,
         limitation=limitation,
@@ -217,3 +234,13 @@ if __name__ == "__main__":
     assert exp3.verdict == "판단불가"
     assert exp3.limitation, "판단불가인데 limitation이 비어있음 (방어 로직 실패)"
     print("  → 통과: '판단불가' 케이스에서 한계(limitation)가 얼버무려지지 않고 채워짐.")
+
+    print("\n=== 2026-08-12 신규: 분기/월 period 라벨링 버그 수정 회귀 테스트 ===")
+    assert _format_period_label("202402", prd_se="Q") == "2024년 2분기", _format_period_label("202402", prd_se="Q")
+    assert _format_period_label("202402", prd_se="M") == "2024년 2월", _format_period_label("202402", prd_se="M")
+    assert _format_period_label("202402") == "202402", "prd_se 안 넘기면 원본 그대로여야 함(하위 호환)"
+    assert _format_period_label("2023~2024", prd_se="Q") == "2023~2024", _format_period_label("2023~2024", prd_se="Q")
+    print("[period 라벨 포맷] '202402'+Q -> '2024년 2분기', +M -> '2024년 2월', prd_se 없으면 원본 유지 ✅")
+    print("  → 통과: 분기 표의 202402가 더 이상 '1~2월'로 오인식되지 않음")
+    print("     (2026-08-12, 中 1분기 GDP 기사의 판정 설명이 '2024년 1월부터 2월까지'로")
+    print("     잘못 서술되던 사례로 실측 확인).")

@@ -169,5 +169,26 @@
   {"sentence": "반면 신규 채용 계획 응답률은 과거 평균인 52%보다 낮은 47%로 나타났다.", "claim_type": "비교", "period": "올해 1분기", "unit": "%", "population": "중소제조업", "statistic_expression": "신규 채용 계획 응답률", "value": 47, "comparison_operator": "미만", "comparison_target": "과거 평균", "comparison_value": 52, "region": null, "source_org": "중소기업중앙회", "source_report": null}
 ]
 
+[예시 입력 — "적자전환"/"흑자로 돌아섰다"처럼 문맥으로만 증감 방향이 드러나는 기업 실적 표현]
+기사: "OO전자는 올해 3분기 영업이익이 전년 동기 대비 적자로 전환해 -320억원을 기록했다고
+15일 공시했다. 자회사인 OO바이오는 이번 분기 20억원의 순이익을 내며 전분기 대비 흑자로
+돌아섰다. 반면 계열사 OO물류는 3분기 매출 급감으로 45억원의 영업손실을 기록하며 적자를
+냈다."
+
+[예시 출력]
+("적자전환"/"적자를 냈다"/"영업손실을 기록했다"처럼 손실을 나타내는 표현은 comparison_operator를
+"감소"로, "흑자로 돌아섰다"처럼 이익 전환을 나타내는 표현은 "증가"로 채웁니다. 이런 표현은
+키워드로 다 나열할 수 없을 만큼 계속 새로 나올 수 있으므로, 개별 단어를 외우기보다 "적자/흑자
+전환·전락·기록" 같은 패턴 자체를 일반화해서 인식하세요. value는 원문에 "-320억원"처럼 부호가
+붙어 있어도 항상 부호 없는 크기(320억 -> 32000000000)로 쓰고, 방향은 오직 comparison_operator로만
+표현합니다. 문장에 비교 대상 시점이 명시돼 있으면("전년 동기 대비", "전분기 대비") 그 원문
+표현을 comparison_target으로 쓰고, 명시돼 있지 않으면(세 번째 문장처럼) comparison_target은
+null로 두되 comparison_operator는 그대로 채웁니다.)
+[
+  {"sentence": "OO전자는 올해 3분기 영업이익이 전년 동기 대비 적자로 전환해 -320억원을 기록했다고 15일 공시했다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO전자", "statistic_expression": "영업이익", "value": 32000000000, "comparison_operator": "감소", "comparison_target": "전년 동기", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "자회사인 OO바이오는 이번 분기 20억원의 순이익을 내며 전분기 대비 흑자로 돌아섰다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO바이오", "statistic_expression": "순이익", "value": 2000000000, "comparison_operator": "증가", "comparison_target": "전분기", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "반면 계열사 OO물류는 3분기 매출 급감으로 45억원의 영업손실을 기록하며 적자를 냈다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO물류", "statistic_expression": "영업손실", "value": 4500000000, "comparison_operator": "감소", "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+
 ## 추출할 기사
 {article_text}

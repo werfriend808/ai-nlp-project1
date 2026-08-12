@@ -63,6 +63,7 @@ from agent.mapping.reranker import search_and_rerank
 from agent.orchestrator.slot_filler import fill_slots
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.agent_chat import _extract_month_period, _resolve_relative_month_period
+from agent.orchestrator.calc_type_router import _mentions_foreign_country
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
 from agent.verdict.judge import judge, JudgeError
@@ -337,16 +338,31 @@ def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) ->
     return kosis_slots
 
 
-def run_stage_4(claim_sentence: str, clarify_reply: Optional[str], article_date: date) -> Optional[dict]:
+def run_stage_4(
+    claim_sentence: str,
+    clarify_reply: Optional[str],
+    article_date: date,
+    *,
+    table_id: Optional[str] = None,
+    table_params: Optional[dict] = None,
+) -> Optional[dict]:
     """4단계: fill_slots + clarify. 한 번에 안 채워지면 clarify_reply로 한 번 더 시도.
-    그래도 부족하면 None (되묻기 미해결 → 5단계로 못 감)을 반환한다."""
-    slots = fill_slots(claim_sentence, {}, article_date)
+    그래도 부족하면 None (되묻기 미해결 → 5단계로 못 감)을 반환한다.
+
+    table_id/table_params: 3단계가 이미 매칭한 표의 주기(prdSe)를 조회해서 slot_filler에
+    넘기기 위함(2026-08-12) — 표 주기를 몰라 무조건 연도만 채우던 문제 수정. 안 넘기면
+    기존과 동일하게 연 단위로만 동작한다(하위 호환)."""
+    prd_se = None
+    if table_id and table_params and table_id in table_params:
+        prd_se = table_params[table_id].get("prdSe")
+
+    slots = fill_slots(claim_sentence, {}, article_date, prd_se=prd_se)
     question = clarify(slots)
     print(f"[4단계 slot_filler] 1차 슬롯: {slots}")
 
     if question and clarify_reply:
         print(f"[4단계 clarify] 되묻기: \"{question}\" → (준비된 답변) \"{clarify_reply}\"")
-        slots = fill_slots(clarify_reply, slots, article_date)
+        slots = fill_slots(clarify_reply, slots, article_date, prd_se=prd_se)
         question = clarify(slots)
         print(f"[4단계 slot_filler] 2차 슬롯: {slots}")
 
@@ -400,12 +416,22 @@ def run_stage_5_6(
         return None
 
 
-def run_stage_7_8(claim, top, computed: ComputedResult) -> Optional[tuple[Verdict, Optional[Explanation]]]:
+def run_stage_7_8(
+    claim, top, computed: ComputedResult, *, table_params: Optional[dict] = None
+) -> Optional[tuple[Verdict, Optional[Explanation]]]:
     """7단계 judge + 8단계 explain. judge가 실패하면 이 주장 전체를 스킵(None)하지만,
     explain만 실패하는 경우는 Verdict는 살리고 Explanation만 None으로 반환한다 —
-    DB 저장 레이어가 evidence 필드는 비어도 verification_result는 기록할 수 있게 하기 위함."""
+    DB 저장 레이어가 evidence 필드는 비어도 verification_result는 기록할 수 있게 하기 위함.
+
+    table_params: 3단계가 매칭한 표(top.table_id)의 prdSe를 조회해서 judge/explain에
+    넘긴다 — computed.period("202402" 등)가 월인지 분기인지 판정/설명 프롬프트가 헷갈리지
+    않게 하기 위함(2026-08-12). 안 넘기면 기존과 동일하게 원본 period 문자열 그대로 노출."""
+    prd_se = None
+    if top and table_params and top.table_id in table_params:
+        prd_se = table_params[top.table_id].get("prdSe")
+
     try:
-        verdict = judge(claim, computed)
+        verdict = judge(claim, computed, prd_se=prd_se)
         print(f"[7단계 judge] {verdict}")
     except JudgeError as e:
         print(f"[7단계 judge] 실패 ({type(e).__name__}: {e}) → 설명 생성 스킵")
@@ -416,7 +442,7 @@ def run_stage_7_8(claim, top, computed: ComputedResult) -> Optional[tuple[Verdic
 
     explanation: Optional[Explanation] = None
     try:
-        explanation = explain(claim, top, computed, verdict)
+        explanation = explain(claim, top, computed, verdict, prd_se=prd_se)
         print(f"[8단계 explain] {explanation.explanation_text}")
         if explanation.limitation:
             print(f"[8단계 explain][한계] {explanation.limitation}")
@@ -563,6 +589,35 @@ def run_article(
             )
             continue
 
+        if _mentions_foreign_country(claim.population, claim.region, claim.comparison_target):
+            # KOSIS는 대한민국 통계청 산하 포털이라 해외 국가 자체 통계(중국 GDP, 일본
+            # 1인당 국민소득 등)를 원천적으로 제공하지 않는다. 근데 3단계 매칭이 "GDP"/
+            # "물가" 같은 일반 키워드만 보고 국내 표로 잘못 매칭시켜서, 존재하지도 않는
+            # 비교를 억지로 계산하다 잘못된 판정이 나오는 사례가 실측 확인됐다(2026-08-12
+            # — 한국 vs 일본 1인당 국민소득 비교, 중국 1분기 GDP 등). 전망 claim과 같은
+            # 원칙으로 3~8단계를 아예 건너뛰고 정직하게 판단불가 처리한다.
+            print("[분류] population/region/comparison_target에 해외 국가 포함 → KOSIS 검증 불가, 즉시 판단불가 처리")
+            verdict = Verdict(verdict="판단불가", gap_type=None, reason="해외 국가/지역 통계는 KOSIS(국내 통계)로 검증 불가")
+            insert_verification(
+                _build_verification_record(
+                    article=article, claim=claim, top=None, generic_slots=None,
+                    table_params=table_params, computed=None, verdict=verdict, explanation=None,
+                    cls_result=cls_result, catalog_by_id=catalog_by_id,
+                    verification_possible="불가", ambiguity_reason="해외 국가/지역 데이터는 KOSIS 검증 대상 아님",
+                )
+            )
+            results.append(
+                {
+                    "article": article["label"],
+                    "claim_sentence": claim.sentence,
+                    "table_name": None,
+                    "verdict": "판단불가",
+                    "gap_type": None,
+                    "classifier_score": cls_result.score,
+                }
+            )
+            continue
+
         try:
             candidates = search_and_rerank(
                 claim,
@@ -614,7 +669,13 @@ def run_article(
             continue
 
         try:
-            slots = run_stage_4(claim.sentence, article.get("clarify_reply"), article["published_date"])
+            slots = run_stage_4(
+                claim.sentence,
+                article.get("clarify_reply"),
+                article["published_date"],
+                table_id=top.table_id,
+                table_params=table_params,
+            )
         except Exception as e:
             print(f"[4단계 slot_filler] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
             continue
@@ -639,7 +700,7 @@ def run_article(
         if computed is None:
             continue
 
-        outcome = run_stage_7_8(claim, top, computed)
+        outcome = run_stage_7_8(claim, top, computed, table_params=table_params)
         if outcome is not None:
             verdict, explanation = outcome
             try:

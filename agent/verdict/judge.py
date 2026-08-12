@@ -70,9 +70,19 @@ NUMERIC_TOLERANCE = 0.1
 # tolerance의 5배(=0.5) 넘게 벌어지면 "명확히 큰 차이"로 보고 LLM 호출 없이 바로 불일치 확정.
 CLEAR_GAP_MULTIPLIER = 5
 
-_SCALE = {"조": 1e12, "억": 1e8, "만": 1e4, "천": 1e3}
-_SCALE_ORDER = ["조", "억", "만", "천"]  # 인덱스가 클수록 작은 단위 (조 > 억 > 만 > 천)
-_NUMBER_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(조|억|만|천)?")
+# "조/억/만"은 4자리씩 끊는 큰 자릿수 단위(그룹 단위) — 그룹끼리는 덧셈으로 이어진다.
+# "천/백"은 그 그룹 안에서 1~9999 범위의 계수를 만드는 작은 단위 — 계수는 그룹 단위와
+# 곱해진다(예: "3천만" = 3천(계수) × 만(그룹단위) = 30,000,000). _find_compound_numbers
+# 참고.
+_BIG_UNITS = {"조": 1e12, "억": 1e8, "만": 1e4}
+_BIG_ORDER = ["조", "억", "만"]  # 인덱스가 클수록 작은 단위
+_SMALL_UNITS = {"천": 1e3, "백": 1e2}
+_SMALL_ORDER = ["천", "백"]  # 인덱스가 클수록 작은 단위
+# 계수 조각(예: "3천", "4백") 바로 뒤에 공백만 사이에 두고 "조/억/만" 글자가 곧바로 오면
+# (그 사이에 숫자가 끼어 있지 않으면) 그 계수를 그룹 단위 배수로 곱한다는 신호다. 이
+# 글자는 앞에 숫자가 안 붙어 있어 _NUMBER_RE 자체로는 매칭되지 않으므로 별도로 찾는다.
+_TRAILING_BIG_UNIT_RE = re.compile(r"\s*(조|억|만)")
+_NUMBER_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(조|억|만|천|백)?")
 _DIGITS_RE = re.compile(r"\d+")
 # 숫자 바로 뒤에 이 마커가 오면 "23만8천명"의 "명"처럼 claim.unit과 일치하는 값이 아닌 한
 # 기간/시점 표현("46개월 만에", "3년 만에", "2024년")이지 비교 대상 수치가 아니다.
@@ -88,8 +98,14 @@ _AGE_RANGE_RE = re.compile(r"\d+\s*[~\-]\s*\d+\s*세")
 # "1.1% 감소했다"처럼 claim_type="증감률" 문장은 숫자 자체엔 부호가 없고 방향은 단어로만
 # 표현됨. ComputedResult 쪽(calculator.py compute_change/compute_change_rate)은 감소를
 # 음수로 표현하므로, 같은 척도로 비교하려면 이 단어들을 보고 부호를 붙여줘야 함.
-_DECREASE_WORDS = ("감소", "하락", "줄어", "축소", "내림", "내렸", "떨어", "낮아", "줄었")
-_INCREASE_WORDS = ("증가", "상승", "올랐", "늘어", "확대", "늘었", "높아", "올림")
+#
+# "적자전환"/"흑자로 돌아섰다" 같은 문맥 기반 증감 표현은 계속 새로 나올 수 있어 키워드
+# 나열로는 근본적으로 다 못 잡는다 — 메인 해법은 claim_extractor_prompt.txt의 few-shot
+# 예시로 2단계 LLM이 comparison_operator를 직접 채우게 하는 것이고(claim.comparison_operator가
+# _apply_direction에서 최우선으로 쓰임), 여기 목록은 2단계가 못 채웠을 때의 최후 방어선일
+# 뿐이라 "적자"/"흑자" 최소한만 추가한다(2026-08-12).
+_DECREASE_WORDS = ("감소", "하락", "줄어", "축소", "내림", "내렸", "떨어", "낮아", "줄었", "적자")
+_INCREASE_WORDS = ("증가", "상승", "올랐", "늘어", "확대", "늘었", "높아", "올림", "흑자")
 
 
 class JudgeError(RuntimeError):
@@ -134,18 +150,74 @@ def _normalize_gap_type(gap_type: object) -> Optional[str]:
 # 1차 필터 — 코드 규칙 (LLM 호출 없음)
 # ---------------------------------------------------------------------------
 
-def _to_value(num_str: str, scale: Optional[str]) -> float:
-    value = float(num_str.replace(",", ""))
-    return value * _SCALE[scale] if scale else value
+def _parse_term(
+    matches: list[re.Match], i: int, text: str
+) -> tuple[float, int, int, Optional[int], int]:
+    """matches[i]부터 시작하는 "한 단위 묶음"을 계산한다.
+
+    "조/억/만"은 4자리씩 끊는 큰 자릿수(그룹) 단위, "천/백"은 그 그룹 안에서
+    1~9999 범위의 계수를 만드는 작은 단위다. 매칭된 숫자에 "조/억/만"이 곧바로 붙어
+    있으면(예: "1억", "23만") 그 자체로 하나의 그룹이라 바로 반환한다. "천/백"이
+    붙어 있으면(예: "3천", "4백") 뒤이어 공백 없이 더 작은 "천/백" 단위가 이어지는
+    한 계수로 먼저 합산하고(예: "2천4백" -> 2400, 오늘 오전 로직), 그 계수 바로 뒤에
+    (중간에 숫자 없이) "조/억/만" 글자가 곧바로 오면 그 단위 값을 계수에 곱한다(예:
+    "3천만" -> 3000 × 10000 = 30,000,000). 곱할 단위가 없으면 계수를 그대로 반환한다.
+
+    반환: (값, 시작 인덱스, 끝 인덱스, 그룹 랭크(조=0/억=1/만=2, 없으면 None), 다음에
+    읽을 matches 인덱스). 그룹 랭크가 None이면 "조/억/만" 그룹에 속하지 않는 값이라는
+    뜻으로, 상위 호출부에서 그룹끼리의 덧셈 체인(예: "1억2천만"의 억+만)이나 단위
+    없는 잔여 숫자 병합(예: "338만 4523")을 판단하는 데 쓰인다.
+    """
+    num_str, scale = matches[i].groups()
+    start, end = matches[i].start(), matches[i].end()
+    coeff = float(num_str.replace(",", ""))
+    i += 1
+
+    if scale in _BIG_UNITS:
+        return coeff * _BIG_UNITS[scale], start, end, _BIG_ORDER.index(scale), i
+
+    run_value = coeff * _SMALL_UNITS[scale] if scale in _SMALL_UNITS else coeff
+    small_rank = _SMALL_ORDER.index(scale) if scale in _SMALL_UNITS else -1
+    while small_rank >= 0 and i < len(matches):
+        gap = text[end : matches[i].start()]
+        if gap.strip():  # 공백 아닌 문자(쉼표 등)가 끼어 있으면 별개 숫자
+            break
+        nxt_num, nxt_scale = matches[i].groups()
+        nxt_rank = _SMALL_ORDER.index(nxt_scale) if nxt_scale in _SMALL_UNITS else -1
+        if nxt_rank <= small_rank:  # 단위가 순서대로 작아지지 않으면 별개 숫자
+            break
+        run_value += float(nxt_num.replace(",", "")) * _SMALL_UNITS[nxt_scale]
+        end = matches[i].end()
+        small_rank = nxt_rank
+        i += 1
+
+    big_match = _TRAILING_BIG_UNIT_RE.match(text, end)
+    if big_match:
+        run_value *= _BIG_UNITS[big_match.group(1)]
+        end = big_match.end()
+        return run_value, start, end, _BIG_ORDER.index(big_match.group(1)), i
+
+    return run_value, start, end, None, i
 
 
 def _find_compound_numbers(text: str) -> list[tuple[float, int, int]]:
-    """text에서 숫자를 찾되, "23만8천"처럼 조/억/만/천 단위가 큰 것부터 작은 것 순서로
-    공백 없이 이어지는 한글 복합 숫자는 하나의 값으로 합산한다.
+    """text에서 숫자를 찾아 한글 복합 숫자를 하나의 값으로 합산한다.
 
-    (예전엔 _NUMBER_RE로 한 조각씩만 봐서 "23만8천"에서 뒤쪽 "8천"(=8000)만 인식하고
-    앞쪽 "23만"을 놓치는 버그가 있었음 — 실제 배치 실행에서 "23만8천명"을 8000명으로
-    잘못 읽어 정상 기사를 오탐하는 사례로 재현됨.)
+    두 가지 서로 다른 규칙을 함께 처리한다:
+    1) 곱셈형 그룹: "3천만"처럼 계수(3천=3000)에 그룹 단위(만=10000)가 곱해지는
+       표현("3천만" -> 30,000,000), 그리고 "1억2천만"처럼 그런 그룹들이 조/억/만
+       순서로 이어지며 덧셈으로 합쳐지는 표현("1억"+"2천만" -> 120,000,000). 계수
+       계산과 그룹 단위 곱은 _parse_term이 담당한다.
+    2) 덧셈형 잔여 숫자: "338만 4523"처럼 그룹 뒤에 그 그룹 단위보다 작은 잔여
+       숫자가 단위 없이 그냥 붙는(공백 있든 없든) 표현. 병합은 한 번만 허용한다 —
+       병합한 뒤에는 더 이상 이어붙이지 않는다. 그래야 "360, 100"(쉼표+공백으로
+       나열된 별개 숫자 두 개)처럼 원래부터 독립적인 숫자까지 합쳐버리는 걸 막을 수
+       있다. 두 조각 사이에 쉼표 등 공백 아닌 문자가 끼어 있어도 병합하지 않는다.
+
+    (예전엔 _NUMBER_RE로 한 조각씩만 보고 숫자 하나에 단위 글자 하나만 붙는다고
+    가정해서, "3천만"을 만나면 "3천"까지만 매칭하고 그 뒤의 "만"은 앞에 숫자가 없어
+    매칭되지 않아 조용히 버려지는 버그가 있었음 — "3천만원"이 3,000으로 읽혀
+    ×10,000 배수가 통째로 사라지는 사례로 재현됨, 2026-08-12.)
 
     반환: [(합산값, 시작 인덱스, 끝 인덱스), ...] — 인덱스는 claim.unit 매칭이나
     연도 제외 판단에 이어서 쓰기 위해 그대로 넘김.
@@ -153,21 +225,29 @@ def _find_compound_numbers(text: str) -> list[tuple[float, int, int]]:
     matches = [m for m in _NUMBER_RE.finditer(text) if m.group(1)]
     results: list[tuple[float, int, int]] = []
     i = 0
-    while i < len(matches):
-        num_str, scale = matches[i].groups()
-        total = _to_value(num_str, scale)
-        start, end = matches[i].start(), matches[i].end()
-        rank = _SCALE_ORDER.index(scale) if scale in _SCALE_ORDER else -1
-        i += 1
-        while rank >= 0 and i < len(matches) and matches[i].start() == end:
-            nxt_num, nxt_scale = matches[i].groups()
-            nxt_rank = _SCALE_ORDER.index(nxt_scale) if nxt_scale in _SCALE_ORDER else -1
-            if nxt_rank <= rank:  # 단위가 순서대로 작아지지 않으면(혹은 단위 없으면) 별개 숫자
+    n = len(matches)
+    while i < n:
+        total, start, end, rank, i = _parse_term(matches, i, text)
+        while rank is not None and i < n:
+            gap = text[end : matches[i].start()]
+            if gap.strip():  # 공백 아닌 문자(쉼표 등)가 끼어 있으면 별개 숫자
                 break
-            total += _to_value(nxt_num, nxt_scale)
-            end = matches[i].end()
-            rank = nxt_rank
-            i += 1
+            nxt_total, _nxt_start, nxt_end, nxt_rank, nxt_i = _parse_term(matches, i, text)
+            if nxt_rank is not None:
+                if nxt_rank <= rank:  # 단위가 순서대로 작아지지 않으면 별개 그룹
+                    break
+                total += nxt_total
+                end = nxt_end
+                rank = nxt_rank
+                i = nxt_i
+                continue
+            # 단위 없는 잔여 숫자 — 현재 그룹 단위보다 작은 값일 때만 나머지로
+            # 병합하고, 병합 여부와 무관하게 더 이상 이어붙이지 않는다.
+            if nxt_total < _BIG_UNITS[_BIG_ORDER[rank]]:
+                total += nxt_total
+                end = nxt_end
+                i = nxt_i
+            break
         results.append((total, start, end))
     return results
 
@@ -348,6 +428,53 @@ def _period_granularity(period: Optional[str]) -> Optional[str]:
     return None
 
 
+_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+
+
+def _extract_years(period: Optional[str]) -> list[int]:
+    if not period:
+        return []
+    return [int(m.group()) for m in _YEAR_RE.finditer(period)]
+
+
+def _period_year_mismatch(claim_period: Optional[str], computed_period: Optional[str], *, max_gap: int = 3) -> bool:
+    """claim이 가리키는 시점과 실제로 KOSIS에 조회된 시점(computed)의 연도가 서로 너무
+    멀리 떨어져 있으면 True — 표가 다루는 연도 범위 밖의 과거/미래 시점을 claim이
+    가리키는데, 4단계 슬롯필링이 그 시점을 못 알아듣고 조용히 다른(보통 최근) 연도로
+    대체해서 조회해버린 경우를 잡기 위함이다(2026-08-12 실측: "1955~1960년 인구 증가율"
+    claim이 is_valid_period()가 범위 표현("1955~1960년")을 못 알아듣고 걸러버려서
+    "2024년" 데이터와 그대로 비교되어 잘못된 "불일치"가 나온 사례로 확인).
+
+    claim.period/computed.period 양쪽에서 연도(4자리, 1900~2099년대)를 전부 뽑아
+    가장 가까운 한 쌍의 차이가 max_gap을 넘으면 불일치로 본다. 둘 중 하나라도 연도를
+    못 뽑으면(예: "작년"처럼 이미 절대 연도로 정규화 안 된 표현) 판단 근거가 없으므로
+    False(불일치 아님 취급 — 상위 로직이 계속 진행)를 반환한다."""
+    claim_years = _extract_years(claim_period)
+    computed_years = _extract_years(computed_period)
+    if not claim_years or not computed_years:
+        return False
+    return min(abs(cy - py) for cy in claim_years for py in computed_years) > max_gap
+
+
+def _format_period_label(period: Optional[str], prd_se: Optional[str] = None) -> str:
+    """period 문자열을 LLM 프롬프트에 넣기 전에 사람이 헷갈리지 않게 포맷한다.
+
+    prd_se(표 주기)를 안 넘기면(기본값 None) 원래 문자열 그대로 반환한다 — 6자리 숫자가
+    월(YYYYMM)인지 분기(YYYY+분기코드)인지 원래 구분할 방법이 없어서, 예전엔 LLM이 그냥
+    "2024년 1월부터 2월까지"처럼 임의로(대부분 틀리게) 월로 해석해버리는 문제가 있었다
+    (2026-08-12, 분기 표 period="202402"가 실제로는 "2024년 2분기"인데 판정 설명에
+    "1~2월"로 잘못 서술된 사례로 실측 확인). prd_se를 넘긴 호출부만 이 분기를 탄다."""
+    if not period:
+        return period or "명시 안 됨"
+    if "~" in period:
+        return "~".join(_format_period_label(p, prd_se) for p in period.split("~"))
+    if prd_se == "Q" and re.fullmatch(r"\d{6}", period):
+        return f"{period[:4]}년 {int(period[4:])}분기"
+    if prd_se == "M" and re.fullmatch(r"\d{6}", period):
+        return f"{period[:4]}년 {int(period[4:])}월"
+    return period
+
+
 def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verdict]:
     """규칙만으로 명확히 판단되면 Verdict를 반환하고, 애매하면 None(LLM 위임)을 반환."""
     claim_value = _extract_claim_number(claim)
@@ -363,7 +490,19 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
     clear_threshold = tolerance * CLEAR_GAP_MULTIPLIER
     gap_unit = "%p" if is_pct else (claim.unit or computed.unit or "")
 
-    if gap > clear_threshold:
+    # 단위가 서로 다르면(예: 톤 vs 천달러) gap 자체가 서로 다른 척도를 뺀 무의미한 숫자라,
+    # 격차가 아무리 커도 "명확한 불일치"로 규칙 확정하면 안 된다. 예전엔 "일치" 분기(아래)
+    # 에만 이 체크가 있고 "불일치" 분기엔 없어서, 단위가 안 맞는 비교도 그냥 숫자 차이가
+    # 크다는 이유만으로 확정 불일치를 내버리는 비대칭 버그가 있었다(2026-08-12, 실제
+    # 배치에서 "미국산 원유 수입량 2151만톤" claim이 "683,609,488천달러" 통계값과 그대로
+    # 비교되어 잘못된 "불일치"로 확정된 사례로 실측 확인).
+    unit_mismatch = (
+        bool(claim.unit) and bool(computed.unit) and claim.unit != computed.unit
+        and not is_pct
+    )
+    year_mismatch = _period_year_mismatch(claim.period, computed.period)
+
+    if gap > clear_threshold and not unit_mismatch and not year_mismatch:
         return Verdict(
             verdict="불일치",
             gap_type="수치",
@@ -374,7 +513,7 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
             ),
         )
 
-    if gap <= tolerance:
+    if gap <= tolerance and not unit_mismatch and not year_mismatch:
         # 엣지케이스 방어: computed.period가 아예 없으면(5단계 필드 누락 등) "시점 불일치 없음"
         # 으로 잘못 확정하지 말고 규칙 필터를 포기하고 LLM에 위임한다. (실제로 이 가드가 없으면
         # computed.period=""일 때도 "일치"로 확정 판정해버리는 버그가 있었음 — 검증 완료.)
@@ -383,11 +522,7 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
         claim_gran = _period_granularity(claim.period)
         computed_gran = _period_granularity(computed.period)
         period_mismatch = claim_gran is not None and computed_gran is not None and claim_gran != computed_gran
-        unit_mismatch = (
-            bool(claim.unit) and bool(computed.unit) and claim.unit != computed.unit
-            and not is_pct
-        )
-        if not period_mismatch and not unit_mismatch:
+        if not period_mismatch:
             return Verdict(
                 verdict="일치",
                 gap_type=None,
@@ -405,7 +540,9 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
 # 애매 경계 — HCX-003 판정
 # ---------------------------------------------------------------------------
 
-def _judge_with_llm(claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE) -> Verdict:
+def _judge_with_llm(
+    claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE, prd_se: Optional[str] = None
+) -> Verdict:
     template = _load_prompt_template()
     prompt = (
         template.replace("{claim_sentence}", claim.sentence)
@@ -416,7 +553,7 @@ def _judge_with_llm(claim: Claim, computed: ComputedResult, *, model: str = MODE
         .replace("{computed_calc_type}", computed.calc_type)
         .replace("{computed_value}", str(computed.raw_value))
         .replace("{computed_unit}", computed.unit)
-        .replace("{computed_period}", computed.period)
+        .replace("{computed_period}", _format_period_label(computed.period, prd_se))
     )
 
     # 2026-08-11 재현성 문제 대응: temperature 기본값(hcx_client의 0.2)을 두면 같은
@@ -437,16 +574,22 @@ def _judge_with_llm(claim: Claim, computed: ComputedResult, *, model: str = MODE
         raise JudgeError(f"응답 파싱 실패: {reply!r}") from e
 
 
-def judge(claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE) -> Verdict:
+def judge(
+    claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE, prd_se: Optional[str] = None
+) -> Verdict:
     """7단계 메인 진입점 (단일 Claim vs 단일 ComputedResult).
 
     1차로 코드 규칙(_rule_based_verdict)을 먼저 시도하고, 명확히 정해지지 않는
     애매한 경우에만 HCX-003을 호출합니다.
+
+    prd_se(표 주기, "Y"/"M"/"Q"): LLM에게 넘기는 판정 설명 프롬프트에서 computed.period를
+    사람이 헷갈리지 않게(월/분기 구분) 포맷하는 데만 쓰인다 — 안 넘기면(기본값 None) 기존과
+    동일하게 원본 문자열을 그대로 노출한다(하위 호환).
     """
     rule_verdict = _rule_based_verdict(claim, computed)
     if rule_verdict is not None:
         return rule_verdict
-    return _judge_with_llm(claim, computed, model=model)
+    return _judge_with_llm(claim, computed, model=model, prd_se=prd_se)
 
 
 # ---------------------------------------------------------------------------
@@ -645,3 +788,186 @@ if __name__ == "__main__":
     print(f"[케이스9 - 어림수 허용오차 폭주 방어] 100,000 -> 허용오차 ±{tol_100k}")
     assert tol_100k <= 500, f"어림수 허용오차 폭주 회귀 (기대 500 이하, 실제 {tol_100k})"
     print("  → 통과: 끝자리 0이 많아도(5개) 허용오차가 천 단위 상한(500) 안으로 제한됨.")
+
+    # 케이스 10 — 회귀 방지: "338만 4523명"/"338만4523명"처럼 만 단위 뒤에 단위 없는
+    # 1만 미만 잔여 숫자가 공백이 있든 없든 붙는 한글 복합 숫자를 하나의 값으로 합산하는지
+    # (수정 전엔 둘 다 "338만"(=3380000)만 인식하고 뒤의 "4523"을 별개 숫자로 떼어내서
+    # 3384523이 아니라 [3380000, 4523] 두 개로 쪼개지는 버그였음. 2026-08-12 수정)
+    value_with_space = _find_compound_numbers("338만 4523명")[0][0]
+    print(f"[케이스10 - 잔여 숫자 병합(공백 있음)] '338만 4523명' -> {value_with_space}")
+    assert value_with_space == 3384523.0, (
+        f"공백 있는 잔여 숫자 병합 회귀 (기대 3384523.0, 실제 {value_with_space})"
+    )
+    value_no_space = _find_compound_numbers("338만4523명")[0][0]
+    print(f"[케이스10 - 잔여 숫자 병합(공백 없음)] '338만4523명' -> {value_no_space}")
+    assert value_no_space == 3384523.0, (
+        f"공백 없는 잔여 숫자 병합 회귀 (기대 3384523.0, 실제 {value_no_space})"
+    )
+    print("  → 통과: 공백 유무와 무관하게 만 단위 뒤 잔여 숫자가 하나의 값으로 합산됨.")
+
+    # 케이스 11 — 회귀 방지: 쉼표로 구분된 표현은 케이스10의 잔여 숫자 병합과 헷갈리지
+    # 않고 그대로 유지되는지 ("360, 100"은 쉼표+공백으로 나열된 별개 숫자 두 개라
+    # 합치면 존재하지 않는 숫자를 만들어내므로 절대 합치면 안 됨)
+    thousand_sep = _find_compound_numbers("360,000명")
+    assert len(thousand_sep) == 1 and thousand_sep[0][0] == 360000.0, (
+        f"쉼표 천단위 구분 회귀 (실제 {thousand_sep})"
+    )
+    multi_sep = _find_compound_numbers("365,234,215명")
+    assert len(multi_sep) == 1 and multi_sep[0][0] == 365234215.0, (
+        f"쉼표 다단 구분 회귀 (실제 {multi_sep})"
+    )
+    listed_numbers = _find_compound_numbers("360, 100명")
+    listed_values = [v for v, _, _ in listed_numbers]
+    assert listed_values == [360.0, 100.0], (
+        f"쉼표+공백 분리 유지 회귀 (기대 [360.0, 100.0], 실제 {listed_values})"
+    )
+    print(
+        "[케이스11 - 쉼표 표현 안 깨짐] "
+        f"'360,000명'->{thousand_sep[0][0]}, '365,234,215명'->{multi_sep[0][0]}, "
+        f"'360, 100명'->{listed_values} (모두 유지)"
+    )
+    print("  → 통과: 쉼표 구분 숫자와 쉼표+공백 나열 숫자 모두 잔여 숫자 병합과 헷갈리지 않음.")
+
+    # 케이스 12 — 회귀 방지: 기존에 이미 정상 동작하던 "23만8천명"(단위 있는 조각끼리만
+    # 이어지는 복합 숫자)이 이번 수정으로 깨지지 않는지
+    existing_compound = _find_compound_numbers("23만8천명")[0][0]
+    print(f"[케이스12 - 기존 복합 숫자 파싱 안 깨짐] '23만8천명' -> {existing_compound}")
+    assert existing_compound == 238000.0, (
+        f"기존 복합 숫자 파싱 회귀 (기대 238000.0, 실제 {existing_compound})"
+    )
+    print("  → 통과: 기존에 정상 동작하던 케이스는 그대로 유지됨.")
+
+    # 케이스 13 — (여유 작업) "백" 단위 지원: "2천4백명"처럼 천/백 단위가 이어지는
+    # 복합 숫자를 정상 합산하는지. ("2천4백만"처럼 만 단위가 앞의 "2천4백" 전체에
+    # 곱해지는 trailing multiplier 표현은 그 뒤 케이스14에서 곱셈형 결합 단위 파싱
+    # 재설계로 함께 지원됨, 2026-08-12.)
+    hundred_case = _find_compound_numbers("2천4백명")[0][0]
+    print(f"[케이스13 - '백' 단위 지원] '2천4백명' -> {hundred_case}")
+    assert hundred_case == 2400.0, f"'백' 단위 지원 회귀 (기대 2400.0, 실제 {hundred_case})"
+    print("  → 통과: 천/백 단위가 이어지는 복합 숫자가 정상 합산됨.")
+
+    # 케이스 14 — 곱셈형 결합 단위 버그 수정: "3천만"처럼 "천/백"으로 만든 계수
+    # 뒤에 "만/억/조"가 곧바로 붙으면 그 단위 배수를 곱해야 하는데, 예전엔 "만" 앞에
+    # 숫자가 안 붙어 있어 _NUMBER_RE에 아예 매칭되지 않고 조용히 버려져서 ×10,000
+    # 배수가 통째로 사라지는 버그가 있었음(예: "3천만원"이 3,000으로 읽힘).
+    # 오늘 오전에 고친 덧셈형 잔여 숫자 병합("338만 4523")과는 다른 구조의 문제라
+    # 별도 파싱(_parse_term)으로 재설계함, 2026-08-12.
+    mult_cases = {
+        "3천만원": 30000000.0,
+        "5천만 명": 50000000.0,
+        "1억2천만원": 120000000.0,
+        "2백만원": 2000000.0,
+        "4천억원": 400000000000.0,
+    }
+    for text, expected in mult_cases.items():
+        actual = _find_compound_numbers(text)[0][0]
+        print(f"[케이스14 - 곱셈형 결합 단위] '{text}' -> {actual}")
+        assert actual == expected, (
+            f"곱셈형 결합 단위 파싱 실패 ('{text}' 기대 {expected}, 실제 {actual})"
+        )
+    print("  → 통과: 계수(천/백) 뒤에 곧바로 붙는 만/억/조 배수가 정확히 곱해짐,")
+    print("     그리고 억+만처럼 그룹끼리 이어지는 표현도 그룹별로 곱한 뒤 덧셈으로 합산됨.")
+
+    # 케이스 15 — 곱셈형 그룹과 덧셈형 잔여 숫자가 함께 나오는 경우: "1억2천만 3500명"
+    # 처럼 곱셈형 그룹(1억2천만=120,000,000) 뒤에 단위 없는 잔여 숫자(3500)가 더
+    # 붙는 실제 기사 표현도 두 규칙이 서로 안 깨지고 합산되는지 확인.
+    combo_value = _find_compound_numbers("1억2천만 3500명")[0][0]
+    print(f"[케이스15 - 곱셈형 그룹 + 덧셈형 잔여 숫자] '1억2천만 3500명' -> {combo_value}")
+    assert combo_value == 120003500.0, (
+        f"곱셈형+덧셈형 조합 파싱 실패 (기대 120003500.0, 실제 {combo_value})"
+    )
+    print("  → 통과: 곱셈형 그룹 합산 뒤에 잔여 숫자가 한 번 더 정확히 병합됨.")
+
+    # 케이스 16 — 회귀 방지: 케이스10/11(덧셈형 잔여 숫자 병합, 쉼표 분리 유지)이
+    # 이번 곱셈형 재설계로 깨지지 않는지 재확인
+    regress_with_space = _find_compound_numbers("338만 4523명")[0][0]
+    regress_no_space = _find_compound_numbers("338만4523명")[0][0]
+    regress_listed = [v for v, _, _ in _find_compound_numbers("360, 100명")]
+    regress_simple = _find_compound_numbers("1200만원")[0][0]
+    print(
+        "[케이스16 - 곱셈형 재설계 이후 회귀 확인] "
+        f"'338만 4523명'->{regress_with_space}, '338만4523명'->{regress_no_space}, "
+        f"'360, 100명'->{regress_listed}, '1200만원'->{regress_simple}"
+    )
+    assert regress_with_space == 3384523.0, "338만 4523 병합 회귀"
+    assert regress_no_space == 3384523.0, "338만4523 병합 회귀"
+    assert regress_listed == [360.0, 100.0], "쉼표+공백 분리 유지 회귀"
+    assert regress_simple == 12000000.0, "단순 만 단위 파싱 회귀"
+    print("  → 통과: 덧셈형 잔여 숫자 병합/쉼표 분리 유지/단순 만 단위 파싱 모두 그대로 유지됨.")
+
+    # 케이스 17 — "적자전환"처럼 문맥 기반 증감 표현은 키워드 나열로 다 못 잡으므로,
+    # 메인 해법은 claim_extractor_prompt.txt의 few-shot 예시로 2단계 LLM이
+    # comparison_operator를 직접 채우게 하는 것(2026-08-12). 여기서는 2단계가
+    # comparison_operator="감소"를 정확히 채웠다고 가정했을 때(value는 설계대로
+    # 부호 없이 320억원 크기 그대로), _apply_direction이 그 신호를 최우선으로 써서
+    # 음수로 뒤집는지 확인한다 — LLM 호출 없이 코드 경로만 검증 가능한 부분.
+    claim17 = Claim(
+        sentence="영업이익이 -320억원 적자전환했다.",
+        claim_type="규모", period="올해 3분기", unit="원", population="영업이익",
+        value=32000000000.0, comparison_operator="감소",
+    )
+    claim17_value = _extract_claim_number(claim17)
+    print(f"[케이스17 - '적자전환' comparison_operator 부호 반영] 추출값: {claim17_value}")
+    assert claim17_value == -32000000000.0, (
+        f"comparison_operator='감소' 부호 반영 회귀 (기대 -32000000000.0, 실제 {claim17_value})"
+    )
+    print("  → 통과: comparison_operator='감소'가 채워져 있으면 '적자전환' 같은 문맥 표현도")
+    print("     키워드 목록 없이 음수로 정확히 뒤집힘 (2단계 few-shot이 메인 해법, 아래 참고).")
+
+    # 케이스 18 — 회귀 방지: 단위(unit) 검증 비대칭 버그 수정 확인. 실제 배치에서 재현된
+    # "미국산 원유 수입량 2151만톤" claim(unit="톤")이 "683,609,488천달러"(unit="천달러")
+    # 통계값과 비교되어, 단위가 완전히 다른데도 그냥 숫자 차이가 크다는 이유만으로 확정
+    # "불일치"가 나던 버그 — 톤과 달러는 애초에 비교 불가능하므로 규칙으로 확정하지 않고
+    # LLM에 위임(None)해야 한다.
+    claim18 = Claim(
+        sentence="지난해 한국이 수입한 미국산 원유는 약 2151만t을 기록했다.",
+        claim_type="규모", period="2024년", unit="톤", population="미국산 원유 수입량",
+        value=21510000.0,
+    )
+    computed18 = ComputedResult(calc_type="단순조회", raw_value=683609488.0, unit="천달러", period="2024")
+    result18 = _rule_based_verdict(claim18, computed18)
+    print(f"[케이스18 - 단위 비대칭 버그 수정] 톤 vs 천달러 비교 결과: {result18}")
+    assert result18 is None, (
+        f"단위 불일치 회귀 — 규칙 기반으로 확정 판정하면 안 되는데 {result18}이 나옴"
+    )
+    print("  → 통과: 단위가 다르면 격차가 커도 '불일치'로 확정하지 않고 LLM에 위임함")
+    print("     ('일치' 쪽에만 있던 단위 검증을 '불일치' 쪽에도 대칭으로 추가, 2026-08-12).")
+
+    # 케이스 19 — 회귀 방지: 표 데이터 범위 밖 시점 비교 버그 수정 확인. 실제 배치에서
+    # 재현된 "1955~1960년 인구 증가율" claim(claim.period="1955~1960년")이 슬롯필링
+    # 단계에서 그 범위 표현을 못 알아듣고 "2024년"(computed.period="2023~2024") 데이터로
+    # 대체 조회되어, 완전히 다른 시대의 값끼리 비교되고도 확정 "불일치"가 나던 버그.
+    claim19 = Claim(
+        sentence="이전까진 5년 새 6%가량 늘던 인구수는 1955~1960년 16% 넘게 늘었다.",
+        claim_type="증감률", period="1955~1960년", unit="%", population="전국 인구", value=16.0,
+    )
+    computed19 = ComputedResult(calc_type="증감률", raw_value=-0.2, unit="%", period="2023~2024")
+    result19 = _rule_based_verdict(claim19, computed19)
+    print(f"[케이스19 - 연도 범위 밖 시점 비교 버그 수정] 1955~1960 vs 2023~2024 비교 결과: {result19}")
+    assert result19 is None, (
+        f"연도 범위 밖 비교 회귀 — 규칙 기반으로 확정 판정하면 안 되는데 {result19}이 나옴"
+    )
+    print("  → 통과: 시점이 서로 너무 멀리 떨어져 있으면(63년 차이) '불일치'로 확정하지 않고")
+    print("     LLM에 위임함 — 이 케이스는 사실 원인이 슬롯필링이 범위 표현을 놓친 것이므로")
+    print("     LLM도 결국 판단불가로 처리하는 게 맞지만, 최소한 '틀린 확정 판정'은 막음.")
+
+    # 회귀 방지: 정상적인 장기 비교(claim과 computed가 같은 연도를 하나라도 공유)는 그대로
+    # 확정 판정되는지 — "30년 전인 1994년의 절반 수준" 같은 정상 케이스가 이번 수정으로
+    # 덩달아 막히면 안 된다.
+    claim19b = Claim(
+        sentence="작년 소비량은 30년 전인 1994년(108.3kg)의 절반 수준이다.",
+        claim_type="비교", period="2024년", unit="kg", population="국민 1인당", value=55.8,
+    )
+    computed19b = ComputedResult(calc_type="증감", raw_value=-52.5, unit="kg", period="1994~2024")
+    result19b = _rule_based_verdict(claim19b, computed19b)
+    print(f"[케이스19b - 정상 장기비교 회귀 확인] 2024 vs 1994~2024(연도 겹침) -> {result19b is not None}")
+    assert result19b is not None, "정상 장기 비교(연도가 computed.period 안에 포함)까지 막혀버림 — 회귀"
+    print("  → 통과: computed.period 안에 claim이 가리키는 연도가 포함돼 있으면(2024) 정상 판정됨.")
+
+    print("\n=== 2026-08-12 신규: 분기/월 period 라벨링 버그 수정 회귀 테스트 ===")
+    assert _format_period_label("202402", prd_se="Q") == "2024년 2분기", _format_period_label("202402", prd_se="Q")
+    assert _format_period_label("202402", prd_se="M") == "2024년 2월", _format_period_label("202402", prd_se="M")
+    assert _format_period_label("202402") == "202402", "prd_se 안 넘기면 원본 그대로여야 함(하위 호환)"
+    print("[period 라벨 포맷] '202402'+Q -> '2024년 2분기', +M -> '2024년 2월', prd_se 없으면 원본 유지 ✅")
+    print("  → 통과: 분기 표의 202402가 판정 설명 프롬프트에서 더 이상 '월'로 오인식되지 않음")
+    print("     (2026-08-12, 中 1분기 GDP 기사에서 실측 확인된 버그).")
