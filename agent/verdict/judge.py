@@ -264,12 +264,22 @@ def _decimal_places(value: float) -> int:
     return len(frac)
 
 
+# 실측된 정상 반올림 사례(9,384,000 / 28,041,000 / 3,557,000)는 전부 끝자리 0이 정확히
+# 3개(천 단위 반올림)였다. 끝자리 0 개수에 상한을 안 두면 "100,000명"(0이 5개)처럼 흔한
+# 어림수에서 허용오차가 ±50,000(상대오차 50%)까지 폭주해서 사실상 판정 기능이 무력화되는
+# 버그가 있었음(2026-08-11, 엣지케이스 예측 후 실측으로 확인) — 원인은 끝자리 0이 많을수록
+# "반올림 폭이 크다"고 그대로 믿어버린 것. 3자리(천 단위)까지만 반올림 근거로 인정하고
+# 그 이상은 "우연히 딱 떨어지는 값"일 수도 있다고 보수적으로 취급해서 상한을 둔다.
+_MAX_TRAILING_ZEROS_FOR_TOLERANCE = 3
+
+
 def _trailing_zero_count(value: float) -> int:
-    """정수부 끝에 붙은 0 개수. "9384000"처럼 큰 수 끝이 0으로 딱 떨어지면 반올림된
-    값(예: 천 단위 반올림)일 가능성이 높다고 본다."""
+    """정수부 끝에 붙은 0 개수(최대 _MAX_TRAILING_ZEROS_FOR_TOLERANCE까지만). "9384000"처럼
+    큰 수 끝이 0으로 딱 떨어지면 반올림된 값(예: 천 단위 반올림)일 가능성이 높다고 본다."""
     int_text = str(abs(int(round(value))))
     stripped = int_text.rstrip("0")
-    return len(int_text) - len(stripped) if int_text != "0" else 0
+    raw_count = len(int_text) - len(stripped) if int_text != "0" else 0
+    return min(raw_count, _MAX_TRAILING_ZEROS_FOR_TOLERANCE)
 
 
 def _implied_tolerance(claim_value: float, is_percent: bool) -> float:
@@ -626,3 +636,12 @@ if __name__ == "__main__":
     print(f"[케이스8 - gap_type 영어 응답 정규화] 'population' -> {normalized!r}")
     assert normalized == "모집단", f"gap_type 영어 정규화 회귀 (기대 '모집단', 실제 {normalized!r})"
     print("  → 통과: 영어 응답도 허용된 한글 gap_type으로 정규화됨.")
+
+    # 케이스 9 — 회귀 방지: "100,000명"처럼 끝자리 0이 많은 어림수에서 허용오차가
+    # 폭주하지 않는지 (엣지케이스 예측 후 실측으로 확인된 버그 — 상한 없이 끝자리 0
+    # 개수를 그대로 반올림 단위로 쓰면 "10만명" 주장의 허용오차가 ±50,000(상대오차 50%)
+    # 까지 벌어져 사실상 판정이 무력화됐었음. 2026-08-11)
+    tol_100k = _implied_tolerance(100000.0, is_percent=False)
+    print(f"[케이스9 - 어림수 허용오차 폭주 방어] 100,000 -> 허용오차 ±{tol_100k}")
+    assert tol_100k <= 500, f"어림수 허용오차 폭주 회귀 (기대 500 이하, 실제 {tol_100k})"
+    print("  → 통과: 끝자리 0이 많아도(5개) 허용오차가 천 단위 상한(500) 안으로 제한됨.")

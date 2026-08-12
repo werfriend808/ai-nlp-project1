@@ -43,6 +43,13 @@ LEGACY_V1_MODELS = {"HCX-003", "HCX-DASH-001"}
 # 필드 자체를 빼야 200 OK). 추론 단계 때문에 길이를 모델이 자체 결정하는 것으로 보임.
 NO_MAX_TOKENS_MODELS = {"HCX-007"}
 
+# LEGACY_V1_MODELS(구버전 v1 엔드포인트)는 temperature=0.0을 그대로 보내면 "400 Bad
+# Request"로 거부된다(실제로 확인됨, 2026-08-11 — judge.py가 재현성을 위해 temperature=0.0을
+# 넘기면서 7단계 LLM 위임 경로가 전부 깨지는 걸로 재현됨). v3 엔드포인트(HCX-007 등)는
+# temperature=0.0을 그대로 받아들여서 v1 모델에만 해당하는 문제다. 0에 아주 가까운 값으로
+# 살짝 올려서, 재현성은 사실상 유지하면서 API 거부는 피한다.
+_MIN_TEMPERATURE_FOR_V1 = 0.01
+
 
 class HcxApiError(RuntimeError):
     """CLOVA Studio 호출 실패 (HTTP 에러 또는 예상과 다른 응답 형식)."""
@@ -82,18 +89,22 @@ def call_hcx(
         "X-NCP-CLOVASTUDIO-REQUEST-ID": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
+    api_version = "v1" if model in LEGACY_V1_MODELS else "v3"
+    effective_temperature = (
+        max(temperature, _MIN_TEMPERATURE_FOR_V1) if api_version == "v1" else temperature
+    )
+
     body = {
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
         "topP": 0.8,
-        "temperature": temperature,
+        "temperature": effective_temperature,
     }
     if model not in NO_MAX_TOKENS_MODELS:
         body["maxTokens"] = max_tokens
 
-    api_version = "v1" if model in LEGACY_V1_MODELS else "v3"
     url = f"{CLOVASTUDIO_HOST}/{api_version}/chat-completions/{model}"
 
     response = requests.post(url, headers=headers, json=body, timeout=timeout)
