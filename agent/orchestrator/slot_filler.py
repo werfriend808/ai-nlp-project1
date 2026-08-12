@@ -7,6 +7,7 @@ from agent.interfaces import Slots
 from agent.orchestrator.clarify_rules import REQUIRED_SLOTS
 import pandas as pd
 from datetime import datetime, date
+from typing import Optional
 
 
 load_dotenv()
@@ -147,8 +148,54 @@ _N_YEARS_AGO_RE = re.compile(r"(\d+)년\s*여?\s*전")
 # 4자리 숫자만 허용하다 보니 멀쩡한 절대 연도가 그냥 버려지던 문제를 여기서 먼저 벗겨낸다.
 _ABSOLUTE_YEAR_WITH_SUFFIX_RE = re.compile(r"(\d{4})년")
 
+# ---------------------------------------------------------------------------
+# 표 주기(prdSe) 인식 — 2026-08-12 실측 확인: 매칭된 표가 월간(M)/분기(Q)인데도
+# slot_filler는 표 주기를 아예 모른 채 무조건 연도 4자리만 만들어서, KOSIS API가
+# 요구하는 형식(YYYYMM/YYYY+분기2자리)과 안 맞아 카탈로그 64개 중 32개(50%)가 API 호출
+# 단계에서 형식 오류로 100% 실패하던 문제를 고친다. prdSe는 table_params.json에 표별로
+# 미리 검증돼 저장돼 있는 값이라(3단계가 이미 매칭한 표의 table_id로 조회), 호출부가
+# 이 값을 여기까지 넘겨줘야 한다.
+# ---------------------------------------------------------------------------
 
-def normalize_time_expressions(extracted: dict, article_date: date) -> dict:
+_MONTH_OFFSET_KEYWORDS = {
+    "지난달": -1, "전달": -1, "전월": -1, "당월": 0, "이번달": 0, "다음달": 1,
+}
+_QUARTER_OFFSET_KEYWORDS = {
+    "지난분기": -1, "전분기": -1, "직전분기": -1, "당분기": 0,
+}
+
+
+def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
+    total = year * 12 + (month - 1) + delta
+    return total // 12, total % 12 + 1
+
+
+def _quarter_of(month: int) -> int:
+    return (month - 1) // 3 + 1
+
+
+def _add_quarters(year: int, quarter: int, delta: int) -> tuple[int, int]:
+    total = year * 4 + (quarter - 1) + delta
+    return total // 4, total % 4 + 1
+
+
+def _format_month(year: int, month: int) -> str:
+    return f"{year:04d}{month:02d}"
+
+
+def _format_quarter(year: int, quarter: int) -> str:
+    return f"{year:04d}{quarter:02d}"
+
+
+def normalize_time_expressions(
+    extracted: dict, article_date: date, *, prd_se: Optional[str] = None
+) -> dict:
+    """상대 시점 표현을 절대 시점 문자열로 바꾼다.
+
+    prd_se(표 주기, "Y"/"M"/"Q")를 안 넘기면(기본값 None) 이전과 완전히 동일하게
+    무조건 연도 4자리만 만든다 — 기존 호출부(연간 표만 다루던 코드)는 안 바꿔도 그대로
+    동작한다. prd_se="M"/"Q"를 넘긴 호출부만 아래 새 분기를 탄다.
+    """
     period_val = extracted.get("period")
     if not period_val:
         return extracted
@@ -156,45 +203,95 @@ def normalize_time_expressions(extracted: dict, article_date: date) -> dict:
     period_str = str(period_val)
 
     # -1) "2024년"처럼 절대 연도에 "년" 접미사가 붙은 경우 먼저 벗겨낸다 (상대 표현 아님).
+    # 표 주기와 무관하게 그대로 둔다 — "2024년"은 특정 달을 가리키는 표현이 아니라 연간
+    # 집계 개념이라, 월/분기로 억지로 쪼개면 오히려 틀린 값이 된다(별도 판단 필요 영역).
     absolute_year_match = _ABSOLUTE_YEAR_WITH_SUFFIX_RE.fullmatch(period_str)
     if absolute_year_match:
         extracted["period"] = absolute_year_match.group(1)
         return extracted
 
-    # 0) "N년 전"(숫자 가변) — 연 단위 계산 가능, 파이썬으로 직접 계산
+    # 0) "N년 전"(숫자 가변) — 위와 같은 이유로 연 단위 그대로 유지.
     n_years_ago_match = _N_YEARS_AGO_RE.search(period_str)
     if n_years_ago_match:
         extracted["period"] = str(article_date.year - int(n_years_ago_match.group(1)))
         return extracted
 
-    # 1) 연 단위 표현은 파이썬으로 직접 계산 (LLM 호출 안 함)
+    # 1-M) 표가 월간이면, 월 단위 표현("지난달" 등)과 "작년"류(연 단위 표현)를 파이썬으로
+    # 직접 월 단위로 계산한다(LLM 호출 없음). "작년"처럼 원래 연 단위인 표현도 월간 표에서는
+    # 한국 경제기사 관용("전년동월 대비")에 따라 "같은 달, N년 전"으로 해석한다 — 완벽한
+    # 해법은 아니고("작년 한 해 전체"를 뜻하는 극소수 케이스는 못 잡음), 실측상 압도적
+    # 다수가 이 해석과 일치해서 기본값으로 채택.
+    if prd_se == "M":
+        for kw, delta in _MONTH_OFFSET_KEYWORDS.items():
+            if kw in period_str:
+                y, m = _add_months(article_date.year, article_date.month, delta)
+                extracted["period"] = _format_month(y, m)
+                return extracted
+        for kw, offset in RELATIVE_YEAR_OFFSET.items():
+            if kw in period_str:
+                extracted["period"] = _format_month(article_date.year + offset, article_date.month)
+                return extracted
+
+    # 1-Q) 표가 분기면 마찬가지로 분기 단위로 직접 계산.
+    if prd_se == "Q":
+        current_quarter = _quarter_of(article_date.month)
+        for kw, delta in _QUARTER_OFFSET_KEYWORDS.items():
+            if kw in period_str:
+                y, q = _add_quarters(article_date.year, current_quarter, delta)
+                extracted["period"] = _format_quarter(y, q)
+                return extracted
+        for kw, offset in RELATIVE_YEAR_OFFSET.items():
+            if kw in period_str:
+                extracted["period"] = _format_quarter(article_date.year + offset, current_quarter)
+                return extracted
+
+    # 1) 연 단위 표현은 파이썬으로 직접 계산 (LLM 호출 안 함) — prd_se가 Y/None이거나,
+    # 위 M/Q 분기에서 못 잡은 나머지(예: 월간 표인데 "지난주"처럼 월/분기 어느 쪽도 아닌
+    # 표현)의 폴백.
     for kw, offset in RELATIVE_YEAR_OFFSET.items():
         if kw in period_str:
             extracted["period"] = str(article_date.year + offset)
             return extracted
 
-    # 2) 월/주 단위처럼 연 단위로 딱 떨어지지 않는 애매한 표현만 LLM(HCX-003)에 위임
+    # 2) 그 외 애매한 표현("지난주" 등)만 LLM(HCX-003)에 위임 — prd_se에 따라 요청 형식을
+    # 동적으로 바꾼다. 예전엔 무조건 "숫자 4자리만"으로 강제해서, 월간/분기 표에 필요한
+    # 6자리 형식(YYYYMM/YYYY+분기)을 요청할 방법이 아예 없었다.
     if any(kw in period_str for kw in RELATIVE_TIME_KEYWORDS):
+        if prd_se == "M":
+            format_instruction = "6자리 연월(YYYYMM, 예: 202407)"
+            digit_count = 6
+        elif prd_se == "Q":
+            format_instruction = "6자리 연도+분기코드(YYYY+01~04, 예: 202403=2024년 3분기)"
+            digit_count = 6
+        else:
+            format_instruction = "숫자 4자리(예: 2024)"
+            digit_count = 4
+
         prompt = f"""이 기사는 {article_date.year}년 {article_date.month}월에 작성되었습니다.
-"{period_val}"라는 표현을 이 기사 작성 시점 기준으로 절대 연도로 바꾸세요.
+"{period_val}"라는 표현을 이 기사 작성 시점 기준으로 절대 시점으로 바꾸세요.
 
 규칙:
-- 반드시 숫자 4자리(예: 2024)만 응답하세요.
+- 반드시 {format_instruction}만 응답하세요.
 - 설명, 문장, 다른 텍스트를 절대 포함하지 마세요.
-- 오직 연도 숫자만 출력하세요.
+- 오직 숫자만 출력하세요.
 """
         absolute = call_hcx(prompt)
-        match = re.search(r"\d{4}", absolute)
+        match = re.search(rf"\d{{{digit_count}}}", absolute)
         extracted["period"] = match.group() if match else absolute.strip()
 
     return extracted
 
 def is_valid_period(value) -> bool:
-    """period 값이 그럴듯한지 검증 (연도 4자리이거나 상대시점 키워드 포함)"""
+    """period 값이 그럴듯한지 검증 (연도 4자리, 월/분기 6자리, 또는 상대시점 키워드 포함)"""
     if value is None:
         return True
     s = str(value)
     if re.fullmatch(r"\d{4}", s):
+        return True
+    # 6자리는 YYYYMM(월간) 또는 YYYY+분기코드(분기) 둘 다 이 자리에서는 형식만 보고
+    # 통과시킨다 — 어느 쪽 의미인지는 prdSe 문맥에 달려있고(3~5단계가 판단), 여기선 그냥
+    # normalize_time_expressions가 만들어낸 6자리 결과를 거부하지만 않으면 된다.
+    if re.fullmatch(r"\d{6}", s):
         return True
     if any(kw in s for kw in RELATIVE_TIME_KEYWORDS):
         return True
@@ -220,7 +317,12 @@ def is_region_grounded(value, user_input: str) -> bool:
     return _normalize_whitespace(str(value)) in _normalize_whitespace(user_input)
 
 
-def fill_slots(user_input: str, existing_slots: dict, article_date: date) -> dict:
+def fill_slots(
+    user_input: str, existing_slots: dict, article_date: date, *, prd_se: Optional[str] = None
+) -> dict:
+    """prd_se: 매칭된 표의 주기("Y"/"M"/"Q", table_params.json 조회 결과). 안 넘기면(기본값
+    None) 기존과 동일하게 연 단위로만 시점을 계산한다 — 호출부가 표 정보를 아직 안 넘기는
+    경우(예: 표 매칭 전 단계)에도 그대로 동작해야 하므로 하위 호환을 위해 옵션으로 둔다."""
     prompt = build_extraction_prompt(user_input)
     raw = call_hcx(prompt)
 
@@ -229,7 +331,7 @@ def fill_slots(user_input: str, existing_slots: dict, article_date: date) -> dic
     except json.JSONDecodeError:
         extracted = extract_json_fallback(raw)
 
-    extracted = normalize_time_expressions(extracted, article_date)
+    extracted = normalize_time_expressions(extracted, article_date, prd_se=prd_se)
 
     merged = dict(existing_slots)
     for slot in REQUIRED_SLOTS:
@@ -263,10 +365,48 @@ if __name__ == "__main__":
     assert result2.get("region") == "서울", "❌ region이 안 채워짐!"
     print("✅ period 오염 없음 확인\n")
 
-    print("=== 기존 테스트: 작년 → 2024년 계산 확인 ===")
+    print("=== 기존 테스트: 작년 → 2024년 계산 확인 (prd_se 안 넘기면 그대로 연 단위) ===")
     result3 = fill_slots("작년에 이런 사건이 몇 건 있었어?", {}, date(2025, 1, 1))
     print(result3)
     assert result3.get("period") == "2024", "❌ 작년 계산이 틀림!"
     print("✅ 작년 계산 정확\n")
+
+    print("=== 2026-08-12 신규: 표 주기(prd_se) 인식 회귀 테스트 ===")
+    # 케이스 M-1: 월간 표(M)에서 "지난달" → 기사 작성월 기준 전월, YYYYMM 6자리
+    r_m1 = normalize_time_expressions({"period": "지난달"}, date(2025, 3, 15), prd_se="M")
+    assert r_m1["period"] == "202502", f"❌ 지난달(월간) 계산 틀림: {r_m1}"
+    print(f"[M-1] 지난달(2025년3월 작성 기준) -> {r_m1['period']} ✅")
+
+    # 케이스 M-2: 월간 표에서 "작년"(연 단위 표현) → 한국 경제기사 관용대로 "전년 동월"
+    r_m2 = normalize_time_expressions({"period": "작년"}, date(2025, 3, 15), prd_se="M")
+    assert r_m2["period"] == "202403", f"❌ 작년(월간, 전년동월) 계산 틀림: {r_m2}"
+    print(f"[M-2] 작년(월간표, 2025년3월 작성 기준) -> {r_m2['period']} (전년동월) ✅")
+
+    # 케이스 M-3: 연도 경계(1월 작성 시 "지난달"은 전년 12월)
+    r_m3 = normalize_time_expressions({"period": "지난달"}, date(2025, 1, 15), prd_se="M")
+    assert r_m3["period"] == "202412", f"❌ 연도 경계 지난달 계산 틀림: {r_m3}"
+    print(f"[M-3] 지난달(2025년1월 작성, 연도 경계) -> {r_m3['period']} ✅")
+
+    # 케이스 Q-1: 분기 표(Q)에서 "지난분기" → 기사 작성월이 속한 분기 기준 전분기
+    r_q1 = normalize_time_expressions({"period": "지난분기"}, date(2025, 4, 10), prd_se="Q")
+    assert r_q1["period"] == "202501", f"❌ 지난분기 계산 틀림: {r_q1}"
+    print(f"[Q-1] 지난분기(2025년4월=2분기 작성 기준) -> {r_q1['period']} ✅")
+
+    # 케이스 Q-2: 연도 경계(1분기 작성 시 "지난분기"는 전년 4분기)
+    r_q2 = normalize_time_expressions({"period": "지난분기"}, date(2025, 2, 10), prd_se="Q")
+    assert r_q2["period"] == "202404", f"❌ 분기 연도 경계 계산 틀림: {r_q2}"
+    print(f"[Q-2] 지난분기(2025년2월=1분기 작성, 연도 경계) -> {r_q2['period']} ✅")
+
+    # 케이스 5-6-1/5-6-2 (어제 실배치 실패 재현): DT_121Y006/DT_343_2010_S0027 둘 다
+    # 월간(M) 표인데 슬롯필링이 연도만 채워서 KosisApiError가 났던 사례 — prd_se="M"을
+    # 넘기면 더 이상 4자리 연도가 안 나와야 한다.
+    r_regr1 = normalize_time_expressions({"period": "작년"}, date(2025, 6, 1), prd_se="M")
+    assert re.fullmatch(r"\d{6}", r_regr1["period"]), f"❌ 월간표 회귀: {r_regr1}"
+    print(f"[회귀] DT_121Y006류(월간) 재현 — 이제 6자리로 나옴: {r_regr1['period']} ✅")
+
+    print("\n=== is_valid_period가 6자리(YYYYMM/YYYY+분기)도 통과시키는지 확인 ===")
+    assert is_valid_period("202502") is True, "❌ 6자리 period가 무효 처리됨!"
+    assert is_valid_period("2025") is True
+    print("✅ 6자리 period 형식 통과 확인\n")
 
     print("모든 테스트 통과 🎉")
