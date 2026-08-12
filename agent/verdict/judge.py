@@ -428,6 +428,53 @@ def _period_granularity(period: Optional[str]) -> Optional[str]:
     return None
 
 
+_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
+
+
+def _extract_years(period: Optional[str]) -> list[int]:
+    if not period:
+        return []
+    return [int(m.group()) for m in _YEAR_RE.finditer(period)]
+
+
+def _period_year_mismatch(claim_period: Optional[str], computed_period: Optional[str], *, max_gap: int = 3) -> bool:
+    """claim이 가리키는 시점과 실제로 KOSIS에 조회된 시점(computed)의 연도가 서로 너무
+    멀리 떨어져 있으면 True — 표가 다루는 연도 범위 밖의 과거/미래 시점을 claim이
+    가리키는데, 4단계 슬롯필링이 그 시점을 못 알아듣고 조용히 다른(보통 최근) 연도로
+    대체해서 조회해버린 경우를 잡기 위함이다(2026-08-12 실측: "1955~1960년 인구 증가율"
+    claim이 is_valid_period()가 범위 표현("1955~1960년")을 못 알아듣고 걸러버려서
+    "2024년" 데이터와 그대로 비교되어 잘못된 "불일치"가 나온 사례로 확인).
+
+    claim.period/computed.period 양쪽에서 연도(4자리, 1900~2099년대)를 전부 뽑아
+    가장 가까운 한 쌍의 차이가 max_gap을 넘으면 불일치로 본다. 둘 중 하나라도 연도를
+    못 뽑으면(예: "작년"처럼 이미 절대 연도로 정규화 안 된 표현) 판단 근거가 없으므로
+    False(불일치 아님 취급 — 상위 로직이 계속 진행)를 반환한다."""
+    claim_years = _extract_years(claim_period)
+    computed_years = _extract_years(computed_period)
+    if not claim_years or not computed_years:
+        return False
+    return min(abs(cy - py) for cy in claim_years for py in computed_years) > max_gap
+
+
+def _format_period_label(period: Optional[str], prd_se: Optional[str] = None) -> str:
+    """period 문자열을 LLM 프롬프트에 넣기 전에 사람이 헷갈리지 않게 포맷한다.
+
+    prd_se(표 주기)를 안 넘기면(기본값 None) 원래 문자열 그대로 반환한다 — 6자리 숫자가
+    월(YYYYMM)인지 분기(YYYY+분기코드)인지 원래 구분할 방법이 없어서, 예전엔 LLM이 그냥
+    "2024년 1월부터 2월까지"처럼 임의로(대부분 틀리게) 월로 해석해버리는 문제가 있었다
+    (2026-08-12, 분기 표 period="202402"가 실제로는 "2024년 2분기"인데 판정 설명에
+    "1~2월"로 잘못 서술된 사례로 실측 확인). prd_se를 넘긴 호출부만 이 분기를 탄다."""
+    if not period:
+        return period or "명시 안 됨"
+    if "~" in period:
+        return "~".join(_format_period_label(p, prd_se) for p in period.split("~"))
+    if prd_se == "Q" and re.fullmatch(r"\d{6}", period):
+        return f"{period[:4]}년 {int(period[4:])}분기"
+    if prd_se == "M" and re.fullmatch(r"\d{6}", period):
+        return f"{period[:4]}년 {int(period[4:])}월"
+    return period
+
+
 def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verdict]:
     """규칙만으로 명확히 판단되면 Verdict를 반환하고, 애매하면 None(LLM 위임)을 반환."""
     claim_value = _extract_claim_number(claim)
@@ -443,7 +490,19 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
     clear_threshold = tolerance * CLEAR_GAP_MULTIPLIER
     gap_unit = "%p" if is_pct else (claim.unit or computed.unit or "")
 
-    if gap > clear_threshold:
+    # 단위가 서로 다르면(예: 톤 vs 천달러) gap 자체가 서로 다른 척도를 뺀 무의미한 숫자라,
+    # 격차가 아무리 커도 "명확한 불일치"로 규칙 확정하면 안 된다. 예전엔 "일치" 분기(아래)
+    # 에만 이 체크가 있고 "불일치" 분기엔 없어서, 단위가 안 맞는 비교도 그냥 숫자 차이가
+    # 크다는 이유만으로 확정 불일치를 내버리는 비대칭 버그가 있었다(2026-08-12, 실제
+    # 배치에서 "미국산 원유 수입량 2151만톤" claim이 "683,609,488천달러" 통계값과 그대로
+    # 비교되어 잘못된 "불일치"로 확정된 사례로 실측 확인).
+    unit_mismatch = (
+        bool(claim.unit) and bool(computed.unit) and claim.unit != computed.unit
+        and not is_pct
+    )
+    year_mismatch = _period_year_mismatch(claim.period, computed.period)
+
+    if gap > clear_threshold and not unit_mismatch and not year_mismatch:
         return Verdict(
             verdict="불일치",
             gap_type="수치",
@@ -454,7 +513,7 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
             ),
         )
 
-    if gap <= tolerance:
+    if gap <= tolerance and not unit_mismatch and not year_mismatch:
         # 엣지케이스 방어: computed.period가 아예 없으면(5단계 필드 누락 등) "시점 불일치 없음"
         # 으로 잘못 확정하지 말고 규칙 필터를 포기하고 LLM에 위임한다. (실제로 이 가드가 없으면
         # computed.period=""일 때도 "일치"로 확정 판정해버리는 버그가 있었음 — 검증 완료.)
@@ -463,11 +522,7 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
         claim_gran = _period_granularity(claim.period)
         computed_gran = _period_granularity(computed.period)
         period_mismatch = claim_gran is not None and computed_gran is not None and claim_gran != computed_gran
-        unit_mismatch = (
-            bool(claim.unit) and bool(computed.unit) and claim.unit != computed.unit
-            and not is_pct
-        )
-        if not period_mismatch and not unit_mismatch:
+        if not period_mismatch:
             return Verdict(
                 verdict="일치",
                 gap_type=None,
@@ -485,7 +540,9 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
 # 애매 경계 — HCX-003 판정
 # ---------------------------------------------------------------------------
 
-def _judge_with_llm(claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE) -> Verdict:
+def _judge_with_llm(
+    claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE, prd_se: Optional[str] = None
+) -> Verdict:
     template = _load_prompt_template()
     prompt = (
         template.replace("{claim_sentence}", claim.sentence)
@@ -496,7 +553,7 @@ def _judge_with_llm(claim: Claim, computed: ComputedResult, *, model: str = MODE
         .replace("{computed_calc_type}", computed.calc_type)
         .replace("{computed_value}", str(computed.raw_value))
         .replace("{computed_unit}", computed.unit)
-        .replace("{computed_period}", computed.period)
+        .replace("{computed_period}", _format_period_label(computed.period, prd_se))
     )
 
     # 2026-08-11 재현성 문제 대응: temperature 기본값(hcx_client의 0.2)을 두면 같은
@@ -517,16 +574,22 @@ def _judge_with_llm(claim: Claim, computed: ComputedResult, *, model: str = MODE
         raise JudgeError(f"응답 파싱 실패: {reply!r}") from e
 
 
-def judge(claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE) -> Verdict:
+def judge(
+    claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE, prd_se: Optional[str] = None
+) -> Verdict:
     """7단계 메인 진입점 (단일 Claim vs 단일 ComputedResult).
 
     1차로 코드 규칙(_rule_based_verdict)을 먼저 시도하고, 명확히 정해지지 않는
     애매한 경우에만 HCX-003을 호출합니다.
+
+    prd_se(표 주기, "Y"/"M"/"Q"): LLM에게 넘기는 판정 설명 프롬프트에서 computed.period를
+    사람이 헷갈리지 않게(월/분기 구분) 포맷하는 데만 쓰인다 — 안 넘기면(기본값 None) 기존과
+    동일하게 원본 문자열을 그대로 노출한다(하위 호환).
     """
     rule_verdict = _rule_based_verdict(claim, computed)
     if rule_verdict is not None:
         return rule_verdict
-    return _judge_with_llm(claim, computed, model=model)
+    return _judge_with_llm(claim, computed, model=model, prd_se=prd_se)
 
 
 # ---------------------------------------------------------------------------
@@ -850,3 +913,61 @@ if __name__ == "__main__":
     )
     print("  → 통과: comparison_operator='감소'가 채워져 있으면 '적자전환' 같은 문맥 표현도")
     print("     키워드 목록 없이 음수로 정확히 뒤집힘 (2단계 few-shot이 메인 해법, 아래 참고).")
+
+    # 케이스 18 — 회귀 방지: 단위(unit) 검증 비대칭 버그 수정 확인. 실제 배치에서 재현된
+    # "미국산 원유 수입량 2151만톤" claim(unit="톤")이 "683,609,488천달러"(unit="천달러")
+    # 통계값과 비교되어, 단위가 완전히 다른데도 그냥 숫자 차이가 크다는 이유만으로 확정
+    # "불일치"가 나던 버그 — 톤과 달러는 애초에 비교 불가능하므로 규칙으로 확정하지 않고
+    # LLM에 위임(None)해야 한다.
+    claim18 = Claim(
+        sentence="지난해 한국이 수입한 미국산 원유는 약 2151만t을 기록했다.",
+        claim_type="규모", period="2024년", unit="톤", population="미국산 원유 수입량",
+        value=21510000.0,
+    )
+    computed18 = ComputedResult(calc_type="단순조회", raw_value=683609488.0, unit="천달러", period="2024")
+    result18 = _rule_based_verdict(claim18, computed18)
+    print(f"[케이스18 - 단위 비대칭 버그 수정] 톤 vs 천달러 비교 결과: {result18}")
+    assert result18 is None, (
+        f"단위 불일치 회귀 — 규칙 기반으로 확정 판정하면 안 되는데 {result18}이 나옴"
+    )
+    print("  → 통과: 단위가 다르면 격차가 커도 '불일치'로 확정하지 않고 LLM에 위임함")
+    print("     ('일치' 쪽에만 있던 단위 검증을 '불일치' 쪽에도 대칭으로 추가, 2026-08-12).")
+
+    # 케이스 19 — 회귀 방지: 표 데이터 범위 밖 시점 비교 버그 수정 확인. 실제 배치에서
+    # 재현된 "1955~1960년 인구 증가율" claim(claim.period="1955~1960년")이 슬롯필링
+    # 단계에서 그 범위 표현을 못 알아듣고 "2024년"(computed.period="2023~2024") 데이터로
+    # 대체 조회되어, 완전히 다른 시대의 값끼리 비교되고도 확정 "불일치"가 나던 버그.
+    claim19 = Claim(
+        sentence="이전까진 5년 새 6%가량 늘던 인구수는 1955~1960년 16% 넘게 늘었다.",
+        claim_type="증감률", period="1955~1960년", unit="%", population="전국 인구", value=16.0,
+    )
+    computed19 = ComputedResult(calc_type="증감률", raw_value=-0.2, unit="%", period="2023~2024")
+    result19 = _rule_based_verdict(claim19, computed19)
+    print(f"[케이스19 - 연도 범위 밖 시점 비교 버그 수정] 1955~1960 vs 2023~2024 비교 결과: {result19}")
+    assert result19 is None, (
+        f"연도 범위 밖 비교 회귀 — 규칙 기반으로 확정 판정하면 안 되는데 {result19}이 나옴"
+    )
+    print("  → 통과: 시점이 서로 너무 멀리 떨어져 있으면(63년 차이) '불일치'로 확정하지 않고")
+    print("     LLM에 위임함 — 이 케이스는 사실 원인이 슬롯필링이 범위 표현을 놓친 것이므로")
+    print("     LLM도 결국 판단불가로 처리하는 게 맞지만, 최소한 '틀린 확정 판정'은 막음.")
+
+    # 회귀 방지: 정상적인 장기 비교(claim과 computed가 같은 연도를 하나라도 공유)는 그대로
+    # 확정 판정되는지 — "30년 전인 1994년의 절반 수준" 같은 정상 케이스가 이번 수정으로
+    # 덩달아 막히면 안 된다.
+    claim19b = Claim(
+        sentence="작년 소비량은 30년 전인 1994년(108.3kg)의 절반 수준이다.",
+        claim_type="비교", period="2024년", unit="kg", population="국민 1인당", value=55.8,
+    )
+    computed19b = ComputedResult(calc_type="증감", raw_value=-52.5, unit="kg", period="1994~2024")
+    result19b = _rule_based_verdict(claim19b, computed19b)
+    print(f"[케이스19b - 정상 장기비교 회귀 확인] 2024 vs 1994~2024(연도 겹침) -> {result19b is not None}")
+    assert result19b is not None, "정상 장기 비교(연도가 computed.period 안에 포함)까지 막혀버림 — 회귀"
+    print("  → 통과: computed.period 안에 claim이 가리키는 연도가 포함돼 있으면(2024) 정상 판정됨.")
+
+    print("\n=== 2026-08-12 신규: 분기/월 period 라벨링 버그 수정 회귀 테스트 ===")
+    assert _format_period_label("202402", prd_se="Q") == "2024년 2분기", _format_period_label("202402", prd_se="Q")
+    assert _format_period_label("202402", prd_se="M") == "2024년 2월", _format_period_label("202402", prd_se="M")
+    assert _format_period_label("202402") == "202402", "prd_se 안 넘기면 원본 그대로여야 함(하위 호환)"
+    print("[period 라벨 포맷] '202402'+Q -> '2024년 2분기', +M -> '2024년 2월', prd_se 없으면 원본 유지 ✅")
+    print("  → 통과: 분기 표의 202402가 판정 설명 프롬프트에서 더 이상 '월'로 오인식되지 않음")
+    print("     (2026-08-12, 中 1분기 GDP 기사에서 실측 확인된 버그).")
