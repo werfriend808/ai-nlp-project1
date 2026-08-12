@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from .hcx_client import call_hcx
+from .claim_candidate_scanner import find_missed_candidates
 
 try:
     from interfaces import Claim
@@ -50,6 +51,38 @@ except ImportError:
 MODEL = "HCX-DASH-002"
 PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "claim_extractor_prompt.txt"
 SYSTEM_PROMPT = "아래 지시사항을 정확히 따르고, 반드시 지정된 JSON 배열 형식으로만 응답하세요."
+
+# recover_missed_claims() 전용 — claim_extractor_prompt.txt(전체 기사용, few-shot 7개 포함)를
+# 그대로 재사용하지 않는 이유: 여기선 이미 claim_candidate_scanner가 걸러낸 몇 개 문장만
+# 재검토하면 되므로, 전체 프롬프트를 다시 보내면 토큰 낭비가 크다. 짧은 프롬프트로 "이
+# 문장이 진짜 claim인지"만 판단시킨다 — LLM의 판단력은 그대로 쓰되(하이브리드 설계),
+# 스캐너가 넓게 잡은 후보(제품 스펙 등 노이즈 포함)를 여기서 거른다.
+_RECOVERY_PROMPT_TEMPLATE = """아래 문장들은 규칙 기반 스캐너가 숫자를 포함하고 있어서
+"수치 기반 주장"일 수 있다고 표시했지만, 1차 추출에서는 뽑히지 않은 것들입니다. 각 문장을
+다시 검토해서, 실제로 검증 가치 있는 수치 주장이면 구조화하고, 아니면(제품 스펙, 법령상
+기준값, 개별 기업/제품의 가격·실적처럼 국가 공식 통계가 아닌 경우) 결과에서 제외하세요.
+
+## 판단 기준
+- 구체적인 수치(값·비율·순위 등)를 포함하고, 실제로 조사·집계된 통계 주장이어야 합니다.
+- 제품 스펙(좌석 수, 트렁크 용량 등)이나 법령상 기준값은 제외합니다.
+- sentence는 절대 요약하거나 다시 쓰지 말고, 아래 문장 원문을 그대로 사용합니다.
+
+## 출력 형식 (JSON 배열만 출력, 다른 텍스트 금지 — claim_extractor와 동일 스키마)
+[
+  {
+    "sentence": "...", "claim_type": "규모|증감률|비교|전망",
+    "period": "..." 또는 null, "unit": "..." 또는 null, "population": "..." 또는 null,
+    "statistic_expression": "..." 또는 null, "value": 숫자 또는 null,
+    "comparison_operator": "증가|감소|동일|초과|미만" 또는 null,
+    "comparison_target": "..." 또는 null, "comparison_value": 숫자 또는 null,
+    "region": "..." 또는 null, "source_org": "..." 또는 null, "source_report": "..." 또는 null
+  }
+]
+검증 가치 있는 문장이 하나도 없으면 빈 배열 []을 출력합니다.
+
+## 검토할 문장들
+{candidate_sentences}
+"""
 
 # 실측 확인(2026-08-04, verify_claim_extractor_on_golden.py): 기사가 이 길이를 넘어가면
 # temperature=0으로 결정적으로 만들어도 gold 골든셋 대비 recall이 28.8%까지 떨어짐 —
@@ -306,6 +339,49 @@ def extract_claims(
         raise errors[0]
 
     return all_claims
+
+
+def recover_missed_claims(
+    article_text: str,
+    extracted_claims: list[Claim],
+    *,
+    model: str = MODEL,
+    max_tokens: int = 1024,
+    temperature: float = 0.0,
+) -> list[Claim]:
+    """extract_claims() 이후, 규칙 기반 스캐너(claim_candidate_scanner)가 찾은 후보 중
+    LLM이 1차 추출에서 놓친 문장이 있으면 그 문장들만 다시 HCX에 물어봐서 복구한다
+    (하이브리드 추출 설계의 3단계 — recall 안전망).
+
+    스캐너는 정밀도가 낮게(recall 우선) 설계돼 있어서, 놓친 후보를 그대로 claim으로
+    확정하지 않고 여기서 다시 LLM 판단을 한 번 더 거친다 — 제품 스펙·개별 기업 수치 같은
+    노이즈는 이 단계에서 걸러진다.
+
+    실패 시(HCX 호출 오류, JSON 파싱 실패 등) 원래 extracted_claims를 그대로 반환한다 —
+    복구는 best-effort이고, 실패해도 1차 추출 결과 자체는 지켜야 배치가 안 죽는다.
+    """
+    already_sentences = [c.sentence for c in extracted_claims]
+    missed = find_missed_candidates(article_text, already_sentences)
+    if not missed:
+        return extracted_claims
+
+    prompt = _RECOVERY_PROMPT_TEMPLATE.replace(
+        "{candidate_sentences}", "\n".join(f"- {s}" for s in missed)
+    )
+    try:
+        reply = call_hcx(
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            user_content=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        recovered = _parse_claims(reply)
+    except (ClaimExtractorError, KeyError, ValueError, TypeError, json.JSONDecodeError) as e:
+        print(f"[claim_extractor] 놓친 claim 복구 실패 ({type(e).__name__}: {e}) → 원래 추출 결과만 사용")
+        return extracted_claims
+
+    return extracted_claims + recovered
 
 
 if __name__ == "__main__":
