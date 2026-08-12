@@ -769,6 +769,11 @@ def _parse_csv_seed(argv: list[str], default: int = 42) -> int:
 
 
 if __name__ == "__main__":
+    # Windows 콘솔 기본 인코딩(cp949)은 기사 원문에 섞인 일부 유니코드 문자(예: 특수 구두점)를
+    # 인코딩 못 해 print()에서 UnicodeEncodeError로 배치 전체가 죽는다 — 진행 로그 출력용
+    # stdout/stderr만 UTF-8로 바꿔서 막는다.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     main(
         use_csv_sample="--csv" in sys.argv,
         csv_n=_parse_csv_n(sys.argv),
