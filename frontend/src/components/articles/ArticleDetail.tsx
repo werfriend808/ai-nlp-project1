@@ -31,7 +31,6 @@ export function ArticleDetail({ group, articleText, tableOrgIds, onBack }: Artic
               onClick={onBack}
               className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1 font-medium text-gray-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-indigo-800 dark:hover:bg-indigo-900/30 dark:hover:text-indigo-400"
             >
-           
               검증 기사 목록
             </button>
             <span>/</span>

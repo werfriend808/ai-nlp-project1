@@ -127,6 +127,35 @@ def _expand_query_terms(sentence: str) -> set[str]:
 # 부풀려지는 것이라, 전체 문턱값을 올리는 방식으로는 (다른 표의 정상 매칭까지 다치지
 # 않고는) 못 고친다. 카탈로그의 keywords 중복 정리, 또는 claim.population 같은
 # 2단계 메타데이터까지 매칭에 활용하는 설계 변경이 필요해 보임 — B와 상의 필요.
+# 실제 배치(claim_extractor가 뽑은 자연스러운 문장)에서 keyword_search가 claim의 92%에서
+# 아무 표도 못 찾는 문제가 실측 확인됨(2026-08-11). 원인은 카탈로그 키워드가 "소비자물가지수"
+# 처럼 명사형 접미사(지수/지표/총액 등)가 붙어있는데, 문장은 "소비자물가가 올랐다"처럼 어간만
+# 쓰는 경우가 흔해서 정확한 부분 문자열 매칭에 실패하기 때문. 골든셋(claim_extractor가 아니라
+# 사람이 다듬어 쓴 문장)에서는 53.7%로 훨씬 잘 맞아서 이 가설과 일치한다.
+# 접두 N자 이상이 겹치면 어간 매칭으로 인정한다 — 최소 길이를 4자로 둔 이유는 "0세"가 "60세"에
+# 우연히 부분 문자열로 걸리던 버그(table_catalog.json DT_1B04006)처럼 짧은 키워드의 우연한
+# 충돌을 막기 위함. 4자 이상 접두 일치는 우연히 겹칠 확률이 훨씬 낮다.
+_MIN_STEM_MATCH_LEN = 4
+
+
+def _stem_prefix_match(kw_norm: str, sentence_norm: str) -> bool:
+    """kw_norm과 sentence_norm 안의 어떤 부분 문자열이 앞에서부터 최소
+    _MIN_STEM_MATCH_LEN자 이상 일치하면 True (명사형 접미사만 다른 경우를 잡기 위함)."""
+    if len(kw_norm) < _MIN_STEM_MATCH_LEN:
+        return False
+    prefix = kw_norm[:_MIN_STEM_MATCH_LEN]
+    start = sentence_norm.find(prefix)
+    while start != -1:
+        max_len = min(len(kw_norm), len(sentence_norm) - start)
+        match_len = 0
+        while match_len < max_len and kw_norm[match_len] == sentence_norm[start + match_len]:
+            match_len += 1
+        if match_len >= _MIN_STEM_MATCH_LEN:
+            return True
+        start = sentence_norm.find(prefix, start + 1)
+    return False
+
+
 def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[float, list[str]]:
     """표 하나에 대해 (매칭 점수, 매칭된 키워드 목록)을 계산한다."""
     matched: list[str] = []
@@ -134,9 +163,12 @@ def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[
     normalized_sentence = _normalize(sentence)
 
     for kw in keywords:
-        if _normalize(kw) in normalized_sentence:
+        kw_norm = _normalize(kw)
+        if kw_norm in normalized_sentence:
             matched.append(kw)
         elif kw in expanded_terms:
+            matched.append(kw)
+        elif _stem_prefix_match(kw_norm, normalized_sentence):
             matched.append(kw)
 
     if table.get("title", "") and re.search(re.escape(table["title"][:6]), sentence):
