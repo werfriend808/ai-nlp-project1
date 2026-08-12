@@ -40,6 +40,29 @@ from agent.shared.extreme_value_patterns import ALL_TIME_RE, N_YEARS_SINCE_RE, S
 _MAX_DIRECTION_RE = re.compile(r"최고|최대|최다")
 _MIN_DIRECTION_RE = re.compile(r"최저|최소")
 
+# KOSIS는 대한민국 통계청 산하 포털이라 해외 국가 자체 통계(예: "중국 GDP", "일본 1인당
+# 국민소득")를 원천적으로 제공하지 않는다. 그런데 3단계 표 매칭이 "GDP"/"물가" 같은
+# 일반 키워드만 보고 국내 표로 잘못 매칭시키는 경우가 있어서(2026-08-12 실측: "중국의
+# 1분기 GDP가 5.4% 증가" claim이 한국 '주요지표(분기지표)' 표로 매칭돼 엉뚱한 값과
+# 비교되는 사례, "한국 vs 일본 1인당 국민소득" 비교 claim이 한국 표로만 검증되고 일본
+# 쪽은 무시되는 사례로 확인), claim의 population/region/comparison_target에 해외
+# 국가명이 있으면 애초에 계산 자체를 시도하지 말고 조기에 판단불가로 분기한다.
+# source_filter.py의 KOSIS_VERIFIED_ORGS/KNOWN_NOT_KOSIS와 같은 화이트리스트 방식.
+_FOREIGN_COUNTRY_KEYWORDS = {
+    "일본", "미국", "중국", "영국", "독일", "프랑스", "이탈리아", "러시아", "인도",
+    "베트남", "캐나다", "호주", "브라질", "대만", "홍콩", "싱가포르", "인도네시아",
+    "필리핀", "태국", "멕시코", "스페인", "네덜란드", "스위스", "사우디",
+}
+
+
+def _mentions_foreign_country(*texts: Optional[str]) -> bool:
+    for text in texts:
+        if not text:
+            continue
+        if any(country in text for country in _FOREIGN_COUNTRY_KEYWORDS):
+            return True
+    return False
+
 
 @dataclass(frozen=True)
 class ExtremeValueSignal:
@@ -78,6 +101,9 @@ def route_calc_type(claim: Claim) -> Optional[CalcType]:
     "전망"이거나 스키마 밖 값(claim_extractor._normalize_claim_type이 이미 None으로
     정규화한 경우 포함)이면 전부 여기로 떨어진다.
     """
+    if _mentions_foreign_country(claim.population, claim.region, claim.comparison_target):
+        return None  # 해외 국가/지역 데이터는 KOSIS로 원천 검증 불가 — 즉시 판단불가 처리
+
     claim_type = claim.claim_type
 
     if claim_type == "증감률":
@@ -109,3 +135,32 @@ if __name__ == "__main__":
     ]
     for c in samples:
         print(f"{c.claim_type!r:>8} | {route_calc_type(c)!r:<10} | {c.sentence}")
+
+    print("\n=== 2026-08-12 신규: 해외 국가 비교 미인식 버그 회귀 테스트 ===")
+    # 실제 배치에서 재현된 사례들 — population/region에 해외 국가명이 있으면 claim_type과
+    # 무관하게 즉시 None(판단불가)이어야 한다.
+    foreign_samples = [
+        Claim(
+            sentence="2023년 한국의 1인당 국민소득이 3만6195달러로 일본(3만5933달러)보다 262달러 많았다.",
+            claim_type="비교", population="일본 1인당 국민소득",
+        ),
+        Claim(
+            sentence="16일 중국 국가통계국은 중국의 1분기 국내총생산(GDP)이 지난해보다 5.4% 증가했다고 발표했다.",
+            claim_type="규모", population="중국 GDP",
+        ),
+        Claim(
+            sentence="일본(21억6000만달러)과 중국(18억2000만달러)의 감소율은 각각 25.4%, 39%를 나타냈다.",
+            claim_type="규모", population="일본과 중국의 투자 금액", region="일본, 중국",
+        ),
+    ]
+    for c in foreign_samples:
+        result = route_calc_type(c)
+        assert result is None, f"❌ 해외 국가 claim이 걸러지지 않음: {c.sentence} -> {result}"
+        print(f"[해외 필터링 확인] population={c.population!r} region={c.region!r} -> {result} ✅")
+
+    # 회귀 방지: 국내 claim은 그대로 정상 라우팅되는지 (해외 국가명이 전혀 없는 기존 샘플들)
+    domestic_result = route_calc_type(samples[4])  # "수도권과 비수도권 인구 격차"
+    assert domestic_result == "증감", f"❌ 국내 비교 claim이 잘못 걸러짐: {domestic_result}"
+    print(f"[국내 claim 회귀 확인] '{samples[4].sentence}' -> {domestic_result} ✅ (안 걸러짐)")
+
+    print("\n모든 신규 테스트 통과 🎉")

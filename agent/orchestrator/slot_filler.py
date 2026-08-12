@@ -164,6 +164,15 @@ _QUARTER_OFFSET_KEYWORDS = {
     "지난분기": -1, "전분기": -1, "직전분기": -1, "당분기": 0,
 }
 
+# "지난해 말"/"연말"처럼 연 단위 표현에 "말/초" 수식어가 붙으면, "지난해"라는 substring만
+# 보고 "기사 작성월과 같은 달"로 계산하면 안 된다 — "말"은 그 해 12월(4분기), "초"는 그 해
+# 1월(1분기)을 구체적으로 가리키는 표현이다(2026-08-12 실측: "지난해 말 200개→225개"
+# 비교가 "전년 동월"(작성월 기준) 로직 때문에 실제로는 6월 데이터와 비교되어 잘못된 판정이
+# 난 사례로 확인). "중순"은 가리키는 달이 사람마다 다르게 해석될 여지가 있어 이번엔 다루지
+# 않는다.
+_YEAR_END_MARKERS = ("말", "연말")
+_YEAR_START_MARKERS = ("초", "연초")
+
 
 def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
     total = year * 12 + (month - 1) + delta
@@ -227,10 +236,21 @@ def normalize_time_expressions(
                 y, m = _add_months(article_date.year, article_date.month, delta)
                 extracted["period"] = _format_month(y, m)
                 return extracted
-        for kw, offset in RELATIVE_YEAR_OFFSET.items():
-            if kw in period_str:
-                extracted["period"] = _format_month(article_date.year + offset, article_date.month)
-                return extracted
+        year_offset = next((o for kw, o in RELATIVE_YEAR_OFFSET.items() if kw in period_str), None)
+        has_end_marker = any(marker in period_str for marker in _YEAR_END_MARKERS)
+        has_start_marker = any(marker in period_str for marker in _YEAR_START_MARKERS)
+        if year_offset is not None or has_end_marker or has_start_marker:
+            # "연말"/"연초"처럼 "말/초" 수식어만 있고 다른 연도 표현이 없으면 올해(offset=0)를
+            # 가리키는 것으로 기본 처리한다.
+            year = article_date.year + (year_offset or 0)
+            if has_end_marker:
+                month = 12
+            elif has_start_marker:
+                month = 1
+            else:
+                month = article_date.month
+            extracted["period"] = _format_month(year, month)
+            return extracted
 
     # 1-Q) 표가 분기면 마찬가지로 분기 단위로 직접 계산.
     if prd_se == "Q":
@@ -240,10 +260,19 @@ def normalize_time_expressions(
                 y, q = _add_quarters(article_date.year, current_quarter, delta)
                 extracted["period"] = _format_quarter(y, q)
                 return extracted
-        for kw, offset in RELATIVE_YEAR_OFFSET.items():
-            if kw in period_str:
-                extracted["period"] = _format_quarter(article_date.year + offset, current_quarter)
-                return extracted
+        year_offset = next((o for kw, o in RELATIVE_YEAR_OFFSET.items() if kw in period_str), None)
+        has_end_marker = any(marker in period_str for marker in _YEAR_END_MARKERS)
+        has_start_marker = any(marker in period_str for marker in _YEAR_START_MARKERS)
+        if year_offset is not None or has_end_marker or has_start_marker:
+            year = article_date.year + (year_offset or 0)
+            if has_end_marker:
+                quarter = 4
+            elif has_start_marker:
+                quarter = 1
+            else:
+                quarter = current_quarter
+            extracted["period"] = _format_quarter(year, quarter)
+            return extracted
 
     # 1) 연 단위 표현은 파이썬으로 직접 계산 (LLM 호출 안 함) — prd_se가 Y/None이거나,
     # 위 M/Q 분기에서 못 잡은 나머지(예: 월간 표인데 "지난주"처럼 월/분기 어느 쪽도 아닌
@@ -409,4 +438,37 @@ if __name__ == "__main__":
     assert is_valid_period("2025") is True
     print("✅ 6자리 period 형식 통과 확인\n")
 
-    print("모든 테스트 통과 🎉")
+    print("=== 2026-08-12 신규: '지난해 말/초' 수식어 인식 버그 수정 회귀 테스트 ===")
+    # 실제 배치에서 재현된 사례: "지난해 말"(작년 12월)이 "지난해"라는 substring만 보고
+    # "전년 동월"(기사 작성월과 같은 달)로 잘못 계산되던 버그 — "코스피 3000..." 기사에서
+    # "지난해 말 200개→225개" 비교가 실제로는 6월 데이터와 비교되어 잘못된 판정이 난
+    # 사례로 확인됨(2026-08-12).
+    r_end = normalize_time_expressions({"period": "지난해 말"}, date(2025, 6, 21), prd_se="M")
+    assert r_end["period"] == "202412", f"❌ '지난해 말' 계산 틀림: {r_end}"
+    print(f"[말(끝) 수식어] '지난해 말'(2025년6월 작성 기준) -> {r_end['period']} ✅ (12월)")
+
+    r_start = normalize_time_expressions({"period": "작년 초"}, date(2025, 6, 21), prd_se="M")
+    assert r_start["period"] == "202401", f"❌ '작년 초' 계산 틀림: {r_start}"
+    print(f"[초(시작) 수식어] '작년 초'(2025년6월 작성 기준) -> {r_start['period']} ✅ (1월)")
+
+    # "연말"처럼 다른 연도 표현 없이 "말/초" 수식어만 있으면 올해(offset=0)를 가리키는
+    #것으로 기본 처리한다.
+    r_end_q = normalize_time_expressions({"period": "연말"}, date(2025, 6, 21), prd_se="Q")
+    assert r_end_q["period"] == "202504", f"❌ 분기 표 '연말'(수식어만 있음) 계산 틀림: {r_end_q}"
+    print(f"[분기 표, 수식어만 있는 경우] '연말'(2025년6월 작성 기준) -> {r_end_q['period']} ✅ (올해 4분기)")
+
+    # 회귀 방지: 수식어 없는 기존 "작년" 동작(전년 동월)은 그대로 유지되는지
+    r_plain = normalize_time_expressions({"period": "작년"}, date(2025, 6, 21), prd_se="M")
+    assert r_plain["period"] == "202406", f"❌ 수식어 없는 '작년' 회귀: {r_plain}"
+    print(f"[회귀 확인] 수식어 없는 '작년' -> {r_plain['period']} ✅ (전년 동월, 그대로 유지)")
+    print("  → 통과: '말/초' 수식어가 있으면 12월/1월로, 없으면 기존처럼 전년 동월로 계산됨.")
+
+    print("\n=== '전년동월'/'전년동기'는 이미 '전년' 부분 문자열 매칭으로 정상 동작 확인 ===")
+    r_ydy = normalize_time_expressions({"period": "전년동월"}, date(2025, 6, 21), prd_se="M")
+    assert r_ydy["period"] == "202406", r_ydy
+    r_ydq = normalize_time_expressions({"period": "전년동기"}, date(2025, 6, 21), prd_se="Q")
+    assert r_ydq["period"] == "202402", r_ydq
+    print(f"[전년동월/동기] '전년동월'+M -> {r_ydy['period']}, '전년동기'+Q -> {r_ydq['period']} ✅")
+    print("  → 통과: 별도 사전 추가 없이 기존 '전년' 키가 이미 커버하고 있었음을 확인.")
+
+    print("\n모든 테스트 통과 🎉")
