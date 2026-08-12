@@ -49,6 +49,7 @@ import csv
 import io
 import json
 import random
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -61,6 +62,7 @@ from agent.mapping.embedding_search import embedding_search, build_table_embeddi
 from agent.mapping.reranker import search_and_rerank
 from agent.orchestrator.slot_filler import fill_slots
 from agent.orchestrator.clarify import clarify
+from agent.orchestrator.agent_chat import _extract_month_period, _resolve_relative_month_period
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
 from agent.verdict.judge import judge, JudgeError
@@ -245,6 +247,72 @@ ARTICLES = [
         "clarify_reply": None,
     },
 ]
+
+
+# "2024년 3분기"/"24년 3분기"처럼 연도가 문장에 그대로 적힌 분기 표현.
+_QUARTER_EXPR_RE = re.compile(r"(\d{2}|\d{4})년\s*(\d)\s*분기")
+# "지난 1분기"/"올 2분기"/"이번 3분기"처럼 연도 없이 상대적으로 분기를 가리키는 표현
+# (_extract_month_period의 분기 버전 — agent_chat.py에 분기 버전이 없어서 여기서 추가).
+# "작년"은 "지난"과 달리 분기 위치와 무관하게 무조건 (기준연도-1)로 고정이라 별도 분기.
+_RELATIVE_QUARTER_RE = re.compile(r"(지난|올해?|이번)\s*(\d)\s*분기")
+_LAST_YEAR_QUARTER_RE = re.compile(r"작년\s*(\d)\s*분기")
+
+
+def _extract_quarter_period(text: str, reference_date: date) -> Optional[str]:
+    """table_params.json의 prdSe="Q" 표가 요구하는 "YYYYQQ"(QQ=01~04) 형식으로
+    분기를 추출한다. 못 찾으면 None."""
+    m = _QUARTER_EXPR_RE.search(text)
+    if m:
+        year_digits, q_digits = m.groups()
+        year = f"20{year_digits}" if len(year_digits) == 2 else year_digits
+        q = int(q_digits)
+        if 1 <= q <= 4:
+            return f"{year}{q:02d}"
+
+    m_last_year = _LAST_YEAR_QUARTER_RE.search(text)
+    if m_last_year:
+        q = int(m_last_year.group(1))
+        if 1 <= q <= 4:
+            return f"{reference_date.year - 1}{q:02d}"
+
+    m2 = _RELATIVE_QUARTER_RE.search(text)
+    if m2:
+        keyword, q_digits = m2.groups()
+        q = int(q_digits)
+        if not 1 <= q <= 4:
+            return None
+        current_q = (reference_date.month - 1) // 3 + 1
+        year = reference_date.year if (keyword != "지난" or q < current_q) else reference_date.year - 1
+        return f"{year}{q:02d}"
+    return None
+
+
+def _refine_period_for_table(
+    period: Optional[str], claim_sentence: str, table_id: str, table_params: dict, article_date: date
+) -> Optional[str]:
+    """4단계(fill_slots)가 만드는 period는 항상 연도 4자리("2024")뿐인데, 매핑된 표가
+    월(M)/분기(Q) 단위면 KOSIS가 그 형식을 거부한다(실측: KosisApiError "형식과 맞지
+    않습니다" — table_params.json 여러 표에서 동일 패턴 재현됨, 2026-08-12). 표의 실제
+    주기(prdSe)에 맞게 문장에서 월/분기를 다시 추출해서 period를 정밀화한다.
+
+    문장에 월/분기가 명시돼 있지 않아 정밀화할 수 없으면 None을 반환한다 — 연도만 아는데
+    월/분기 단위 표를 억지로 조회하면 잘못된 시점 값을 넣게 되므로, 차라리 이 claim을
+    "형식 정보 부족"으로 스킵하는 게 안전하다(3단계의 "매칭 없음"과 같은 보수적 원칙).
+    이미 6자리 이상(예: 다른 경로로 이미 월/분기까지 채워진 경우)이면 그대로 둔다."""
+    if not period:
+        return period
+    period_str = str(period)
+    if len(period_str) != 4:
+        return period  # 이미 연간이 아닌 세부 형식이거나 예상 밖 값 — 손대지 않음
+
+    prd_se = table_params.get(table_id, {}).get("prdSe", "Y")
+    if prd_se == "M":
+        return _extract_month_period(claim_sentence) or _resolve_relative_month_period(
+            claim_sentence, article_date
+        )
+    if prd_se == "Q":
+        return _extract_quarter_period(claim_sentence, article_date)
+    return period  # Y(연간)/F(격년) 등은 4자리 연도 그대로가 맞는 형식
 
 
 def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) -> Optional[dict]:
@@ -551,6 +619,20 @@ def run_article(
             continue
         if slots is None:
             continue
+
+        # 4단계는 항상 연도 4자리("2024")만 만드는데, 매핑된 표가 월/분기 단위면 KOSIS가
+        # 그 형식을 거부한다 — 문장에서 실제 월/분기를 다시 찾아 표 형식에 맞게 정밀화한다
+        # (build_kosis_slots 위 _refine_period_for_table 참고, 2026-08-12 버그 수정).
+        refined_period = _refine_period_for_table(
+            slots.get("period"), claim.sentence, top.table_id, table_params, article["published_date"]
+        )
+        if slots.get("period") and not refined_period:
+            print(
+                f"[4단계→5단계] '{top.table_id}' 표는 월/분기 단위인데 문장에서 구체적인 "
+                f"월/분기를 못 찾음 → 이 주장 스킵 (연도만으로는 형식이 안 맞음)"
+            )
+            continue
+        slots["period"] = refined_period
 
         computed = run_stage_5_6(top.table_id, slots, table_params, client, calculator)
         if computed is None:

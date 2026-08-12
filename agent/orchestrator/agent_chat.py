@@ -534,11 +534,21 @@ def _extract_month_period(text: str) -> Optional[str]:
 # 기준일(article_date/오늘) 기준으로 계산돼야 하는 이런 표현은 따로 처리해야 한다
 # (2026-08-05, 실제 배치에서 "지난 10월"/"지난 1월"이 계속 period 미해결로 빠지는 걸 확인).
 _RELATIVE_MONTH_RE = re.compile(r"(지난|올해?|이번)\s*(\d{1,2})월")
+# "작년"은 "지난"과 달리 몇 월이든 상관없이 무조건 (기준연도-1)로 고정이라 별도 처리
+# (2026-08-12, "작년 11월 출생아 수는..." 같은 실제 기사 문장에서 매칭 안 되던 걸 확인 —
+# "지난"만 인식하고 "작년"은 못 잡던 회귀 갭).
+_LAST_YEAR_MONTH_RE = re.compile(r"작년\s*(\d{1,2})월")
 
 
 def _resolve_relative_month_period(text: str, reference_date: date) -> Optional[str]:
     """"지난 N월"은 기준일보다 앞선 가장 최근 N월(같은 해 또는 작년)로, "올/이번 N월"은
-    기준일과 같은 해의 N월로 계산한다."""
+    기준일과 같은 해의 N월로, "작년 N월"은 무조건 (기준연도-1)의 N월로 계산한다."""
+    m_last_year = _LAST_YEAR_MONTH_RE.search(text)
+    if m_last_year:
+        month = int(m_last_year.group(1))
+        if 1 <= month <= 12:
+            return f"{reference_date.year - 1}{month:02d}"
+
     m = _RELATIVE_MONTH_RE.search(text)
     if not m:
         return None
