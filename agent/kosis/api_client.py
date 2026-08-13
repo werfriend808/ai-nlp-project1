@@ -130,6 +130,23 @@ def _validate_period_format(
         )
 
 
+def _default_prd_se(base: dict) -> str:
+    """slots에 prd_se가 명시 안 됐을 때 쓸 표의 기본 주기 하나를 고른다.
+
+    2026-08-13부터 table_params.json의 prdSe가 표 하나에 문자열 하나였던 것에서 "지원
+    가능한 주기 목록"(예: ["Y","Q","M"])으로 바뀌었다 — 실측해보니 카탈로그 64개 표 중
+    41개(64%)가 등록 당시 확인 안 된 추가 주기도 지원하고 있었다. 이 함수는 그 목록에서
+    "호출하는 쪽이 아무 것도 지정 안 했을 때" 쓸 안전한 기본값 하나를 고른다 — 옛날엔
+    항상 "Y"였으므로, 목록에 "Y"가 있으면 그대로 "Y"를 우선한다(하위 호환). 목록이 아직
+    마이그레이션 전(문자열 그대로)이거나 비어있으면 그 값/기본값 "Y"로 방어적으로 처리한다."""
+    prd_se = base.get("prdSe", "Y")
+    if isinstance(prd_se, str):
+        return prd_se
+    if not prd_se:
+        return "Y"
+    return "Y" if "Y" in prd_se else prd_se[0]
+
+
 class KosisApiClient:
     """
     __call__(table_id, slots) -> KosisApiResponse  (값 하나)
@@ -173,7 +190,7 @@ class KosisApiClient:
             # slots에 prd_se가 명시돼 있으면(예: 호출하는 쪽이 period를 "202606"처럼 월 단위
             # 6자리로 채운 경우) 표의 기본 prdSe보다 우선한다 — 같은 표를 연간/월간 양쪽으로
             # 다 조회할 수 있는 경우(예: 주민등록인구)를 위한 것.
-            "prdSe": slots.get("prd_se") or base.get("prdSe", "Y"),
+            "prdSe": slots.get("prd_se") or _default_prd_se(base),
             "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
         }
 
@@ -273,7 +290,7 @@ class KosisApiClient:
             )
         base = self._table_params[table_id]
 
-        prd_se = slots.get("prd_se") or base.get("prdSe", "Y")
+        prd_se = slots.get("prd_se") or _default_prd_se(base)
         _validate_period_format(table_id, prd_se, start_period, param_name="start_period")
         _validate_period_format(table_id, prd_se, end_period, param_name="end_period")
 
@@ -355,7 +372,7 @@ class KosisApiClient:
         if dim is None:
             raise KeyError(f"'{table_id}'의 dimensions에 '{dim_name}' 축이 없습니다.")
 
-        prd_se = slots.get("prd_se") or base.get("prdSe", "Y")
+        prd_se = slots.get("prd_se") or _default_prd_se(base)
 
         params = {
             "method": "getList",

@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 try:
     from agent.interfaces import Claim, TableCandidate
 except ImportError:
     from dataclasses import dataclass, field
-    from typing import Optional
 
     @dataclass
     class Claim:  # type: ignore[no-redef]
@@ -135,12 +136,24 @@ def _expand_query_terms(sentence: str) -> set[str]:
 # 접두 N자 이상이 겹치면 어간 매칭으로 인정한다 — 최소 길이를 4자로 둔 이유는 "0세"가 "60세"에
 # 우연히 부분 문자열로 걸리던 버그(table_catalog.json DT_1B04006)처럼 짧은 키워드의 우연한
 # 충돌을 막기 위함. 4자 이상 접두 일치는 우연히 겹칠 확률이 훨씬 낮다.
-_MIN_STEM_MATCH_LEN = 4
+#
+# 2026-08-13 실측 발견(4→5로 상향): "서비스업"/"국민연금"처럼 업종·기관명이 정확히 4글자인
+# 경우, 그 뒤에 붙는 진짜 핵심 단어가 완전히 달라도(취업자 vs 생산, 가입자 vs 연기금) 앞
+# 4글자만 같으면 매칭돼버리는 오탐이 실제 배치에서 확인됨 — "서비스업 생산은 전달보다 0.1%
+# 감소했다"가 "산업별 취업자"(서비스업 취업자) 표로, "한국거래소에 따르면 국민연금 등
+# 연기금은... 순매수했다"가 "국민연금 가입자 현황" 표로 오매칭됨. 5자로 늘려도 원래 이 기능을
+# 만든 이유였던 "소비자물가지수" vs "소비자물가가"(5자 "소비자물가"까지 겹침) 케이스는 그대로
+# 살아있어 recall 손실 없이 이 두 오매칭만 해결된다(직접 계산으로 확인).
+_MIN_STEM_MATCH_LEN = 5
 
 
 def _stem_prefix_match(kw_norm: str, sentence_norm: str) -> bool:
     """kw_norm과 sentence_norm 안의 어떤 부분 문자열이 앞에서부터 최소
-    _MIN_STEM_MATCH_LEN자 이상 일치하면 True (명사형 접미사만 다른 경우를 잡기 위함)."""
+    _MIN_STEM_MATCH_LEN자 이상 일치하면 True (명사형 접미사만 다른 경우를 잡기 위함).
+
+    2026-08-13: kiwipiepy(형태소 분석기)를 못 쓰는 환경(미설치 등)에서만 쓰는 폴백으로
+    격하됨 — 아래 _morph_match() 참고. 글자수 임계값 방식은 "서비스업"/"국민연금"처럼
+    업종·기관명이 정확히 임계값 길이인 경우 우연히 걸리는 오탐 위험이 구조적으로 남아있다."""
     if len(kw_norm) < _MIN_STEM_MATCH_LEN:
         return False
     prefix = kw_norm[:_MIN_STEM_MATCH_LEN]
@@ -156,6 +169,78 @@ def _stem_prefix_match(kw_norm: str, sentence_norm: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# 2026-08-13: 형태소 분석 기반 매칭 (kiwipiepy) — _stem_prefix_match의 "글자수만 세는"
+# 한계(오탐)를 해결하기 위해 도입. 카탈로그 키워드 쪽만 명사로 쪼개서 통계 접미사(지수/율 등)
+# 를 뗀 "핵심 명사"를 뽑고, 그 각각이 문장 원문에 부분 문자열로 있는지 확인한다.
+#
+# 왜 "명사 집합이 완전히 겹쳐야 매칭"(순수 형태소 비교)이 아니라 "핵심 명사를 문장 원문에
+# 부분 문자열로 검색"인가: 처음엔 문장도 형태소로 쪼개서 명사 집합끼리 비교했는데, 복합명사가
+# 카탈로그 키워드 쪽과 문장 쪽에서 다르게 쪼개지는 경우(예: "판매액"은 kiwi가 한 토큰으로 묶는데
+# 문장엔 "판매"만 있어서 실패, "전산업"도 붙여 쓰면 한 토큰인데 띄어 쓰면 "전"이 분리돼 버려서
+# 실패) 정상 매칭 2건이 오히려 깨지는 게 실측 확인됨. 그래서 문장 쪽은 형태소로 안 쪼개고
+# 원문 그대로 부분 문자열 검사만 해서, 분절 방식 차이에 영향을 안 받게 했다.
+try:
+    from kiwipiepy import Kiwi
+
+    _kiwi: "Kiwi | None" = Kiwi()
+except ImportError:
+    _kiwi = None
+
+# 카탈로그 키워드에 흔히 붙는 통계 접미사 — 명사 끝에 이게 붙어있으면 떼어내고 비교한다
+# (독립 토큰으로 나오든, "판매액"처럼 다른 명사에 붙어 하나의 토큰으로 나오든 둘 다 처리).
+#
+# "율"은 일부러 뺐다 — 2026-08-13 실측: kiwi가 "환율"을 [환,율]로 안 쪼개고 통째로 하나의
+# 명사 토큰("환율")으로 인식하는데, 여기서 "율"을 접미사로 떼면 "환" 1글자만 남아 "전환했다"의
+# "환"에 우연히 걸리는 오탐이 재현됐다. "환율"/"이자율" 같은 단어는 "율"이 뒤에 붙는 게 아니라
+# 단어 자체에 융합된 개념이라, "지수"/"현황"처럼 안전하게 뗄 수 있는 접미사가 아니다.
+#
+# 2026-08-13 추가(건수/수지/총괄/비율): table_catalog.json 전체 키워드·제목 462개를 훑어서
+# "명사가 2개 이상일 때 마지막 토큰" 빈도를 실측하고, 후보마다 실제 카탈로그 예시로 안전성을
+# 검증한 뒤 추가함. "수지"는 "국제수지"/"경상수지"/"무역수지"처럼 가끔 한 토큰으로 붙지만, 떼어낸
+# 뒤에도 "국제"/"경상"/"무역"처럼 그 자체로 멀쩡한 단어가 남아서 "환율"과 달리 안전함을 확인.
+# "수"(count)는 후보였으나 뺐다 — "세수"(稅收, 세금 수입)가 한 토큰으로 붙는데 "수"를 떼면
+# "세" 1글자만 남아, "환율"과 똑같은 유형의 오탐 위험이 재현되는 게 확인됨.
+_DROPPABLE_NOUN_SUFFIXES = (
+    "지수", "지표", "현황", "동향", "통계", "조사", "총액", "액", "등",
+    "건수", "수지", "총괄", "비율",
+)
+
+
+def _strip_droppable_suffix(token: str) -> Optional[str]:
+    for suf in _DROPPABLE_NOUN_SUFFIXES:
+        if token == suf:
+            return None
+        if token.endswith(suf) and len(token) > len(suf):
+            return token[: -len(suf)]
+    return token
+
+
+@lru_cache(maxsize=None)
+def _core_noun_tokens(keyword: str) -> tuple[str, ...]:
+    """카탈로그 키워드 하나를 명사로 쪼개고 통계 접미사를 뗀 "핵심 명사" 튜플을 반환한다.
+    표 개수·키워드 개수가 적어서(카탈로그 전체를 다 합쳐도 수백 개) 전부 캐싱해도 부담 없다.
+
+    2026-08-13: 품사 태그를 NNG/NNP(일반/고유명사)로만 한정한다 — 원래는 "NN"으로 시작하는
+    태그를 전부 인정했는데, NNB(의존명사, 혼자 못 쓰는 말)까지 포함되면서 "0세"의 "세"처럼
+    숫자가 명사로 안 잡혀 떨어져 나가고 의존명사 "세" 한 글자만 남아 "하락세"에 우연히
+    걸리는 오탐이 있었다("0세"가 "60세"에 우연히 걸리던 원래 버그가 다른 경로로 재발). 글자수
+    임계값 대신 품사로 걸러내면 "빵"처럼 진짜 의미 있는 1글자 일반명사는 그대로 살릴 수 있다."""
+    if _kiwi is None:
+        return ()
+    nouns = [t.form for t in _kiwi.tokenize(keyword) if t.tag in ("NNG", "NNP")]
+    stripped = [_strip_droppable_suffix(n) for n in nouns]
+    return tuple(s for s in stripped if s)
+
+
+def _morph_match(keyword: str, sentence_norm: str) -> bool:
+    """keyword의 핵심 명사 전부가 (형태소 분석 없이) 문장 원문에 부분 문자열로 있으면 True."""
+    tokens = _core_noun_tokens(keyword)
+    if not tokens:
+        return False
+    return all(tok in sentence_norm for tok in tokens)
+
+
 def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[float, list[str]]:
     """표 하나에 대해 (매칭 점수, 매칭된 키워드 목록)을 계산한다."""
     matched: list[str] = []
@@ -168,6 +253,9 @@ def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[
             matched.append(kw)
         elif kw in expanded_terms:
             matched.append(kw)
+        elif _kiwi is not None:
+            if _morph_match(kw, normalized_sentence):
+                matched.append(kw)
         elif _stem_prefix_match(kw_norm, normalized_sentence):
             matched.append(kw)
 
@@ -226,3 +314,69 @@ if __name__ == "__main__":
         print(f"\n[{c.sentence}]")
         for r in results:
             print(f"  - {r.table_name} ({r.table_id}) score={r.score:.2f} | {r.source_meta}")
+
+    print("\n=== 2026-08-13 회귀 테스트: _MIN_STEM_MATCH_LEN 4→5 (업종/기관명 4글자 오탐 방지) ===")
+    # (a) 원래 stem match를 만든 이유였던 케이스는 그대로 살아있어야 함
+    assert _stem_prefix_match("소비자물가지수", "소비자물가가올랐다")
+    print("[유지] '소비자물가지수' vs '소비자물가가' 여전히 매칭됨")
+
+    # (b) "서비스업"(4글자) 뒤에 다른 단어가 붙으면 더 이상 오매칭되면 안 됨
+    #     (실측: "서비스업 생산은 전달보다 0.1% 감소했다"가 "산업별 취업자" 표로 잘못 매칭됨)
+    assert not _stem_prefix_match("서비스업취업자", "서비스업생산은전달보다")
+    service_claim_results = keyword_search(Claim(sentence="서비스업 생산은 전달보다 0.1% 감소했다.", claim_type="규모"))
+    assert all("취업자" not in r.table_name for r in service_claim_results), (
+        f"❌ '서비스업 생산' claim이 여전히 취업자 표로 오매칭됨: {service_claim_results}"
+    )
+    print("[수정 확인] '서비스업 생산' claim이 더 이상 '취업자' 표로 오매칭 안 됨")
+
+    # (c) "국민연금"(4글자) 뒤에 다른 단어가 붙으면 더 이상 오매칭되면 안 됨
+    #     (실측: "국민연금 등 연기금은... 순매수했다"가 "국민연금 가입자/수급자 현황" 표로 잘못 매칭됨)
+    assert not _stem_prefix_match("국민연금가입자", "국민연금등연기금은")
+    pension_claim_results = keyword_search(
+        Claim(
+            sentence="한국거래소에 따르면 국민연금 등 연기금은 연초 이후 유가증권시장에서 1조6132억원을 순매수했다.",
+            claim_type="규모",
+        )
+    )
+    assert all("가입자" not in r.table_name and "수급자" not in r.table_name for r in pension_claim_results), (
+        f"❌ '국민연금 등 연기금' claim이 여전히 가입자/수급자 표로 오매칭됨: {pension_claim_results}"
+    )
+    print("[수정 확인] '국민연금 등 연기금' claim이 더 이상 가입자/수급자 표로 오매칭 안 됨")
+    print("\n[전체 통과] keyword_search 어간매칭 오탐 회귀 테스트 3건 모두 통과")
+
+    if _kiwi is not None:
+        print("\n=== 2026-08-13 회귀 테스트: 형태소 매칭(_morph_match) 도입 후 재발한 오탐 3건 ===")
+        # (d) "환율"을 접미사 "율" 제거 대상으로 잘못 취급해 "환" 1글자만 남았던 문제
+        #     (실측: "환" 1글자가 "전환했다"의 "환"에 우연히 걸림)
+        assert _core_noun_tokens("환율") == ("환율",), f"❌ '환율'이 통째로 안 남음: {_core_noun_tokens('환율')}"
+        exchange_rate_results = keyword_search(
+            Claim(sentence="취업자 수가 46개월 만에 감소 전환했다", claim_type="증감률")
+        )
+        assert all("환율" not in r.table_name for r in exchange_rate_results), (
+            f"❌ '전환했다'가 여전히 환율 표로 오매칭됨: {exchange_rate_results}"
+        )
+        print("[수정 확인] '전환했다'가 더 이상 환율 표로 오매칭 안 됨")
+
+        # (e) "0세"에서 숫자 "0"이 명사로 안 잡혀 의존명사 "세" 1글자만 남았던 문제
+        #     (실측: "세" 1글자가 "하락세"의 "세"에 우연히 걸림 — NNB 태그 제외로 해결)
+        assert _core_noun_tokens("0세") == (), f"❌ '0세'가 빈 튜플이 아님(NNB 필터 실패): {_core_noun_tokens('0세')}"
+        price_drop_results = keyword_search(Claim(sentence="전국 집값이 하락세를 보였다", claim_type="비교"))
+        assert all("주민등록인구" not in r.table_name for r in price_drop_results), (
+            f"❌ '하락세'가 여전히 0세 인구 표로 오매칭됨: {price_drop_results}"
+        )
+        print("[수정 확인] '하락세'가 더 이상 0세 인구 표로 오매칭 안 됨")
+
+        # (f) 2글자 미만 토큰을 전부 잘라내던 예전 방식이 "빵"(진짜 1글자 명사) 같은 정상
+        #     토큰까지 지워서, "빵 물가"가 "물가"만 남아 아무 물가 claim에나 걸리던 문제
+        assert "빵" in _core_noun_tokens("빵 물가"), f"❌ '빵'이 핵심 명사에서 빠짐: {_core_noun_tokens('빵 물가')}"
+        generic_price_results = keyword_search(
+            Claim(sentence="지난달 소비자물가가 전년 동월 대비 2.2% 올랐다", claim_type="증감률")
+        )
+        assert all("빵" not in (r.source_meta or "") for r in generic_price_results), (
+            f"❌ '빵'이 안 나온 물가 claim이 '빵 물가' 키워드로 오매칭됨: {generic_price_results}"
+        )
+        print("[수정 확인] '빵' 언급 없는 물가 claim이 더 이상 '빵 물가' 키워드로 오매칭 안 됨")
+
+        print("\n[전체 통과] 형태소 매칭 오탐 회귀 테스트 3건 모두 통과")
+    else:
+        print("\n[건너뜀] kiwipiepy 미설치 환경 — 형태소 매칭 회귀 테스트는 _stem_prefix_match 폴백만 사용됨")

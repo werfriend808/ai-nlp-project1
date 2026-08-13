@@ -173,6 +173,28 @@ _QUARTER_OFFSET_KEYWORDS = {
 _YEAR_END_MARKERS = ("말", "연말")
 _YEAR_START_MARKERS = ("초", "연초")
 
+# 절대 분기/월 표현("1분기", "3월", "2024년 1분기") 인식 — 2026-08-13 실측 확인: 다중 주기
+# 지원 작업 이후 "올해 1분기 합계출산율"처럼 표가 분기(Q)를 지원하고 prd_se도 정확히
+# "Q"로 골랐는데도, "1분기"라는 숫자 자체를 못 읽어서(그동안 만든 로직은 "지난분기"류
+# 상대 표현만 처리) "올해"+"기사 작성 시점 기준 현재 분기"로 대체해버려 엉뚱한 분기와
+# 비교되는 버그가 있었다. "지난분기"/"작년" 같은 상대 표현엔 숫자가 안 붙어있어서 아래
+# 정규식과 안 겹친다.
+_ABSOLUTE_QUARTER_RE = re.compile(r"([1-4])\s*분기")
+_ABSOLUTE_MONTH_RE = re.compile(r"(1[0-2]|[1-9])\s*월")
+_YEAR_IN_TEXT_RE = re.compile(r"(\d{4})년")
+
+
+def _resolve_year_for_absolute_period(period_str: str, article_date: date) -> int:
+    """절대 분기/월 표현의 연도를 정한다: 문장에 연도가 직접 있으면 그걸, "작년"/"올해" 같은
+    상대 연도 표현이 있으면 그걸로 계산, 둘 다 없으면 올해(article_date 기준)를 기본값으로."""
+    year_match = _YEAR_IN_TEXT_RE.search(period_str)
+    if year_match:
+        return int(year_match.group(1))
+    for kw, offset in RELATIVE_YEAR_OFFSET.items():
+        if kw in period_str:
+            return article_date.year + offset
+    return article_date.year
+
 
 def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
     total = year * 12 + (month - 1) + delta
@@ -224,6 +246,24 @@ def normalize_time_expressions(
     if n_years_ago_match:
         extracted["period"] = str(article_date.year - int(n_years_ago_match.group(1)))
         return extracted
+
+    # 0.5) 절대 분기/월 표현("1분기", "3월", "2024년 1분기") — "지난분기"/"지난달" 같은
+    # 상대 표현과 달리 숫자가 직접 박혀있어서 더 구체적인 신호다. prd_se가 그 단위를
+    # 지원할 때만 쓴다(Q 표에서 "1분기", M 표에서 "3월"). 표가 그 단위를 아예 지원 안
+    # 하면(예: 연간표에 "1분기" 언급) 여기서 처리 안 하고 기존 로직으로 넘긴다.
+    if prd_se == "Q":
+        quarter_match = _ABSOLUTE_QUARTER_RE.search(period_str)
+        if quarter_match:
+            year = _resolve_year_for_absolute_period(period_str, article_date)
+            extracted["period"] = _format_quarter(year, int(quarter_match.group(1)))
+            return extracted
+
+    if prd_se == "M":
+        month_match = _ABSOLUTE_MONTH_RE.search(period_str)
+        if month_match:
+            year = _resolve_year_for_absolute_period(period_str, article_date)
+            extracted["period"] = _format_month(year, int(month_match.group(1)))
+            return extracted
 
     # 1-M) 표가 월간이면, 월 단위 표현("지난달" 등)과 "작년"류(연 단위 표현)를 파이썬으로
     # 직접 월 단위로 계산한다(LLM 호출 없음). "작년"처럼 원래 연 단위인 표현도 월간 표에서는
@@ -364,6 +404,15 @@ def fill_slots(
 
     merged = dict(existing_slots)
     for slot in REQUIRED_SLOTS:
+        if merged.get(slot):
+            # 2026-08-13 실측 발견: clarify_rules는 "비어있는" 슬롯만 되묻도록 설계돼
+            # 있는데(get_next_clarify_step), 2차 호출(clarify_reply 파싱)이 이미 채워진
+            # 슬롯까지 무조건 덮어써서, "어느 지역인가요?"만 되물었을 뿐인데 정해진 답변
+            # 문구("...작년 대비...")를 다시 파싱하다가 1차에서 이미 정확히 뽑힌 period가
+            # (예: "지난달"→202504) 엉뚱한 값(작년 동월→202405)으로 오염되는 버그가
+            # 재현됐다("트리플 감소" 기사 재검증 중 발견). 이미 값이 있는 슬롯은 애초에
+            # clarify 대상이 아니었으므로 2차 결과로 덮어쓰지 않는다.
+            continue
         value = extracted.get(slot)
         if value is None:
             continue
@@ -470,5 +519,58 @@ if __name__ == "__main__":
     assert r_ydq["period"] == "202402", r_ydq
     print(f"[전년동월/동기] '전년동월'+M -> {r_ydy['period']}, '전년동기'+Q -> {r_ydq['period']} ✅")
     print("  → 통과: 별도 사전 추가 없이 기존 '전년' 키가 이미 커버하고 있었음을 확인.")
+
+    print("=== 2026-08-13 신규: 절대 분기/월 표현 인식 회귀 테스트 ===")
+    # 실제 배치에서 재현된 사례: "올해 1분기 합계출산율..."이 prd_se='Q'로 정확히 골라졌는데도
+    # "1분기"라는 숫자를 못 읽어서 "올해"+"기사 작성 시점 기준 현재 분기"로 대체되어
+    # 엉뚱한 분기(예: 2분기)와 비교되던 버그.
+    r_q1 = normalize_time_expressions({"period": "올해 1분기"}, date(2025, 6, 21), prd_se="Q")
+    assert r_q1["period"] == "202501", f"❌ '올해 1분기' 계산 틀림: {r_q1}"
+    print(f"[절대 분기] '올해 1분기'(2025년6월 작성 기준) -> {r_q1['period']} ✅ (1분기, 작성월 무관)")
+
+    r_q2 = normalize_time_expressions({"period": "2023년 3분기"}, date(2025, 6, 21), prd_se="Q")
+    assert r_q2["period"] == "202303", f"❌ '2023년 3분기' 계산 틀림: {r_q2}"
+    print(f"[절대 분기+명시 연도] '2023년 3분기' -> {r_q2['period']} ✅")
+
+    r_m1 = normalize_time_expressions({"period": "3월"}, date(2025, 6, 21), prd_se="M")
+    assert r_m1["period"] == "202503", f"❌ '3월'(절대 월) 계산 틀림: {r_m1}"
+    print(f"[절대 월] '3월'(2025년6월 작성 기준, 올해 기본값) -> {r_m1['period']} ✅")
+
+    r_m2 = normalize_time_expressions({"period": "작년 12월"}, date(2025, 6, 21), prd_se="M")
+    assert r_m2["period"] == "202412", f"❌ '작년 12월' 계산 틀림: {r_m2}"
+    print(f"[절대 월+상대 연도] '작년 12월' -> {r_m2['period']} ✅")
+
+    # 회귀 방지: "지난분기"/"지난달"(상대 표현, 숫자 없음)은 절대 표현 로직이랑 안 겹치고
+    # 기존 상대 표현 로직 그대로 동작하는지
+    r_relative_q = normalize_time_expressions({"period": "지난분기"}, date(2025, 4, 10), prd_se="Q")
+    assert r_relative_q["period"] == "202501", f"❌ 상대 분기 표현 회귀: {r_relative_q}"
+    print(f"[회귀 확인] '지난분기'(상대 표현)는 그대로 동작 -> {r_relative_q['period']} ✅")
+
+    # 회귀 방지: prd_se가 표현 종류와 안 맞으면(연간 표에 "1분기" 언급) 절대 표현 로직이
+    # 발동 안 하고 기존 로직(연 단위 폴백)으로 넘어가는지 — 여기선 LLM 위임 전 단계까지만
+    # 확인(연 단위 표현이 전혀 없으면 extracted 그대로 반환).
+    r_no_prdse = normalize_time_expressions({"period": "1분기"}, date(2025, 6, 21), prd_se="Y")
+    assert r_no_prdse["period"] == "1분기", f"❌ prd_se=Y인데 절대 분기 로직이 잘못 발동함: {r_no_prdse}"
+    print(f"[회귀 확인] prd_se='Y'인 표에서는 '1분기' 절대 표현 로직 발동 안 함 (그대로 폴백) ✅")
+
+    print("\n=== 2026-08-13 신규: 2차 clarify가 1차의 정확한 period를 안 덮어쓰는지 (실제 재현) ===")
+    # "트리플 감소" 기사 재검증 중 발견: 1차에서 "지난달"이 202504로 정확히 뽑혔는데,
+    # 지역만 되물은 2차 라운드가 정해진 답변 문구("...작년 대비...")를 다시 파싱하면서
+    # period가 202405(작년 동월)로 오염됐다. 여기서는 실제 orchestrator 흐름(1차 → 2차)을
+    # 그대로 재현해서, 이제는 1차 값이 보존되는지 확인한다.
+    round1 = fill_slots(
+        "미국발 관세 충격이 본격화된 지난달, 산업 생산이 줄어들었다.", {}, date(2025, 5, 31), prd_se="M"
+    )
+    print(f"1차: {round1}")
+    assert round1.get("period") == "202504", f"❌ 1차 period 추출이 이미 틀림: {round1}"
+    round2 = fill_slots(
+        "전국 기준으로 작년 대비 증감률 알려줘", round1, date(2025, 5, 31), prd_se="M"
+    )
+    print(f"2차: {round2}")
+    assert round2.get("period") == "202504", (
+        f"❌ 2차 clarify가 1차의 정확한 period(202504)를 덮어씀: {round2}"
+    )
+    assert round2.get("region") == "전국", f"❌ 2차에서 region이 정상적으로 채워지지 않음: {round2}"
+    print("✅ 2차 clarify가 1차 period를 보존하면서 region만 채움 확인")
 
     print("\n모든 테스트 통과 🎉")

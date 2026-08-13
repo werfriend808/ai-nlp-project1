@@ -1,0 +1,891 @@
+{
+  "DT_IMEMIB001": {
+    "table_name": "성별/연령대별/소득분위별 소득분위 이동비율",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "TX_13301_A011": {
+    "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_402Y014": {
+    "table_name": "수출물가지수(기본분류)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1TEC_P112": {
+    "table_name": "무역집중도",
+    "registered_prd_se": "Q",
+    "actually_supported": [
+      "Y",
+      "Q"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "[30] 데이터가 존재하지 않습니다"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_401Y015": {
+    "table_name": "수입물가지수(기본분류)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_401Y017": {
+    "table_name": "수입물가지수(품목별)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1KE10071": {
+    "table_name": "온라인쇼핑몰 판매매체별/상품군별거래액",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_404Y014": {
+    "table_name": "생산자물가지수(기본분류)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1J22112": {
+    "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1JH20201": {
+    "table_name": "전산업생산지수(원지수)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_102N_AD01": {
+    "table_name": "통합재정수지",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_32202_A100": {
+    "table_name": "종별 가입자 현황",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_32202_B004": {
+    "table_name": "급여종류별·연령별·성별 수급자 현황",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_1L9U103": {
+    "table_name": "소득5분위별 가구당 가계수지 (전국,1인이상)",
+    "registered_prd_se": "Q",
+    "actually_supported": [
+      "Q"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "[30] 데이터가 존재하지 않습니다"
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_KBA0001": {
+    "table_name": "연구개발비 및 GDP 대비 연구개발비 비율",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_281Y001": {
+    "table_name": "금융거래표(2009~)",
+    "registered_prd_se": "Q",
+    "actually_supported": [
+      "Y",
+      "Q"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "[30] 데이터가 존재하지 않습니다"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1K41017": {
+    "table_name": "음식점포함 소매판매액지수(2020=100.0)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1F70011": {
+    "table_name": "설비투자지수",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1G18007": {
+    "table_name": "공종별 건설기성액(경상)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_301Y013": {
+    "table_name": "국제수지",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_133001_9832": {
+    "table_name": "9.8.32 100대 생활밀접업종 폐업 사업자 현황Ⅰ(지역, 업종)",
+    "registered_prd_se": "Y",
+    "actually_supported": [],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_102006_001": {
+    "table_name": "국가채무(D1)",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_1JH20202": {
+    "table_name": "전산업생산지수(계절조정지수)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1C8015": {
+    "table_name": "경기종합지수(2020=100)(10차)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_115_2009_H3001_18_1": {
+    "table_name": "산업별 외국인 투자 유치 실적",
+    "registered_prd_se": "Q",
+    "actually_supported": [
+      "Q"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_311Y001": {
+    "table_name": "국제투자대조표(IIP)",
+    "registered_prd_se": "Q",
+    "actually_supported": [
+      "Y",
+      "Q"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "[30] 데이터가 존재하지 않습니다"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_104Y282": {
+    "table_name": "시도별 주택시가총액(명목, 연말기준)",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_511Y002": {
+    "table_name": "소비자동향조사(전국, 월, 2008.9~)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_2KAA809": {
+    "table_name": "외환보유액",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "TX_13301_A169": {
+    "table_name": "9.8.13 폐업자 현황 Ⅳ (폐업사유,지역,업태) [2005~]",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_1EA1019": {
+    "table_name": "경영주 연령별 농가 통계표",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_1DA7102S": {
+    "table_name": "성/연령별 실업률",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1DA7147S": {
+    "table_name": "연령/활동상태별(쉬었음) 비경제활동인구",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1J22003": {
+    "table_name": "소비자물가지수(2020=100)",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1DA7001S": {
+    "table_name": "성별 경제활동인구총괄",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1B04005N": {
+    "table_name": "행정구역(읍면동)별/5세별 주민등록인구(2011년~)",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_200Y102": {
+    "table_name": "주요지표(분기지표)",
+    "registered_prd_se": "Q",
+    "actually_supported": [
+      "Q"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_1R11006_FRM101": {
+    "table_name": "국가별 수출액, 수입액",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_30404_B012": {
+    "table_name": "유형별 매매가격지수",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1B8000G": {
+    "table_name": "월.분기.연간 인구동향(출생,사망,혼인,이혼)",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_121Y006": {
+    "table_name": "예금은행 대출금리(신규취급액 기준)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_343_2010_S0027": {
+    "table_name": "코스피 지수",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_151Y001": {
+    "table_name": "가계신용(업권별 분기)",
+    "registered_prd_se": "Q",
+    "actually_supported": [
+      "Y",
+      "Q"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "[30] 데이터가 존재하지 않습니다"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_30404_B013": {
+    "table_name": "유형별 전세가격지수",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1B26001_A01": {
+    "table_name": "시군구별 이동자수",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1B26006_A01": {
+    "table_name": "인구이동률(월, 분기, 년)",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1DA7E06S_NEW": {
+    "table_name": "산업별 취업자",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1PE003": {
+    "table_name": "학교급별 사교육비 총액",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_118N_LCE0001": {
+    "table_name": "고용형태별 임금 및 근로시간",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_1SSSA022R": {
+    "table_name": "사회의 가장 큰 불안 요인(복수응답)",
+    "registered_prd_se": "F",
+    "actually_supported": [],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다",
+      "Q": "[30] 데이터가 존재하지 않습니다",
+      "M": "[30] 데이터가 존재하지 않습니다"
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_200Y001": {
+    "table_name": "주요지표(연간지표)",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_512Y013": {
+    "table_name": "기업경기조사(실적)",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1ED0001": {
+    "table_name": "1인당 연간 양곡소비량",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_1B34E01": {
+    "table_name": "사망원인(104항목)/성/연령(5세)별 사망자수, 사망률",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_11714_N001": {
+    "table_name": "국민기초생활수급자총괄(일반,시설)-시도별",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_134001_001": {
+    "table_name": "수출입총괄",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1R11001_FRM101": {
+    "table_name": "품목별 수출액, 수입액",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1J22005": {
+    "table_name": "생활물가지수(2020=100)",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1B040A3": {
+    "table_name": "행정구역(시군구)별 성별 인구수",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_1B04006": {
+    "table_name": "행정구역(시군구)별/1세별 주민등록인구",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_092_115_2009_S023": {
+    "table_name": "IT산업별/월별 수출 현황",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Q",
+      "M"
+    ],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "1행 확인",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  },
+  "DT_731Y001": {
+    "table_name": "주요국 통화의 대원화환율",
+    "registered_prd_se": "D",
+    "actually_supported": [],
+    "details": {
+      "Y": "[30] 데이터가 존재하지 않습니다.",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "TX_13601_A020": {
+    "table_name": "산불피해 현황",
+    "registered_prd_se": "Y",
+    "actually_supported": [
+      "Y"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다.",
+      "M": "[30] 데이터가 존재하지 않습니다."
+    },
+    "has_undiscovered_periods": false
+  },
+  "DT_343_2010_S0016": {
+    "table_name": "유가증권 산업별 상장주식 총괄",
+    "registered_prd_se": "M",
+    "actually_supported": [
+      "Y",
+      "M"
+    ],
+    "details": {
+      "Y": "1행 확인",
+      "Q": "[30] 데이터가 존재하지 않습니다",
+      "M": "1행 확인"
+    },
+    "has_undiscovered_periods": true
+  }
+}
