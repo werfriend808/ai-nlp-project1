@@ -61,7 +61,12 @@ from agent.mapping.embedding_search import embedding_search, build_table_embeddi
 from agent.mapping.reranker import search_and_rerank
 from agent.orchestrator.slot_filler import fill_slots
 from agent.orchestrator.clarify import clarify
-from agent.orchestrator.calc_type_router import _mentions_foreign_country
+from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
+from agent.shared.extreme_value_patterns import (
+    ALL_TIME_RE,
+    resolve_n_years_since_start_year,
+    resolve_since_event_start_year,
+)
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
 from agent.verdict.judge import judge, JudgeError
@@ -312,8 +317,15 @@ def run_stage_5_6(
     table_params: dict,
     client: KosisApiClient,
     calculator: KosisCalculator,
+    *,
+    claim_sentence: str,
+    article_year: int,
 ) -> Optional[ComputedResult]:
-    """5·6단계. 7·8단계로 넘길 수 있도록 ComputedResult를 반환한다 (실패/스킵 시 None)."""
+    """5·6단계. 7·8단계로 넘길 수 있도록 ComputedResult를 반환한다 (실패/스킵 시 None).
+
+    claim_sentence/article_year: calc_type이 "최댓값검증"/"최솟값검증"일 때 극값 시작
+    연도를 원문에서 계산하기 위해 필요(route_calc_type이 이미 calc_type을 정해서
+    generic_slots["calc_type"]에 덮어쓴 뒤 호출부(run_article)가 넘겨준다)."""
     kosis_slots = build_kosis_slots(table_id, generic_slots, table_params)
     if kosis_slots is None:
         print(
@@ -333,6 +345,35 @@ def run_stage_5_6(
 
             calc_fn = calculator.compute_change_rate if calc_type == "증감률" else calculator.compute_change
             result = calc_fn(base_resp, target_resp)
+            print(f"[6단계 calculator] {result}")
+            return result
+        elif calc_type in ("최댓값검증", "최솟값검증") and kosis_slots.get("period"):
+            start_year = resolve_since_event_start_year(claim_sentence)
+            if start_year is None:
+                start_year = resolve_n_years_since_start_year(claim_sentence, article_year)
+            if start_year is None:
+                if not ALL_TIME_RE.search(claim_sentence):
+                    print(
+                        f"[5단계 api_client] calc_type={calc_type!r}인데 시작 연도 패턴("
+                        "코로나 이후/N년 만에/역대)을 문장에서 못 찾음 → 스킵"
+                    )
+                    return None
+                # "역대"(ALL_TIME_RE)는 기준 시점 자체가 없는 표현이라 문장만으론 시작
+                # 연도를 못 구한다. agent_chat.py의 resolve_max_all_time_responses()가
+                # 이미 팀 합의로 채택한 관행(2026-08-06)을 그대로 따른다: 넉넉히 이른
+                # 연도(1960)부터 요청해도 KOSIS가 실제 데이터 있는 시점부터만 돌려주므로
+                # (실측: DT_1DA7102S에 1999년부터 요청해도 2000년부터 응답) 표별 정확한
+                # 최소 연도를 몰라도 안전하다 — table_params.json에 아직 표별 최소 연도가
+                # 없어서 그쪽 기준은 못 쓴다.
+                start_year = 1960
+
+            historical = client.fetch_series(table_id, kosis_slots, str(start_year), str(article_year))
+            current_resp = client(table_id, kosis_slots)
+            print(f"[5단계 api_client] current    = {current_resp}")
+            print(f"[5단계 api_client] historical({start_year}~{article_year}) = {len(historical)}건")
+
+            check_fn = calculator.compute_max_check if calc_type == "최댓값검증" else calculator.compute_min_check
+            result = check_fn(current_resp, historical)
             print(f"[6단계 calculator] {result}")
             return result
         else:
@@ -442,7 +483,7 @@ def _build_verification_record(
         "kosis_table": top.table_name if top else None,
         "kosis_item": None,  # C의 table_params.json엔 아직 사람이 읽을 항목명이 없음 (알려진 갭)
         "kosis_dimension": kosis_dimension,
-        "calculation_required": calc_type in ("증감", "증감률"),
+        "calculation_required": calc_type in ("증감", "증감률", "최댓값검증", "최솟값검증"),
         "calculation_type": computed.calc_type if computed else None,
         "verification_possible": verification_possible,
         "ambiguity_reason": ambiguity_reason,
@@ -614,7 +655,51 @@ def run_article(
         if slots is None:
             continue
 
-        computed = run_stage_5_6(top.table_id, slots, table_params, client, calculator)
+        # calc_type_router.route_calc_type()이 claim_type + claim.sentence 규칙만으로
+        # calc_type을 결정한다 — 4단계 LLM이 slot_filler에서 추측한 slots["calc_type"]보다
+        # 우선한다(실측: "청년실업률, 코로나 이후 최고" claim이 LLM 추측으로는 "증감률"로만
+        # 채워져서 "작년 대비 증감률"로 잘못 계산되고, "7% 중반 대 0.0%"라는 무의미한
+        # 비교로 오판정되는 사례가 확인됨). None이면 claim_type="전망"이거나 스키마 밖
+        # 값이라는 뜻이라, 위 전망/해외국가 케이스와 같은 원칙으로 5~8단계를 건너뛰고
+        # 즉시 판단불가 처리한다.
+        routed_calc_type = route_calc_type(claim)
+        if routed_calc_type is None:
+            print(
+                f"[calc_type 라우팅] route_calc_type()이 None → claim_type={claim.claim_type!r} "
+                "규칙 기반 라우팅 불가 → 5~8단계 건너뛰고 즉시 판단불가 처리"
+            )
+            verdict = Verdict(
+                verdict="판단불가", gap_type=None,
+                reason="calc_type 규칙 기반 라우팅 불가(claim_type=전망 또는 스키마 밖 값)",
+            )
+            insert_verification(
+                _build_verification_record(
+                    article=article, claim=claim, top=top, generic_slots=slots,
+                    table_params=table_params, computed=None, verdict=verdict, explanation=None,
+                    cls_result=cls_result, catalog_by_id=catalog_by_id,
+                    verification_possible="불가",
+                    ambiguity_reason="calc_type_router.route_calc_type()이 None을 반환(claim_type=전망 등)",
+                )
+            )
+            results.append(
+                {
+                    "article": article["label"],
+                    "claim_sentence": claim.sentence,
+                    "table_name": top.table_name,
+                    "verdict": "판단불가",
+                    "gap_type": None,
+                    "classifier_score": cls_result.score,
+                }
+            )
+            continue
+
+        print(f"[calc_type 라우팅] LLM 추정값({slots.get('calc_type')!r}) 대신 규칙 기반 결과로 덮어씀 → {routed_calc_type!r}")
+        slots["calc_type"] = routed_calc_type
+
+        computed = run_stage_5_6(
+            top.table_id, slots, table_params, client, calculator,
+            claim_sentence=claim.sentence, article_year=article["published_date"].year,
+        )
         if computed is None:
             continue
 
