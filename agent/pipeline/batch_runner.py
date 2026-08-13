@@ -494,9 +494,12 @@ def run_stage_5_6(
                     )
                     return None
                 # "역대"(ALL_TIME_RE)는 기준 시점 자체가 없는 표현이라 문장만으론 시작
-                # 연도를 못 구한다. 넉넉히 이른 연도(1960)부터 요청해도 KOSIS가 실제
-                # 데이터 있는 시점부터만 돌려주므로(실측: DT_1DA7102S에 1999년부터
-                # 요청해도 2000년부터 응답) 표별 정확한 최소 연도를 몰라도 안전하다.
+                # 연도를 못 구한다. agent_chat.py의 resolve_max_all_time_responses()가
+                # 이미 팀 합의로 채택한 관행(2026-08-06)을 그대로 따른다: 넉넉히 이른
+                # 연도(1960)부터 요청해도 KOSIS가 실제 데이터 있는 시점부터만 돌려주므로
+                # (실측: DT_1DA7102S에 1999년부터 요청해도 2000년부터 응답) 표별 정확한
+                # 최소 연도를 몰라도 안전하다 — table_params.json에 아직 표별 최소 연도가
+                # 없어서 그쪽 기준은 못 쓴다.
                 start_year = 1960
 
             historical = client.fetch_series(table_id, kosis_slots, str(start_year), str(article_year))
