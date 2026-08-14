@@ -57,13 +57,18 @@ from typing import Optional
 
 from agent.preprocessing.classifier import classify
 from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims
+from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
 from agent.mapping.reranker import search_and_rerank
 from agent.orchestrator.slot_filler import fill_slots
 from agent.orchestrator.clarify import clarify
-from agent.orchestrator.agent_chat import _extract_month_period, _resolve_relative_month_period
-from agent.orchestrator.calc_type_router import _mentions_foreign_country
+from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
+from agent.shared.extreme_value_patterns import (
+    ALL_TIME_RE,
+    resolve_n_years_since_start_year,
+    resolve_since_event_start_year,
+)
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
 from agent.verdict.judge import judge, JudgeError
@@ -250,72 +255,6 @@ ARTICLES = [
 ]
 
 
-# "2024년 3분기"/"24년 3분기"처럼 연도가 문장에 그대로 적힌 분기 표현.
-_QUARTER_EXPR_RE = re.compile(r"(\d{2}|\d{4})년\s*(\d)\s*분기")
-# "지난 1분기"/"올 2분기"/"이번 3분기"처럼 연도 없이 상대적으로 분기를 가리키는 표현
-# (_extract_month_period의 분기 버전 — agent_chat.py에 분기 버전이 없어서 여기서 추가).
-# "작년"은 "지난"과 달리 분기 위치와 무관하게 무조건 (기준연도-1)로 고정이라 별도 분기.
-_RELATIVE_QUARTER_RE = re.compile(r"(지난|올해?|이번)\s*(\d)\s*분기")
-_LAST_YEAR_QUARTER_RE = re.compile(r"작년\s*(\d)\s*분기")
-
-
-def _extract_quarter_period(text: str, reference_date: date) -> Optional[str]:
-    """table_params.json의 prdSe="Q" 표가 요구하는 "YYYYQQ"(QQ=01~04) 형식으로
-    분기를 추출한다. 못 찾으면 None."""
-    m = _QUARTER_EXPR_RE.search(text)
-    if m:
-        year_digits, q_digits = m.groups()
-        year = f"20{year_digits}" if len(year_digits) == 2 else year_digits
-        q = int(q_digits)
-        if 1 <= q <= 4:
-            return f"{year}{q:02d}"
-
-    m_last_year = _LAST_YEAR_QUARTER_RE.search(text)
-    if m_last_year:
-        q = int(m_last_year.group(1))
-        if 1 <= q <= 4:
-            return f"{reference_date.year - 1}{q:02d}"
-
-    m2 = _RELATIVE_QUARTER_RE.search(text)
-    if m2:
-        keyword, q_digits = m2.groups()
-        q = int(q_digits)
-        if not 1 <= q <= 4:
-            return None
-        current_q = (reference_date.month - 1) // 3 + 1
-        year = reference_date.year if (keyword != "지난" or q < current_q) else reference_date.year - 1
-        return f"{year}{q:02d}"
-    return None
-
-
-def _refine_period_for_table(
-    period: Optional[str], claim_sentence: str, table_id: str, table_params: dict, article_date: date
-) -> Optional[str]:
-    """4단계(fill_slots)가 만드는 period는 항상 연도 4자리("2024")뿐인데, 매핑된 표가
-    월(M)/분기(Q) 단위면 KOSIS가 그 형식을 거부한다(실측: KosisApiError "형식과 맞지
-    않습니다" — table_params.json 여러 표에서 동일 패턴 재현됨, 2026-08-12). 표의 실제
-    주기(prdSe)에 맞게 문장에서 월/분기를 다시 추출해서 period를 정밀화한다.
-
-    문장에 월/분기가 명시돼 있지 않아 정밀화할 수 없으면 None을 반환한다 — 연도만 아는데
-    월/분기 단위 표를 억지로 조회하면 잘못된 시점 값을 넣게 되므로, 차라리 이 claim을
-    "형식 정보 부족"으로 스킵하는 게 안전하다(3단계의 "매칭 없음"과 같은 보수적 원칙).
-    이미 6자리 이상(예: 다른 경로로 이미 월/분기까지 채워진 경우)이면 그대로 둔다."""
-    if not period:
-        return period
-    period_str = str(period)
-    if len(period_str) != 4:
-        return period  # 이미 연간이 아닌 세부 형식이거나 예상 밖 값 — 손대지 않음
-
-    prd_se = table_params.get(table_id, {}).get("prdSe", "Y")
-    if prd_se == "M":
-        return _extract_month_period(claim_sentence) or _resolve_relative_month_period(
-            claim_sentence, article_date
-        )
-    if prd_se == "Q":
-        return _extract_quarter_period(claim_sentence, article_date)
-    return period  # Y(연간)/F(격년) 등은 4자리 연도 그대로가 맞는 형식
-
-
 def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) -> Optional[dict]:
     """D의 generic slots(period/region/calc_type, 표 구분 없이 고정)를
     C의 table_params.json에 정의된 표별 dimensions로 변환한다.
@@ -328,6 +267,11 @@ def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) ->
 
     base = table_params[table_id]
     kosis_slots: dict = {"period": generic_slots.get("period")}
+    if generic_slots.get("prd_se"):
+        # 2026-08-13: 4단계(run_stage_4)가 표의 지원 주기 목록 중에서 이미 claim에 맞는
+        # 걸 골라뒀으면(prd_se), 그대로 실어서 KosisApiClient까지 전달한다 — 안 넘기면
+        # api_client.py가 표의 기본 주기(_default_prd_se)로 알아서 폴백한다(하위 호환).
+        kosis_slots["prd_se"] = generic_slots["prd_se"]
 
     for dim_name, dim in base.get("dimensions", {}).items():
         # 이 표에 정의된 축(dim_name)만 채운다. generic_slots에 값이 있으면 쓰고,
@@ -336,6 +280,40 @@ def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) ->
         kosis_slots[dim_name] = value if value is not None else dim.get("default_value")
 
     return kosis_slots
+
+
+def _infer_desired_granularity(text: Optional[str]) -> Optional[str]:
+    """claim 문장에서 이 주장이 월/분기/연 중 어느 주기를 가리키는지 best-effort로 추정한다.
+
+    3단계(prd_se 선택 로직)의 핵심 — 2026-08-13, 64개 표 중 41개(64%)가 한 표에서 여러
+    주기를 동시에 지원한다는 게 실측 확인돼서, "표가 지원하는 것 중 claim이 실제로 원하는
+    주기"를 골라야 한다. "분기"가 명시되면 최우선(월/연보다 구체적인 표현), 그 다음
+    월/달 표현, 나머지는 판단 보류(None) — 상위 호출부가 표 주기 목록에서 기본값을 쓴다."""
+    if not text:
+        return None
+    if "분기" in text:
+        return "Q"
+    if "월" in text or "달" in text:
+        return "M"
+    return None
+
+
+def _select_prd_se(supported: object, desired: Optional[str]) -> Optional[str]:
+    """표가 지원하는 주기 목록(supported)과 claim이 원하는 주기(desired)를 맞춰서 실제로
+    쓸 prd_se 하나를 고른다.
+
+    - supported가 아직 마이그레이션 전(문자열)이면 그 값 그대로 반환(하위 호환)
+    - desired가 목록에 있으면 그대로 사용 (claim이 원하는 걸 표가 지원하는 가장 좋은 경우)
+    - 없으면 "Y"를 우선(옛날 기본값과 동일한 안전한 폴백), 그것도 없으면 목록의 첫 번째
+    - 표가 뭘 지원하는지 아예 모르면(등록 안 된 표 등) None — fill_slots가 기존처럼 연
+      단위로만 동작하게 된다."""
+    if isinstance(supported, str):
+        return supported
+    if not supported:
+        return None
+    if desired and desired in supported:
+        return desired
+    return "Y" if "Y" in supported else supported[0]
 
 
 def run_stage_4(
@@ -349,20 +327,32 @@ def run_stage_4(
     """4단계: fill_slots + clarify. 한 번에 안 채워지면 clarify_reply로 한 번 더 시도.
     그래도 부족하면 None (되묻기 미해결 → 5단계로 못 감)을 반환한다.
 
-    table_id/table_params: 3단계가 이미 매칭한 표의 주기(prdSe)를 조회해서 slot_filler에
-    넘기기 위함(2026-08-12) — 표 주기를 몰라 무조건 연도만 채우던 문제 수정. 안 넘기면
-    기존과 동일하게 연 단위로만 동작한다(하위 호환)."""
+    table_id/table_params: 3단계가 이미 매칭한 표의 지원 주기 목록에서, claim 문장이
+    실제로 원하는 주기(_infer_desired_granularity)와 맞춰 prd_se 하나를 고른다(2026-08-13,
+    다중 주기 지원 작업 — 표 주기를 몰라 무조건 연도만 채우던 문제(2026-08-12)에 이어,
+    표가 여러 주기를 지원해도 claim이 원하는 걸 못 고르던 문제까지 해결). 안 넘기면 기존과
+    동일하게 연 단위로만 동작한다(하위 호환).
+
+    반환하는 slots에 "prd_se"를 실제로 채워 넣는다 — build_kosis_slots가 이 값을
+    KosisApiClient까지 그대로 전달해서, 표의 기본값이 아니라 여기서 고른 주기로 조회하게
+    한다."""
     prd_se = None
     if table_id and table_params and table_id in table_params:
-        prd_se = table_params[table_id].get("prdSe")
+        supported = table_params[table_id].get("prdSe")
+        desired = _infer_desired_granularity(claim_sentence)
+        prd_se = _select_prd_se(supported, desired)
 
     slots = fill_slots(claim_sentence, {}, article_date, prd_se=prd_se)
+    if prd_se:
+        slots["prd_se"] = prd_se
     question = clarify(slots)
     print(f"[4단계 slot_filler] 1차 슬롯: {slots}")
 
     if question and clarify_reply:
         print(f"[4단계 clarify] 되묻기: \"{question}\" → (준비된 답변) \"{clarify_reply}\"")
         slots = fill_slots(clarify_reply, slots, article_date, prd_se=prd_se)
+        if prd_se:
+            slots["prd_se"] = prd_se
         question = clarify(slots)
         print(f"[4단계 slot_filler] 2차 슬롯: {slots}")
 
@@ -374,14 +364,99 @@ def run_stage_4(
     return slots
 
 
+def _prior_year_same_period(period: str) -> str:
+    """"전년동월/동분기" 기준값(base)의 시점을 계산한다 — target 시점에서 연도만 1 빼고
+    나머지(월/분기 코드)는 그대로 유지한다.
+
+    2026-08-13 실측 발견: 예전엔 무조건 `str(int(period) - 1)`로 계산했는데, 이건 4자리
+    연도("2024"->"2023")에만 맞는 계산이다. 6자리 월/분기 period가 도입된 뒤에도 이 로직을
+    그대로 써서 "202501"(2025년 1분기) - 1 = "202500"이라는 존재하지 않는 시점이 나오고
+    있었다 — 실제로는 "202401"(전년 동분기)이 나와야 하는데, 정수로 통째로 1을 빼는 바람에
+    분기/월 부분이 아니라 연도 끝자리가 깎여서 인접한 다른 시점(예: 2024년 5~6월)과
+    비교되는 사례로 재현됨("코스피 3000..." 기사 판정 오류 원인 추적 중 발견)."""
+    if len(period) == 6:
+        year, suffix = period[:4], period[4:]
+        return f"{int(year) - 1:04d}{suffix}"
+    return str(int(period) - 1)
+
+
+# "전달/전월/전분기" 계열(직전 주기 비교, MoM/QoQ)인지 "작년/전년/지난해" 계열(전년동시점
+# 비교, YoY)인지 판단하는 키워드. "작년" 같은 키워드는 그 자체로 공백이 없는 한 덩어리라
+# comparison_target에 "작년대비"든 "작년 대비"든 상관없이 `in` 부분 문자열 검사로 그대로
+# 걸린다 — 별도 공백 제거 전처리가 필요 없다.
+_PRIOR_IMMEDIATE_KEYWORDS = ("전달", "전월", "전분기", "직전")
+_PRIOR_YEAR_KEYWORDS = ("작년", "전년", "지난해")
+
+# 2026-08-13 실측 발견: claim_extractor(LLM)가 기사 전체 맥락을 보고 "전달"을 이미 "3월"처럼
+# 구체적인 절대 월/분기로 바꿔서 comparison_target에 채우는 경우가 실제로 더 흔했다("트리플
+# 감소" 기사 8개 claim 중 다수가 "3월"로 나옴, "전달"이라는 원문 그대로는 하나도 안 나옴).
+# 이런 "숫자+월/분기"만 있고 "작년/전년" 같은 연도 지시어가 없는 표현은, 기사가 다루는 시점
+# 바로 직전 주기를 가리키는 게 거의 확실하므로(같은 해 안에서의 인접 비교) MoM/QoQ로 처리한다.
+_BARE_MONTH_OR_QUARTER_RE = re.compile(r"^\d{1,2}(월|분기)$")
+
+
+def _wants_prior_immediate_period(comparison_target: Optional[str]) -> bool:
+    """claim.comparison_target 원문 표현이 "직전 주기 대비"(MoM/QoQ)를 가리키면 True.
+
+    "작년"/"전년"/"지난해"가 포함돼 있으면(예: "작년 3월") 그 앞에 다른 신호가 있어도
+    명시적 YoY로 우선 처리한다 — 절대 월 표현("3월")과 섞여 나올 수 있어(예: "지난해 11월")
+    안전하게 먼저 걸러낸다."""
+    if not comparison_target:
+        return False
+    stripped = comparison_target.strip()
+    if any(kw in stripped for kw in _PRIOR_YEAR_KEYWORDS):
+        return False
+    if any(kw in stripped for kw in _PRIOR_IMMEDIATE_KEYWORDS):
+        return True
+    return bool(_BARE_MONTH_OR_QUARTER_RE.match(stripped))
+
+
+def _prior_immediate_period(period: str, prd_se: Optional[str]) -> str:
+    """"전달/전분기 대비"(MoM/QoQ) 기준값(base)의 시점을 계산한다 — target 시점에서
+    월/분기를 1만큼 줄이고, 연초(1월/1분기)를 넘어가면 연도를 1 줄인다.
+
+    2026-08-13 실측 발견: run_stage_5_6이 calc_type이 "증감"/"증감률"이기만 하면 comparison_target
+    을 전혀 안 보고 무조건 _prior_year_same_period(전년동시점, YoY)로 base를 계산했다 — 그래서
+    기사가 "전달 대비"(MoM)라고 명시해도 항상 "작년 같은 달"과 비교돼버려서, period 자체는
+    정확히 뽑혔는데도(예: 202504) base가 202404(1년 전)로 계산되는 바람에 판정이 계속
+    틀렸다("트리플 감소" 기사 재검증 중 발견 — claim 8개 중 다수가 "전달 대비"인데도 전부
+    YoY로 계산되고 있었음).
+
+    prd_se가 M/Q가 아니거나(예: Y) period가 6자리가 아니면 "직전 주기"라는 개념 자체가
+    전년동시점과 구분이 안 되므로(연간 표에서 "전달"은 의미가 없음) 안전하게
+    _prior_year_same_period로 폴백한다."""
+    if len(period) == 6 and prd_se in ("M", "Q"):
+        year, suffix = int(period[:4]), int(period[4:])
+        max_suffix = 12 if prd_se == "M" else 4
+        if suffix <= 1:
+            return f"{year - 1:04d}{max_suffix:02d}"
+        return f"{year:04d}{suffix - 1:02d}"
+    return _prior_year_same_period(period)
+
+
 def run_stage_5_6(
     table_id: str,
     generic_slots: dict,
     table_params: dict,
     client: KosisApiClient,
     calculator: KosisCalculator,
+    *,
+    comparison_target: Optional[str] = None,
+    claim_sentence: Optional[str] = None,
+    article_year: Optional[int] = None,
 ) -> Optional[ComputedResult]:
-    """5·6단계. 7·8단계로 넘길 수 있도록 ComputedResult를 반환한다 (실패/스킵 시 None)."""
+    """5·6단계. 7·8단계로 넘길 수 있도록 ComputedResult를 반환한다 (실패/스킵 시 None).
+
+    comparison_target: claim_extractor가 뽑아둔 원문 비교 기준 표현(예: "전달", "작년",
+    "전년동월"). "전달/전월/전분기" 계열이면 직전 주기(MoM/QoQ)를, 그 외(명시 없음 포함)는
+    기존처럼 전년동시점(YoY)을 base로 계산한다(2026-08-13, _wants_prior_immediate_period
+    참고) — 지정 안 하면(기본값 None) 항상 YoY라 하위 호환된다.
+
+    claim_sentence/article_year: calc_type이 "최댓값검증"/"최솟값검증"일 때 극값 시작
+    연도를 원문에서 계산하기 위해 필요(route_calc_type이 이 calc_type을 정해서
+    generic_slots["calc_type"]에 덮어쓴 뒤 호출부가 넘겨준다) — 팀원(D)이 다른 브랜치에서
+    만든 극값검증 기능을 이 브랜치의 오늘 자 수정사항(다중주기/MoM-YoY 구분)과 함께
+    합친 것(2026-08-14)."""
     kosis_slots = build_kosis_slots(table_id, generic_slots, table_params)
     if kosis_slots is None:
         print(
@@ -393,7 +468,11 @@ def run_stage_5_6(
     calc_type = generic_slots.get("calc_type")
     try:
         if calc_type in ("증감", "증감률") and kosis_slots.get("period"):
-            base_slots = dict(kosis_slots, period=str(int(kosis_slots["period"]) - 1))
+            if _wants_prior_immediate_period(comparison_target):
+                base_period = _prior_immediate_period(kosis_slots["period"], generic_slots.get("prd_se"))
+            else:
+                base_period = _prior_year_same_period(kosis_slots["period"])
+            base_slots = dict(kosis_slots, period=base_period)
             base_resp = client(table_id, base_slots)
             target_resp = client(table_id, kosis_slots)
             print(f"[5단계 api_client] base   = {base_resp}")
@@ -401,6 +480,35 @@ def run_stage_5_6(
 
             calc_fn = calculator.compute_change_rate if calc_type == "증감률" else calculator.compute_change
             result = calc_fn(base_resp, target_resp)
+            print(f"[6단계 calculator] {result}")
+            return result
+        elif calc_type in ("최댓값검증", "최솟값검증") and kosis_slots.get("period"):
+            start_year = resolve_since_event_start_year(claim_sentence or "")
+            if start_year is None:
+                start_year = resolve_n_years_since_start_year(claim_sentence or "", article_year)
+            if start_year is None:
+                if not ALL_TIME_RE.search(claim_sentence or ""):
+                    print(
+                        f"[5단계 api_client] calc_type={calc_type!r}인데 시작 연도 패턴("
+                        "코로나 이후/N년 만에/역대)을 문장에서 못 찾음 → 스킵"
+                    )
+                    return None
+                # "역대"(ALL_TIME_RE)는 기준 시점 자체가 없는 표현이라 문장만으론 시작
+                # 연도를 못 구한다. agent_chat.py의 resolve_max_all_time_responses()가
+                # 이미 팀 합의로 채택한 관행(2026-08-06)을 그대로 따른다: 넉넉히 이른
+                # 연도(1960)부터 요청해도 KOSIS가 실제 데이터 있는 시점부터만 돌려주므로
+                # (실측: DT_1DA7102S에 1999년부터 요청해도 2000년부터 응답) 표별 정확한
+                # 최소 연도를 몰라도 안전하다 — table_params.json에 아직 표별 최소 연도가
+                # 없어서 그쪽 기준은 못 쓴다.
+                start_year = 1960
+
+            historical = client.fetch_series(table_id, kosis_slots, str(start_year), str(article_year))
+            current_resp = client(table_id, kosis_slots)
+            print(f"[5단계 api_client] current    = {current_resp}")
+            print(f"[5단계 api_client] historical({start_year}~{article_year}) = {len(historical)}건")
+
+            check_fn = calculator.compute_max_check if calc_type == "최댓값검증" else calculator.compute_min_check
+            result = check_fn(current_resp, historical)
             print(f"[6단계 calculator] {result}")
             return result
         else:
@@ -417,19 +525,19 @@ def run_stage_5_6(
 
 
 def run_stage_7_8(
-    claim, top, computed: ComputedResult, *, table_params: Optional[dict] = None
+    claim, top, computed: ComputedResult, *, prd_se: Optional[str] = None
 ) -> Optional[tuple[Verdict, Optional[Explanation]]]:
     """7단계 judge + 8단계 explain. judge가 실패하면 이 주장 전체를 스킵(None)하지만,
     explain만 실패하는 경우는 Verdict는 살리고 Explanation만 None으로 반환한다 —
     DB 저장 레이어가 evidence 필드는 비어도 verification_result는 기록할 수 있게 하기 위함.
 
-    table_params: 3단계가 매칭한 표(top.table_id)의 prdSe를 조회해서 judge/explain에
-    넘긴다 — computed.period("202402" 등)가 월인지 분기인지 판정/설명 프롬프트가 헷갈리지
-    않게 하기 위함(2026-08-12). 안 넘기면 기존과 동일하게 원본 period 문자열 그대로 노출."""
-    prd_se = None
-    if top and table_params and top.table_id in table_params:
-        prd_se = table_params[top.table_id].get("prdSe")
-
+    prd_se: 4단계(run_stage_4)가 이미 표의 지원 주기 목록 중에서 골라둔 값을 그대로
+    받는다(2026-08-13) — computed.period("202402" 등)가 월인지 분기인지 판정/설명
+    프롬프트가 헷갈리지 않게 하기 위함(2026-08-12에 처음 도입). table_params에서 표 하나당
+    prdSe 하나였던 옛날엔 여기서 직접 조회해도 됐지만, 이제 prdSe가 목록이라 "실제로 어떤
+    주기로 조회했는지"는 4단계의 선택 결과를 그대로 받아야만 정확하다 — table_params를
+    다시 조회하면 목록 전체(예: ['Y','Q','M'])를 받아 어느 것도 특정 못 한다. 안 넘기면
+    기존과 동일하게 원본 period 문자열 그대로 노출."""
     try:
         verdict = judge(claim, computed, prd_se=prd_se)
         print(f"[7단계 judge] {verdict}")
@@ -510,7 +618,7 @@ def _build_verification_record(
         "kosis_table": top.table_name if top else None,
         "kosis_item": None,  # C의 table_params.json엔 아직 사람이 읽을 항목명이 없음 (알려진 갭)
         "kosis_dimension": kosis_dimension,
-        "calculation_required": calc_type in ("증감", "증감률"),
+        "calculation_required": calc_type in ("증감", "증감률", "최댓값검증", "최솟값검증"),
         "calculation_type": computed.calc_type if computed else None,
         "verification_possible": verification_possible,
         "ambiguity_reason": ambiguity_reason,
@@ -556,6 +664,26 @@ def run_article(
     except Exception as e:
         print(f"[2단계 claim_extractor] 실패 ({type(e).__name__}: {e}) → 이 기사 스킵")
         return results
+
+    # source_filter(2단계 이후 출처 검증 필터) — 실제로 KOSIS 국가승인통계를 생산하는
+    # 기관이 출처인 claim만 3단계(표매칭)로 넘긴다. 이 필터는 이미 만들어져 있었는데
+    # batch_runner.py에 연결이 안 돼 있어서, 상하이모터쇼 참가 기업 수·유튜버 수퍼챗 수입처럼
+    # 출처가 아예 없거나(source_org=None) 개인/기업발 정보인 claim이 그대로 3~8단계를
+    # 다 태우고 있었다(2026-08-13 실측 확인). 필터링 전/후 건수를 로그로 남긴다.
+    #
+    # classifier_reason(2번째 인자)을 다시 넘긴다 — claim_extractor(LLM)가 source_org를
+    # 아예 못 채우는 경우가 실측으로 훨씬 흔했다(2026-08-13, --csv 15건 재실행에서 25개
+    # claim 전부가 이 이유로 걸러짐 — 과기정통부가 기사 첫 문장 주어인 SKT 유심 기사조차
+    # source_org=None으로 뽑힘). 한때 "국세청 관계자는 ~라고 말했다"처럼 기관명이 일반
+    # 인용문에 스쳐 지나가는 오탐(유튜버 수퍼챗 수입 기사) 때문에 이 폴백을 통째로 껐었는데,
+    # 대신 infer_org_from_reason 자체에 "발표/집계/공표/통계/조사"류 키워드가 reason에
+    # 같이 있어야만 발동하는 안전장치를 달아서 재활성화했다(source_filter.py 참고) —
+    # 통계 발표 reason은 복구하고, 일반 인용문 오탐은 계속 차단.
+    claims = resolve_claim_sources(claims, cls_result.reason)
+    before_filter = len(claims)
+    claims = filter_verifiable_claims(claims)
+    if before_filter != len(claims):
+        print(f"[2단계 출처 필터] {before_filter}개 중 {before_filter - len(claims)}개 제외 (KOSIS 미검증 출처)")
 
     for claim in claims:
         print(f"{'-' * 60}")
@@ -634,98 +762,150 @@ def run_article(
             continue
 
         top = candidates[0]
-        print(f"[3단계 매핑] 최상위 후보: {top.table_name} ({top.table_id}) score={top.score:.3f}")
-
-        # 안전장치: keyword_search가 못 찾아서 embedding_search만으로 나온 후보는
-        # source_meta에 "unverified"로 표시된다(reranker.py의 _merge_candidates 참고).
-        # 지금 embedding_search는 아직 실제 임베딩 API가 아니라 해시 기반 더미라 노이즈에
-        # 가까운데, 이 노이즈가 특정 표(예: DT_200Y102)로 구조적으로 쏠려서 전혀 무관한
-        # 주장도 그럴듯한 score로 매칭해버리는 문제가 실제 배치 실행에서 확인됨. 검증 안
-        # 된 매칭을 억지로 쓰지 않고 "매칭 없음"으로 처리한다.
-        if top.source_meta and "unverified" in top.source_meta:
-            print(f"[3단계 매핑] 최상위 후보가 검증 안 된 임베딩 전용 매칭(신뢰도 낮음) → 매칭 없음으로 처리")
-            try:
-                insert_verification(
-                    _build_verification_record(
-                        article=article, claim=claim, top=top, generic_slots=None,
-                        table_params=table_params, computed=None, verdict=None, explanation=None,
-                        cls_result=cls_result, catalog_by_id=catalog_by_id,
-                        verification_possible="애매",
-                        ambiguity_reason="표 매칭 신뢰도가 낮아 검증 안 된 임베딩 전용 매칭임",
-                    )
-                )
-            except Exception as e:
-                print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
-            results.append(
-                {
-                    "article": article["label"],
-                    "claim_sentence": claim.sentence,
-                    "table_name": top.table_name,
-                    "verdict": "표매칭_불충분",
-                    "gap_type": None,
-                    "classifier_score": cls_result.score,
-                }
-            )
-            continue
-
-        try:
-            slots = run_stage_4(
-                claim.sentence,
-                article.get("clarify_reply"),
-                article["published_date"],
-                table_id=top.table_id,
-                table_params=table_params,
-            )
-        except Exception as e:
-            print(f"[4단계 slot_filler] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
-            continue
-        if slots is None:
-            continue
-
-        # 4단계는 항상 연도 4자리("2024")만 만드는데, 매핑된 표가 월/분기 단위면 KOSIS가
-        # 그 형식을 거부한다 — 문장에서 실제 월/분기를 다시 찾아 표 형식에 맞게 정밀화한다
-        # (build_kosis_slots 위 _refine_period_for_table 참고, 2026-08-12 버그 수정).
-        refined_period = _refine_period_for_table(
-            slots.get("period"), claim.sentence, top.table_id, table_params, article["published_date"]
+        result = _finish_claim_with_top_candidate(
+            article, claim, cls_result, top, table_params, client, calculator, catalog_by_id
         )
-        if slots.get("period") and not refined_period:
-            print(
-                f"[4단계→5단계] '{top.table_id}' 표는 월/분기 단위인데 문장에서 구체적인 "
-                f"월/분기를 못 찾음 → 이 주장 스킵 (연도만으로는 형식이 안 맞음)"
-            )
-            continue
-        slots["period"] = refined_period
-
-        computed = run_stage_5_6(top.table_id, slots, table_params, client, calculator)
-        if computed is None:
-            continue
-
-        outcome = run_stage_7_8(claim, top, computed, table_params=table_params)
-        if outcome is not None:
-            verdict, explanation = outcome
-            try:
-                insert_verification(
-                    _build_verification_record(
-                        article=article, claim=claim, top=top, generic_slots=slots,
-                        table_params=table_params, computed=computed, verdict=verdict,
-                        explanation=explanation, cls_result=cls_result, catalog_by_id=catalog_by_id,
-                        verification_possible="가능", ambiguity_reason=None,
-                    )
-                )
-            except Exception as e:
-                print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
-            results.append(
-                {
-                    "article": article["label"],
-                    "claim_sentence": claim.sentence,
-                    "table_name": top.table_name,
-                    "verdict": verdict.verdict,
-                    "gap_type": verdict.gap_type,
-                    "classifier_score": cls_result.score,
-                }
-            )
+        if result is not None:
+            results.append(result)
 
     return results
+
+
+def _finish_claim_with_top_candidate(
+    article: dict,
+    claim,
+    cls_result,
+    top,
+    table_params: dict,
+    client: KosisApiClient,
+    calculator: KosisCalculator,
+    catalog_by_id: dict,
+) -> Optional[dict]:
+    """3단계(표매칭+리랭킹)에서 최종 top 후보가 이미 정해진 뒤, 4~8단계를 마저 실행하고
+    DB에 저장한 뒤 결과 레코드(dict) 하나를 반환한다 (저장할 게 없으면 None).
+
+    2026-08-13: run_article의 리랭킹 이후 로직을 그대로 뽑아온 것 — 로컬 RAM으로 리랭커
+    모델(bge-reranker-v2-m3, 568M)을 못 돌려서 코랩에서 리랭킹만 대신 실행하는 흐름
+    (export_for_rerank.py → 코랩 노트북 → resume_after_rerank.py)이 필요해졌는데, 리랭킹
+    "이후" 단계(4~8단계+DB저장)는 정상 경로(run_article)와 코랩 경로(resume_after_rerank.py)
+    둘 다 완전히 똑같이 해야 하므로 공유 함수로 뽑았다. run_article 자체의 동작은 이 리팩토링
+    전후로 동일하다(로직 이동만, 변경 없음)."""
+    print(f"[3단계 매핑] 최상위 후보: {top.table_name} ({top.table_id}) score={top.score:.3f}")
+
+    # 안전장치: keyword_search가 못 찾아서 embedding_search만으로 나온 후보는
+    # source_meta에 "unverified"로 표시된다(reranker.py의 _merge_candidates 참고).
+    # 임베딩 코사인 유사도만으로는(리랭커 없이는) 노이즈와 진짜 신호를 구분하기 어렵다는 게
+    # 실측으로 재확인됐다(2026-08-13, 완전 무관한 문장도 진짜 매칭과 비슷한 점수대가 나옴) —
+    # 검증 안 된 매칭을 억지로 쓰지 않고 "매칭 없음"으로 처리한다.
+    if top.source_meta and "unverified" in top.source_meta:
+        print(f"[3단계 매핑] 최상위 후보가 검증 안 된 임베딩 전용 매칭(신뢰도 낮음) → 매칭 없음으로 처리")
+        try:
+            insert_verification(
+                _build_verification_record(
+                    article=article, claim=claim, top=top, generic_slots=None,
+                    table_params=table_params, computed=None, verdict=None, explanation=None,
+                    cls_result=cls_result, catalog_by_id=catalog_by_id,
+                    verification_possible="애매",
+                    ambiguity_reason="표 매칭 신뢰도가 낮아 검증 안 된 임베딩 전용 매칭임",
+                )
+            )
+        except Exception as e:
+            print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
+        return {
+            "article": article["label"],
+            "claim_sentence": claim.sentence,
+            "table_name": top.table_name,
+            "verdict": "표매칭_불충분",
+            "gap_type": None,
+            "classifier_score": cls_result.score,
+        }
+
+    try:
+        slots = run_stage_4(
+            claim.sentence,
+            article.get("clarify_reply"),
+            article["published_date"],
+            table_id=top.table_id,
+            table_params=table_params,
+        )
+    except Exception as e:
+        print(f"[4단계 slot_filler] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
+        return None
+    if slots is None:
+        return None
+
+    # calc_type_router.route_calc_type()이 claim_type + claim.sentence 규칙만으로
+    # calc_type을 결정한다 — 4단계 LLM이 slot_filler에서 추측한 slots["calc_type"]보다
+    # 우선한다(팀원 D 실측: "청년실업률, 코로나 이후 최고" claim이 LLM 추측으로는 "증감률"로만
+    # 채워져서 "작년 대비 증감률"로 잘못 계산되고, "7% 중반 대 0.0%"라는 무의미한 비교로
+    # 오판정되는 사례가 확인됨). None이면 claim_type="전망"이거나 해외 국가 포함(이미 위에서
+    # 걸렀어야 하는 케이스의 안전망) 등 규칙 라우팅 불가라는 뜻이라, 5~8단계를 건너뛰고
+    # 즉시 판단불가 처리한다(2026-08-14, 팀원 D의 브랜치 작업을 오늘 자 수정사항과 병합).
+    routed_calc_type = route_calc_type(claim)
+    if routed_calc_type is None:
+        print(
+            f"[calc_type 라우팅] route_calc_type()이 None → claim_type={claim.claim_type!r} "
+            "규칙 기반 라우팅 불가 → 5~8단계 건너뛰고 즉시 판단불가 처리"
+        )
+        verdict = Verdict(
+            verdict="판단불가", gap_type=None,
+            reason="calc_type 규칙 기반 라우팅 불가(claim_type=전망 또는 해외 국가 포함 등)",
+        )
+        try:
+            insert_verification(
+                _build_verification_record(
+                    article=article, claim=claim, top=top, generic_slots=slots,
+                    table_params=table_params, computed=None, verdict=verdict, explanation=None,
+                    cls_result=cls_result, catalog_by_id=catalog_by_id,
+                    verification_possible="불가",
+                    ambiguity_reason="calc_type_router.route_calc_type()이 None을 반환(claim_type=전망 등)",
+                )
+            )
+        except Exception as e:
+            print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
+        return {
+            "article": article["label"],
+            "claim_sentence": claim.sentence,
+            "table_name": top.table_name,
+            "verdict": "판단불가",
+            "gap_type": None,
+            "classifier_score": cls_result.score,
+        }
+
+    print(f"[calc_type 라우팅] LLM 추정값({slots.get('calc_type')!r}) 대신 규칙 기반 결과로 덮어씀 → {routed_calc_type!r}")
+    slots["calc_type"] = routed_calc_type
+
+    computed = run_stage_5_6(
+        top.table_id, slots, table_params, client, calculator,
+        comparison_target=claim.comparison_target,
+        claim_sentence=claim.sentence, article_year=article["published_date"].year,
+    )
+    if computed is None:
+        return None
+
+    outcome = run_stage_7_8(claim, top, computed, prd_se=slots.get("prd_se"))
+    if outcome is not None:
+        verdict, explanation = outcome
+        try:
+            insert_verification(
+                _build_verification_record(
+                    article=article, claim=claim, top=top, generic_slots=slots,
+                    table_params=table_params, computed=computed, verdict=verdict,
+                    explanation=explanation, cls_result=cls_result, catalog_by_id=catalog_by_id,
+                    verification_possible="가능", ambiguity_reason=None,
+                )
+            )
+        except Exception as e:
+            print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
+        return {
+            "article": article["label"],
+            "claim_sentence": claim.sentence,
+            "table_name": top.table_name,
+            "verdict": verdict.verdict,
+            "gap_type": verdict.gap_type,
+            "classifier_score": cls_result.score,
+        }
+    return None
 
 
 def print_review_summary(results: list[dict]) -> None:
