@@ -17,8 +17,28 @@ agent/preprocessing/source_filter.py — 2단계 이후: claim 단위 출처기�
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from typing import Optional
+
+# agent/kosis/build_org_whitelist.py가 만드는 캐시 — table_params.json에 실제 등장하는
+# orgId를 KOSIS API(getMeta type=ORG)로 직접 조회해서 만든, 카탈로그와 항상 동기화되는
+# 기관명 목록이다(2026-08-13 도입). 아래 KOSIS_VERIFIED_ORGS(수동 목록)와 합쳐서 쓴다 —
+# 수동 목록만으로는 새 표를 추가할 때 발행 기관을 깜빡 빠뜨리는 문제가 실측 확인됐다
+# (과학기술정보통신부/기획예산처 누락 사례). 파일이 아직 없으면(스크립트 실행 전) 빈 채로
+# 두고 수동 목록만 쓴다 — 배치 실행 자체가 막히면 안 되므로 조용히 넘어간다.
+_ORG_WHITELIST_CACHE_PATH = Path(__file__).parent / "kosis_org_whitelist.json"
+
+
+def _load_cached_org_names() -> set[str]:
+    if not _ORG_WHITELIST_CACHE_PATH.exists():
+        return set()
+    try:
+        data = json.loads(_ORG_WHITELIST_CACHE_PATH.read_text(encoding="utf-8"))
+        return set(data.values())
+    except (json.JSONDecodeError, OSError):
+        return set()
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -40,14 +60,24 @@ except ImportError:
 # 우리 table_catalog.json에 실제로 등장하거나, 정부 부처/청 단위로 KOSIS 국가승인통계를
 # 생산하는 게 상식적으로 확실한 기관들. orgId 기준으로 이미 검증된 것(통계청/국가데이터처=101,
 # 한국은행=301, 관세청=134, 한국무역협회=360, 보건복지부=117 등)과 나머지 정부 부처를 포함.
-KOSIS_VERIFIED_ORGS = {
+#
+# 2026-08-13: table_params.json에 실제로 등장하는 orgId 14개 전부를 KOSIS getMeta(type=ORG)
+# API로 직접 조회해서 대조한 결과, "과학기술정보통신부"(orgId=127, 연구개발비 표)와
+# "기획예산처"(orgId=184, 통합재정수지 표 — 2008년 기획재정부로 통합되기 전 옛 명칭인데
+# KOSIS 등록엔 그 이름 그대로 남아있음)가 화이트리스트에 빠져있는 걸 발견해서 추가함.
+_MANUAL_KOSIS_VERIFIED_ORGS = {
     "통계청", "국가데이터처", "한국은행", "한은", "국세청", "관세청", "농림축산식품부", "농식품부",
-    "식품의약품안전처", "식약처", "기획재정부", "기재부", "고용노동부", "고용부", "보건복지부", "복지부",
+    "식품의약품안전처", "식약처", "기획재정부", "기재부", "기획예산처", "고용노동부", "고용부",
+    "보건복지부", "복지부",
     "국토교통부", "국토부", "행정안전부", "행안부", "여성가족부", "여가부",
     "중소벤처기업부", "중기부", "교육부",
     "산업통상자원부", "산업통상부", "산업부", "문화체육관광부", "문체부", "환경부", "해양수산부", "해수부",
+    "과학기술정보통신부", "과기정통부",
     "국민연금공단", "한국거래소", "한국부동산원", "한국무역협회", "산림청", "기상청",
 }
+
+# 수동 목록 + 카탈로그 기반 자동 캐시를 합친 최종 화이트리스트.
+KOSIS_VERIFIED_ORGS = _MANUAL_KOSIS_VERIFIED_ORGS | _load_cached_org_names()
 
 # 확실히 KOSIS로 검증 불가능한 출처 — 해외기관/정부, 민간기업, 신용평가사, 정당, 개인 등.
 KNOWN_NOT_KOSIS = {
@@ -88,6 +118,14 @@ def classify_source(source_org: Optional[str]) -> str:
     return "uncertain"
 
 
+# "발표/집계/공표/통계/조사"류 표현이 reason에 함께 있을 때만 infer_org_from_reason을
+# 발동시키는 안전장치(2026-08-13). "밝히다"/"말하다"류 범용 인용 동사는 일부러 뺐다 —
+# "OO 관계자는 ~라고 말했다"처럼 스포크스퍼슨 발언 어디에나 붙어서 실제 통계 발표와
+# 구분이 안 된다(유튜버 수퍼챗 수입 기사에서 "국세청 관계자는 ~라고 말했다"의 국세청이
+# 엉뚱하게 전체 claim의 출처로 오인된 사례, 2026-08-13 실측).
+_STATS_ATTRIBUTION_RE = re.compile(r"(발표|집계|공표|통계|조사)")
+
+
 def infer_org_from_reason(reason: Optional[str]) -> Optional[str]:
     """1단계(classifier)의 ClassificationResult.reason 텍스트에서 KOSIS 검증된 기관명을
     찾아낸다 — claim_extractor가 특정 claim의 source_org를 못 채웠을 때(같은 기사 내
@@ -96,8 +134,12 @@ def infer_org_from_reason(reason: Optional[str]) -> Optional[str]:
     (claim_extractor.py 자체는 건드리지 않는 비침습적 보완 — 2026-08-05).
 
     실제 검증(2026-08-05): source_org가 아예 없던 기사 22건 중 6건에서 이 방식으로
-    기관명 복구 확인(행정안전부/통계청 x2/기획재정부 x2/농식품부)."""
-    if not reason:
+    기관명 복구 확인(행정안전부/통계청 x2/기획재정부 x2/농식품부).
+
+    2026-08-13: reason에 통계 발표를 나타내는 키워드가 없으면 기관명이 있어도 폴백을
+    발동하지 않는다(_STATS_ATTRIBUTION_RE 참고) — 일반 인용문에 기관명이 스쳐 지나가는
+    오탐을 막기 위함."""
+    if not reason or not _STATS_ATTRIBUTION_RE.search(reason):
         return None
     normalized = _normalize_whitespace(reason)
     for org in sorted(KOSIS_VERIFIED_ORGS, key=len, reverse=True):
@@ -210,5 +252,29 @@ if __name__ == "__main__":
     assert mixed_filled[3].source_org == "통계청"
     print("\n[회귀 테스트 통과] 혼합 출처(개인 발언 다수 + 공식 통계 소수)에서 "
           "공식 통계가 backfill 우선순위를 가져감 확인")
+
+    # 2026-08-13 회귀 테스트: infer_org_from_reason 안전장치.
+    # (a) "~가 공식적으로 발표하였다"류 실제 통계 발표 reason은 여전히 복구돼야 한다
+    #     (SKT 유심보호서비스 기사, 과기정통부 — claim_extractor가 source_org를 전부
+    #     None으로 뽑았던 실제 케이스).
+    good_reason = (
+        "과학기술정보통신부가 SK텔레콤의 유심 정보 해킹 사건과 관련하여 신규 가입자 모집 "
+        "중단 및 유심 물량 공급 안정화를 위한 조치를 취했다는 내용을 공식적으로 발표하였다."
+    )
+    assert infer_org_from_reason(good_reason) == "과학기술정보통신부", (
+        f"기대: 과학기술정보통신부, 실제: {infer_org_from_reason(good_reason)!r} — "
+        f"통계 발표 reason 복구가 깨졌습니다."
+    )
+    # (b) "OO 관계자는 ~라고 말했다"류 일반 인용문은 기관명이 스쳐도 폴백이 발동하면 안
+    #     된다(유튜버 수퍼챗 수입 기사, 국세청 오탐 재현 — 2026-08-13 실측).
+    bad_reason = "국세청 관계자는 유튜버들의 수퍼챗 등 후원금이 과세 대상이라고 말했다."
+    assert infer_org_from_reason(bad_reason) is None, (
+        f"기대: None, 실제: {infer_org_from_reason(bad_reason)!r} — 일반 인용문 오탐이 "
+        f"재발했습니다."
+    )
+    print(
+        "[회귀 테스트 통과] infer_org_from_reason 안전장치 — 통계 발표 reason은 복구되고, "
+        "일반 인용문 오탐은 계속 차단됨 확인"
+    )
 
     print("\n최종 통과:", [c.source_org for c in filter_verifiable_claims(backfill_source_org(samples))])

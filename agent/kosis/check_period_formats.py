@@ -26,13 +26,30 @@ def main() -> None:
 
     problems: list[str] = []
     for table_id, base in table_params.items():
-        prd_se = base.get("prdSe")
+        # 2026-08-13부터 prdSe가 "지원 가능한 주기 목록"으로 바뀌어서, startPrdDe/endPrdDe에
+        # 등록된 값(표 등록 당시 실제로 검증했던 시점 하나)이 그 목록 중 하나의 형식과만
+        # 맞으면 정상으로 본다 — 목록 전체와 다 맞아야 하는 게 아니라, "이 값이 어느 주기
+        # 형식으로도 해석이 안 되는 완전히 깨진 값인가"만 잡아내는 느슨한 점검이다.
+        prd_se_options = base.get("prdSe")
+        if isinstance(prd_se_options, str):
+            prd_se_options = [prd_se_options]
+        prd_se_options = prd_se_options or [None]
+
         for field in ("startPrdDe", "endPrdDe"):
             value = base.get(field)
-            try:
-                _validate_period_format(table_id, prd_se, value, param_name=field)
-            except Exception as e:  # noqa: BLE001 - 점검 스크립트, 계속 진행
-                problems.append(f"{table_id} ({field}={value!r}, prdSe={prd_se!r}): {e}")
+            errors = []
+            for prd_se in prd_se_options:
+                try:
+                    _validate_period_format(table_id, prd_se, value, param_name=field)
+                    errors = []
+                    break
+                except Exception as e:  # noqa: BLE001 - 점검 스크립트, 계속 진행
+                    errors.append(str(e))
+            if errors:
+                problems.append(
+                    f"{table_id} ({field}={value!r})가 지원 주기 {prd_se_options} 중 "
+                    f"어느 것과도 안 맞음: {errors[-1]}"
+                )
 
     if not problems:
         print("이상 없음 — 등록된 모든 표의 startPrdDe/endPrdDe가 prdSe 형식과 일치합니다.")
