@@ -388,6 +388,13 @@ def _implied_tolerance(claim_value: float, is_percent: bool) -> float:
 
 _RATE_CALC_TYPES = ("증감", "증감률")
 _LEVEL_CALC_TYPES = ("단순조회", "합계", "규모")
+_EXTREME_CALC_TYPES = ("최댓값검증", "최솟값검증")
+
+# "2020＝100"/"2020=100"처럼 특정 연도를 100으로 두는 지수 표기 — 이 unit이면 raw_value
+# 자체가 이미 "그 연도 대비 몇 % 수준"이라는 뜻이라(148.03 = 2020년보다 48.03% 높음),
+# 퍼센트 주장("6% 올랐다")과 raw_value를 그냥 직접 빼면 안 된다(148.03과 6을 바로 비교하면
+# 완전히 다른 스케일을 뺀 무의미한 숫자가 나옴).
+_BASE_100_INDEX_UNIT_RE = re.compile(r"(19|20)\d{2}\s*[＝=]\s*100")
 
 
 def _claim_computed_type_mismatch(claim: Claim, computed: ComputedResult) -> bool:
@@ -398,11 +405,25 @@ def _claim_computed_type_mismatch(claim: Claim, computed: ComputedResult) -> boo
     computed.calc_type="증감률"인 계산값(실업률 자체의 전년비 변화율 3.7%)과 그대로 숫자
     비교해서 "6 vs 3.7%p 차이, 불일치"로 확정한 사례가 있었음 — 최종 판정은 우연히 맞았지만
     비교 근거 자체가 잘못된 값이었음. 종류가 다르면 숫자가 우연히 비슷하든 다르든 규칙으로
-    확정하지 않고 LLM에 위임해서 문장을 직접 보고 판단하게 한다.)
+    확정하지 않고 LLM에 위임해서 문장을 직접 보고 판단하게 한다.
+
+    2026-08-15 실측 추가: computed.calc_type="최댓값검증"(팀원 D 브랜치, 나중에 병합된
+    기능이라 이 함수가 원래 모르던 calc_type)이 "2020＝100" 같은 지수 단위를 raw_value로
+    반환했는데, claim이 퍼센트 주장("6% 넘게 올라")이면 규칙 비교(_numeric_gap)가 148.03과
+    6.0을 그냥 직접 빼서 "142.03%p 차이, 불일치"로 확정해버리는 사례가 나왔다(원래는
+    148.03을 "2020년 대비 48.03% 상승"으로 환산한 뒤 비교했어야 함 — 8단계 LLM 설명은
+    이 환산을 스스로 해냈지만 7단계 규칙 비교엔 그 로직이 없었음). 최댓값/최솟값검증인데
+    지수 단위이고 claim이 퍼센트면 규칙으로 확정하지 않고 LLM에 위임한다.)
     """
     if claim.claim_type == "규모" and computed.calc_type in _RATE_CALC_TYPES:
         return True
     if claim.claim_type == "증감률" and computed.calc_type in _LEVEL_CALC_TYPES:
+        return True
+    if (
+        computed.calc_type in _EXTREME_CALC_TYPES
+        and _is_percent(claim, computed)
+        and _BASE_100_INDEX_UNIT_RE.search(computed.unit or "")
+    ):
         return True
     return False
 
@@ -507,7 +528,7 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
             verdict="불일치",
             gap_type="수치",
             reason=(
-                f"기사 수치({claim_value})와 통계 계산값({computed.raw_value}{computed.unit}) "
+                f"기사 수치({claim_value})와 통계 계산값({computed.raw_value} {computed.unit}) "
                 f"차이가 {gap:.2f}{gap_unit}로 허용 오차(반올림 단위 추정 ±{tolerance:g}{gap_unit})를 "
                 "크게 초과함 (규칙 기반 판정, LLM 미호출)."
             ),
@@ -527,7 +548,7 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
                 verdict="일치",
                 gap_type=None,
                 reason=(
-                    f"기사 수치({claim_value})와 통계 계산값({computed.raw_value}{computed.unit}) "
+                    f"기사 수치({claim_value})와 통계 계산값({computed.raw_value} {computed.unit}) "
                     f"차이가 허용 오차(반올림 단위 추정 ±{tolerance:g}{gap_unit}) 이내이고 시점·단위 "
                     "불일치도 없음 (규칙 기반 판정, LLM 미호출)."
                 ),
@@ -627,7 +648,7 @@ def judge_complex(
         for c in claims
     )
     computed_block = "\n".join(
-        f"- {r.calc_type} {r.raw_value}{r.unit} ({r.period} 기준)" for r in computed_results
+        f"- {r.calc_type} {r.raw_value} {r.unit} ({r.period} 기준)" for r in computed_results
     )
     prompt = (
         "아래는 한 기사에서 나온 여러 개의 수치 주장과, 그걸 검증하기 위해 조회한 여러 개의 "
@@ -971,3 +992,28 @@ if __name__ == "__main__":
     print("[period 라벨 포맷] '202402'+Q -> '2024년 2분기', +M -> '2024년 2월', prd_se 없으면 원본 유지 ✅")
     print("  → 통과: 분기 표의 202402가 판정 설명 프롬프트에서 더 이상 '월'로 오인식되지 않음")
     print("     (2026-08-12, 中 1분기 GDP 기사에서 실측 확인된 버그).")
+
+    print("\n=== 2026-08-15 신규: 최댓값검증 + 지수단위(2020=100) vs 퍼센트 주장 오판정 방어 ===")
+    # 실제 배치 실행에서 재현된 버그: "돼지고기·계란 등 축산물 가격은 6% 넘게 올라"(퍼센트
+    # 주장)를 최댓값검증 계산값(raw_value=148.03, unit="2020＝100")과 그냥 직접 빼서
+    # "142.03%p 차이, 불일치"로 확정해버렸음. 148.03은 그 자체로 이미 "2020년 대비 48.03%
+    # 상승"이라는 뜻이라(2020년=100 기준 지수), 6과 직접 비교하면 안 되는 값이었음.
+    index_claim = Claim(
+        sentence="다만 돼지고기·계란 등 축산물 가격은 6% 넘게 올라 약 3년 만에 가장 높은 상승폭을 기록했다.",
+        claim_type="규모", value=6.0, unit="%",
+    )
+    index_computed = ComputedResult(calc_type="최댓값검증", raw_value=148.03, unit="2020＝100", period="2025")
+    assert _rule_based_verdict(index_claim, index_computed) is None, (
+        "❌ 지수단위(2020=100) 최댓값검증이 퍼센트 주장과 그대로 비교되어 규칙으로 확정됨 — 회귀 재발"
+    )
+    print("[최댓값검증+지수단위 방어] 규칙 기반으로 확정 안 하고 LLM에 위임함 ✅")
+    print("  → 통과: raw_value(148.03)와 claim_value(6.0)를 스케일이 다른데도 그냥 빼서")
+    print("     '142.03%p 차이, 불일치'로 잘못 확정하던 문제가 재발하지 않음.")
+
+    # 정상 케이스(지수단위 아님)까지 같이 막히면 안 됨 — 회귀 확인.
+    normal_extreme_claim = Claim(sentence="실업률이 6%로 역대 최고를 기록했다", claim_type="규모", value=6.0, unit="%")
+    normal_extreme_computed = ComputedResult(calc_type="최댓값검증", raw_value=6.0, unit="%", period="2025")
+    assert _claim_computed_type_mismatch(normal_extreme_claim, normal_extreme_computed) is False, (
+        "❌ 지수단위가 아닌 정상적인 최댓값검증(%)까지 잘못 막혀버림"
+    )
+    print("[정상 케이스 회귀 확인] 지수단위가 아닌 최댓값검증(%)은 그대로 규칙 비교 대상으로 남음 ✅")

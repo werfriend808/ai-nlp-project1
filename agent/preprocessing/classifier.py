@@ -41,6 +41,31 @@ class ClassifierError(RuntimeError):
     """분류 응답을 JSON으로 파싱하지 못한 경우."""
 
 
+# 2026-08-14 실측: classifier_prompt.txt에 이미 "1회성 사건 수치는 FALSE" 규칙과 근접한
+# 예시(예시 9/13/15/21 — 개별 사고 인명피해, 정부 관계자 발언만으로는 TRUE 아님 등)가
+# 있는데도, 모델(HCX-DASH-002)이 "정부 관계자가 공식적으로 발표했다"는 이유만으로
+# label=True를 낸 사례가 확인됐다("부안 어선 화재" 기사 — 개별 사고의 구조 상황일 뿐
+# 통계가 아닌데 score=0.92로 통과). 정상적으로 TRUE 판정된 사례들의 reason은 예외 없이
+# "통계"/"조사"/"수치"/"증가율"처럼 실제 통계 어휘를 담고 있었던 반면, 이 오탐 사례의
+# reason은 "신뢰성이 높다"류의 공식성/구체성 언급뿐 통계 어휘가 전혀 없었다 — 즉 모델이
+# 자기 판단 근거를 설명하면서 스스로 "이건 통계가 아니다"라는 신호를 흘리고 있었다.
+#
+# score만 낮추는 방식은 검토했으나 버렸다 — batch_runner.py/export_for_rerank.py 둘 다
+# cls_result.label만 보고 분기하고 score는 기록용일 뿐이라, score를 낮춰도 파이프라인
+# 동작에 실제 영향이 없다(실측 확인). 그래서 label 자체를 뒤집는다. False→True로는
+# 절대 안 바뀌므로(label=True인 경우만 검사) 새로운 오탐(원래 False였는데 True가 되는
+# 경우)을 만들 위험은 없고, 기존에 부정확하게 True였던 것 중 일부를 되돌리는 방향으로만
+# 작동한다.
+_STATISTICAL_REASON_RE = re.compile(
+    r"(통계|조사|집계|지수|비율|동향|증감률|증가율|감소율|수치|증가|감소|상승|하락|"
+    r"성장률|늘었|줄었|올랐|내렸|떨어졌)"
+)
+
+
+def _looks_like_real_statistic(reason: str) -> bool:
+    return bool(_STATISTICAL_REASON_RE.search(reason))
+
+
 def _load_prompt_template(path: Path = PROMPT_PATH) -> str:
     if not path.exists():
         raise FileNotFoundError(f"{path} 가 없습니다. A가 few-shot 프롬프트를 먼저 작성해야 합니다.")
@@ -70,16 +95,53 @@ def classify(article_text: str, *, model: str = MODEL, temperature: float = 0.0)
 
     try:
         parsed = _extract_json_object(reply)
-        return ClassificationResult(
-            label=bool(parsed["label"]),
-            score=float(parsed["score"]),
-            reason=str(parsed["reason"]),
-        )
+        label = bool(parsed["label"])
+        score = float(parsed["score"])
+        reason = str(parsed["reason"])
     except (KeyError, ValueError, json.JSONDecodeError) as e:
         raise ClassifierError(f"응답 파싱 실패: {reply!r}") from e
 
+    if label and not _looks_like_real_statistic(reason):
+        reason = (
+            f"{reason} [안전장치: label=True인데 reason에 통계 어휘가 없어 "
+            "1회성 사건/공식 발언 오판정 가능성으로 보고 False로 정정함]"
+        )
+        label = False
+        score = min(score, 0.15)
+
+    return ClassificationResult(label=label, score=score, reason=reason)
+
 
 if __name__ == "__main__":
+    # 2026-08-14 회귀 테스트: _looks_like_real_statistic() — LLM 호출 없이 순수 텍스트만
+    # 검사하므로 API 비용 없이 실행 가능. classifier_prompt.txt의 실제 TRUE 예시 reason들이
+    # 전부 안 걸리는지(오탐 방지 안전장치가 정상 케이스를 잘못 뒤집지 않는지) + 실제 오탐
+    # 사례(부안 어선 화재)의 reason은 걸리는지 확인.
+    true_example_reasons = [
+        "통계청이 발표한 공식 조사 결과를 수치와 함께 인용하고 있다.",
+        "한국은행이 발표한 공식 통계 수치를 그대로 인용하고 있다.",
+        "정부 부처가 발표한 수치(복구율)를 인용하고 있다.",
+        "국책연구기관이 발표한 수치 기반 전망치를 인용하고 있다.",
+        "기사 대부분은 기업간 배송 경쟁 서술이지만, '작년 국내 유통 전체 매출에서 온라인 "
+        "비율이 역대 최대인 50.6%'는 국가 통계(온라인쇼핑 동향 등)로 검증 가능한 수치이므로 "
+        "TRUE로 판단한다.",
+    ]
+    for r in true_example_reasons:
+        assert _looks_like_real_statistic(r), f"❌ 정상 TRUE reason이 안전장치에 걸림: {r!r}"
+    print("[회귀 확인] classifier_prompt.txt의 TRUE 예시 reason 5건 모두 안전장치 통과(안 걸림)")
+
+    bad_reason = (
+        "정부 관계자(대통령 권한대행 부총리 겸 기획재정부 장관)가 공식적으로 발표한 내용을 "
+        "담고 있으며, 구체적인 사고 상황과 대응 방안, 그리고 인명 구조 현황 등이 포함되어 "
+        "있어 신뢰성이 높다."
+    )
+    assert not _looks_like_real_statistic(bad_reason), (
+        f"❌ 실제 오탐 사례(부안 어선 화재)의 reason이 안전장치에 안 걸림: {bad_reason!r}"
+    )
+    print("[수정 확인] '부안 어선 화재' 실제 오탐 사례의 reason은 안전장치에 정상적으로 걸림")
+
+    print("\n[전체 통과] _looks_like_real_statistic 회귀 테스트 모두 통과")
+
     #   python -m agent.preprocessing.classifier
     sample = (
         "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, "

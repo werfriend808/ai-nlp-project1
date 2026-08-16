@@ -40,11 +40,16 @@ import socket  # noqa: E402
 
 if not getattr(socket, "_ipv4_only_patched", False):
     _original_getaddrinfo = socket.getaddrinfo
+    # agent/kosis/query_vdb.py가 chromadb HttpClient 연결 시 이 패치를 잠깐 되돌려야 해서
+    # (아래 패치가 걸려있으면 로컬 Chroma 서버 연결이 깨지는 게 실측 확인됨, 2026-08-15),
+    # 원본 함수를 socket 모듈에 속성으로 남겨서 다른 모듈에서도 복구할 수 있게 한다.
+    socket._original_getaddrinfo = _original_getaddrinfo
 
     def _getaddrinfo_ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
         return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
     socket.getaddrinfo = _getaddrinfo_ipv4_only
+    socket._patched_getaddrinfo = _getaddrinfo_ipv4_only
     socket.setdefaulttimeout(30)
     socket._ipv4_only_patched = True
 
@@ -226,6 +231,51 @@ def embedding_search(
 
     scored.sort(key=lambda c: c.score, reverse=True)
     return scored[:top_k]
+
+
+def batch_embedding_search(
+    sentences: list[str], *, top_k: int = 5, cache: Optional[dict] = None
+) -> list[list[TableCandidate]]:
+    """여러 claim 문장을 한 번의 encode() 호출로 임베딩해서, 각각의 top-k를 반환한다.
+
+    2026-08-15 실측: embedding_search()를 claim마다 반복 호출하면(=encode()를 여러 번
+    나눠 부르면) 로컬에서 세그폴트가 재현됐지만, 문장 여러 개를 한 번의 encode() 호출에
+    몰아서 넘기면(40개 배치 테스트로 확인) 문제없이 안전했다 — build_table_embedding_cache()
+    가 표 64개를 한 번에 배치 임베딩할 때도 항상 안전했던 것과 같은 패턴. 그래서 claim이
+    여러 개일 때는 이 함수로 한 번에 처리하고, embedding_search()(단건)는 claim이 하나뿐인
+    경우에만 쓴다."""
+    cache = cache or build_table_embedding_cache()
+    if not sentences:
+        return []
+    query_vecs = embed_texts(sentences, is_query=True)
+
+    results: list[list[TableCandidate]] = []
+    for query_vec in query_vecs:
+        scored: list[TableCandidate] = []
+        for entry in cache["entries"]:
+            sim = _cosine_similarity(query_vec, entry["vector"])
+            scored.append(
+                TableCandidate(
+                    table_id=entry["table_id"],
+                    table_name=entry["table_name"],
+                    score=sim,
+                    required_slots=entry.get("required_slots", []),
+                    source_meta=f"embedding_search model={cache.get('model')}",
+                )
+            )
+        scored.sort(key=lambda c: c.score, reverse=True)
+        results.append(scored[:top_k])
+    return results
+
+
+def embed_sentences_batch(sentences: list[str]) -> list[list[float]]:
+    """claim 문장 여러 개를 한 번의 encode() 호출로 쿼리 임베딩만 반환한다(카탈로그 비교 없이).
+
+    KOSIS VDB(Chroma, agent/kosis/chroma_db) 조회용 쿼리 벡터를 만들 때 쓴다 — 64개
+    카탈로그 매칭과 같은 모델(e5-large)로 만들어야 벡터 공간이 맞는다."""
+    if not sentences:
+        return []
+    return embed_texts(sentences, is_query=True)
 
 
 if __name__ == "__main__":

@@ -164,8 +164,27 @@ def resolve_claim_sources(claims: list[Claim], classifier_reason: Optional[str] 
     return filled
 
 
+def _has_hallucinated_value(claim: Claim) -> bool:
+    """claim.value가 채워져 있는데 원문 문장(sentence)에 숫자가 단 하나도 없으면 True
+    (claim_extractor의 순수 환각으로 본다).
+
+    2026-08-14 실측: "최상목... 승선원 확인을 통해 실종자 수색에 만전을 기해달라"고
+    했다" 문장에서 claim_extractor(LLM)가 value=11.0, statistic_expression="승선원 수"를
+    만들어냈는데, 원문 어디에도 숫자가 없었다 — 문장에 있는 숫자를 잘못 해석한 게 아니라
+    아예 없는 숫자를 지어낸 것. 표기법 차이("7만" vs 70000처럼) 때문에 값이 정확히
+    일치하는지 확인하기는 어렵지만, "숫자가 문장에 하나도 없는데 value가 채워졌다"는
+    해석의 여지가 없는 신호라 안전하게 걸러낼 수 있다. (드물게 "칠만 명"처럼 순한글
+    숫자 표현을 쓰는 문장은 이 필터에 걸릴 수 있음 — 실측 데이터에서는 관측되지 않았지만
+    알려진 한계로 남겨둠.)"""
+    value = getattr(claim, "value", None)
+    if value is None:
+        return False
+    return not any(ch.isdigit() for ch in claim.sentence)
+
+
 def filter_verifiable_claims(claims: list[Claim]) -> list[Claim]:
-    """claim 리스트에서 source_org가 "kosis_verified"인 것만 남긴다.
+    """claim 리스트에서 source_org가 "kosis_verified"이고, value 환각이 의심되지 않는
+    것만 남긴다.
 
     "uncertain"(source_org 없음/휴리스틱에 없는 기관)과 "not_kosis"는 전부 제외한다 —
     분류기(1단계)와 같은 원칙: 확실하지 않으면 3단계(표매칭)로 넘기지 않는다. source_org가
@@ -173,7 +192,11 @@ def filter_verifiable_claims(claims: list[Claim]) -> list[Claim]:
     이 함수의 책임이 아니다 — Claim에 기사 단위 식별자가 없어서, 호출하는 쪽(기사 하나를
     처리하는 오케스트레이션 코드)이 같은 기사 내 claim들을 모아 backfill한 뒤 이 함수에
     넘겨야 한다."""
-    return [c for c in claims if classify_source(c.source_org) == "kosis_verified"]
+    return [
+        c
+        for c in claims
+        if classify_source(c.source_org) == "kosis_verified" and not _has_hallucinated_value(c)
+    ]
 
 
 def backfill_source_org(claims: list[Claim]) -> list[Claim]:
@@ -275,6 +298,33 @@ if __name__ == "__main__":
     print(
         "[회귀 테스트 통과] infer_org_from_reason 안전장치 — 통계 발표 reason은 복구되고, "
         "일반 인용문 오탐은 계속 차단됨 확인"
+    )
+
+    # 2026-08-14 회귀 테스트: _has_hallucinated_value — 원문에 숫자가 없는데 value가
+    # 채워진 claim(claim_extractor 환각)을 걸러내는지, 정상 claim은 안 건드리는지 확인.
+    # 실제 오탐 재현 사례("부안 어선 화재" 기사, value=11.0인데 원문에 숫자 없음).
+    hallucinated_claim = Claim(
+        sentence=(
+            "최상목 대통령 권한대행 부총리 겸 기획재정부 장관이 전북 부안군 해상에서 "
+            "발생한 어선 화재 사고에 대해 \"최우선적으로 인명을 구조하고, 정확한 승선원 "
+            "확인을 통해 실종자 수색에 만전을 기해달라\"고 했다."
+        ),
+        claim_type="규모",
+        source_org="기획재정부",
+        value=11.0,
+    )
+    real_claim = Claim(
+        sentence="지난해 국내 1인 가구가 800만 가구를 넘어서 역대 최대 규모를 기록했다.",
+        claim_type="규모",
+        source_org="통계청",
+        value=8000000.0,
+    )
+    filtered = filter_verifiable_claims([hallucinated_claim, real_claim])
+    assert hallucinated_claim not in filtered, "❌ 숫자 환각 claim이 안 걸러짐"
+    assert real_claim in filtered, "❌ 정상 claim이 잘못 걸러짐"
+    print(
+        "[수정 확인] 숫자 환각 claim(부안 어선 화재, value=11.0)은 걸러지고, "
+        "정상 claim(1인가구 800만)은 그대로 통과됨"
     )
 
     print("\n최종 통과:", [c.source_org for c in filter_verifiable_claims(backfill_source_org(samples))])

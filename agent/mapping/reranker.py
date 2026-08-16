@@ -154,6 +154,7 @@ def rerank_scores(query: str, documents: list[str]) -> Optional[list[float]]:
 def _merge_candidates(
     keyword_candidates: list[TableCandidate],
     embedding_candidates: list[TableCandidate],
+    vdb_candidates: Optional[list[TableCandidate]] = None,
 ) -> list[TableCandidate]:
     """keyword_search와 embedding_search 후보를 table_id 기준으로 합친다.
 
@@ -180,26 +181,67 @@ def _merge_candidates(
             merged[cand.table_id] = replace(
                 existing, source_meta=f"{existing.source_meta} | {cand.source_meta}"
             )
+
+    # 2026-08-15: KOSIS 표 전체(28만7천여 개) VDB 후보 — 64개 수동 카탈로그가 못 찾을 때만
+    # 의미를 갖는 보조 소스. 검증(table_params.json 파라미터 확인) 안 된 표라서 keyword든
+    # embedding-64든 이미 후보가 있으면 그쪽을 신뢰하고 VDB 쪽은 참고 메모만 덧붙인다 —
+    # 64개 카탈로그의 embedding-only와 동급으로 "unverified" 취급한다.
+    for cand in vdb_candidates or []:
+        existing = merged.get(cand.table_id)
+        if existing is None:
+            merged[cand.table_id] = replace(
+                cand, source_meta=f"{cand.source_meta} (vdb-only, unverified)"
+            )
+        else:
+            merged[cand.table_id] = replace(
+                existing, source_meta=f"{existing.source_meta} | {cand.source_meta}"
+            )
     return list(merged.values())
 
 
 def _is_verified(candidate: TableCandidate) -> bool:
-    return "(embedding-only, unverified)" not in (candidate.source_meta or "")
-
-
-# keyword_search가 실제로 검증한 후보에 주는 가중치. bge-reranker-v2-m3의 predict() 출력이
-# 로짓/확률 중 어느 스케일인지 코드만으로는 보장이 안 돼서(model config에 따라 다름), 먼저
-# 시그모이드로 (0,1) 범위에 강제로 맞춘 뒤 이 값을 더한다 — 그래야 원본 스케일과 무관하게
-# 가중치 크기가 항상 같은 의미를 가진다. 2026-08-05 원화환율(DT_731Y001) 실측 사례로 확인:
-# keyword_search가 score=1.0으로 정확히 찾은 표를, embedding-only(unverified) 후보가 rerank
-# 단계에서 근거 없이 밀어내는 문제가 있었음 — 리랭커가 정상 로딩된 환경에서는 이 가중치가
-# 전혀 반영되지 않고 있었다(리랭커 모델을 못 쓸 때의 항등 폴백에만 "검증 후보 우선" 로직이
-# 있었음). 값(0.05)은 첫 도입치라 실측 재검증하면서 조정 가능.
-_VERIFIED_BONUS = 0.05
+    # 2026-08-15: VDB(vdb-only) 후보 추가하면서 "unverified"로 통일 체크 — 예전엔
+    # "(embedding-only, unverified)" 문자열만 정확히 찾아서, "(vdb-only, unverified)"
+    # 태그가 붙은 후보는 이 검사를 통과 못 해 잘못 verified로 취급될 뻔했다.
+    return "unverified" not in (candidate.source_meta or "")
 
 
 def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
+
+
+# 2026-08-14: 예전엔 keyword_search가 검증한 후보에 고정 상수(+0.05)를 점수에 더하는
+# 방식이었다(2026-08-05 원화환율 DT_731Y001 실측 — score=1.0으로 정확히 찾은 표를
+# embedding-only(unverified) 후보가 근거 없이 밀어내는 문제를 막으려고 도입). 근데 이
+# 리랭커의 raw score는 거의 항상 0 근처라(claim이 표와 강하게 관련될 때조차 절대값이
+# 작음) 시그모이드를 통과하면 후보들 점수가 전부 0.50 근처로 몰리고 스프레드가 0.003
+# 정도밖에 안 된다 — 이 상태에서 +0.05는 꼴찌 후보도 1등으로 만들 수 있을 만큼 크다.
+# 실제로 "유가"(keyword_search 오탐, 무관한 표)가 리랭커 raw score 최하위(0.0001)였는데도
+# +0.05 보너스로, 리랭커가 이미 훨씬 높게(0.0118) 평가해둔 진짜 정답(임베딩만 찾음,
+# unverified라 보너스 없음)을 이기고 1등이 됐던 사례가 확인됐다.
+#
+# 그래서 점수에 더하는 대신 "순위 기반 승격"으로 바꾼다(하이브리드 검색에서 서로 다른
+# 스케일의 점수를 합칠 때 흔히 쓰는 RRF의 사상과 같음 — 점수 크기가 아니라 순위로 판단).
+# verified 후보가 순수 리랭킹 순위 상위 _VERIFIED_PROMOTION_RANK 안에 들면(=리랭커도
+# 어느 정도 그럴듯하다고 봤다는 뜻) 1등으로 승격시키고, 그보다 한참 밀리면(=리랭커가
+# 명확히 아니라고 판단했다는 뜻) 승격시키지 않는다 — 원래 이 보너스가 막으려던 문제
+# (리랭커가 딱히 확신 없을 때 검증 안 된 임베딩 노이즈에 밀리는 것)는 그대로 막으면서,
+# keyword_search 오탐이 리랭커의 확실한 판단까지 뒤집는 건 막는다.
+_VERIFIED_PROMOTION_RANK = 3
+
+
+def _promote_verified_within_top_ranks(
+    ranked: list[TableCandidate],
+) -> list[TableCandidate]:
+    """순수 리랭킹 순서(점수 내림차순 정렬됨)에서, 1등이 unverified인데 verified 후보가
+    상위 _VERIFIED_PROMOTION_RANK 안에 있으면 그 후보를 1등으로 승격한다. 그 밖에 있으면
+    (=리랭커가 확실히 밀어냈다는 뜻) 순서를 그대로 둔다."""
+    if not ranked or _is_verified(ranked[0]):
+        return ranked
+    for i, cand in enumerate(ranked[:_VERIFIED_PROMOTION_RANK]):
+        if _is_verified(cand):
+            return [cand] + ranked[:i] + ranked[i + 1 :]
+    return ranked
 
 
 def rerank(
@@ -233,20 +275,18 @@ def rerank(
 
     reranked: list[TableCandidate] = []
     for cand, score in zip(candidates, scores):
-        adjusted = _sigmoid(score)
-        if _is_verified(cand):
-            adjusted = min(adjusted + _VERIFIED_BONUS, 1.0)
         reranked.append(
             TableCandidate(
                 table_id=cand.table_id,
                 table_name=cand.table_name,
-                score=adjusted,
+                score=_sigmoid(score),
                 required_slots=cand.required_slots,
                 source_meta=f"{cand.source_meta} | reranked(raw={score:.3f})",
             )
         )
 
     reranked.sort(key=lambda c: c.score, reverse=True)
+    reranked = _promote_verified_within_top_ranks(reranked)
     return reranked[:top_k]
 
 
