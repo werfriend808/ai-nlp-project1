@@ -234,11 +234,61 @@ def _core_noun_tokens(keyword: str) -> tuple[str, ...]:
 
 
 def _morph_match(keyword: str, sentence_norm: str) -> bool:
-    """keyword의 핵심 명사 전부가 (형태소 분석 없이) 문장 원문에 부분 문자열로 있으면 True."""
+    """keyword의 핵심 명사 전부가 (형태소 분석 없이) 문장 원문에 부분 문자열로 있으면 True.
+
+    각 핵심 명사마다 _is_false_friend_only도 같이 확인한다 — 안 그러면 exact 매칭
+    분기에서 false-friend로 걸러진 키워드(예: "유가")가 이 elif 분기로 다시 넘어와서
+    똑같은 무방비 substring 검사로 재매칭돼버린다(2026-08-14 실측)."""
     tokens = _core_noun_tokens(keyword)
     if not tokens:
         return False
-    return all(tok in sentence_norm for tok in tokens)
+    return all(
+        tok in sentence_norm and not _is_false_friend_only(tok, sentence_norm)
+        for tok in tokens
+    )
+
+
+# 2026-08-14 실측: 카탈로그 키워드 "유가"(기름값 뜻, 품목별 소비자물가지수 표)가 기사
+# 문장의 "유가증권시장"(증권이라는 완전히 다른 뜻)과 앞부분만 우연히 겹쳐서 그대로
+# 매칭되는 오탐 발견(52주 신고가 관련 claim이 소비자물가지수 표로 오매칭).
+#
+# "짧은 키워드 뒤에 다른 명사가 공백 없이 바로 이어지면 무관한 복합어"라는 문법 규칙을
+# 처음 시도했는데("유가"+"증권" 패턴), 실측해보니 "물가"+"상승"("물가상승률")처럼 똑같은
+# 문법 구조를 가진 완전히 정상적인 표현까지 다 걸러버렸다(kiwi 토큰 확인: 물가/상승 둘 다
+# NNG, 공백 없이 바로 이어짐 — 유가/증권과 구조적으로 구분 불가). 즉 "명사+명사가 붙어있는
+# 게 무관한 복합어인지 관련 있는 복합어인지"는 문법만으로는 못 가르고 의미를 알아야
+# 판단 가능하다 — 그래서 일반 규칙 대신, 실제로 오탐이 확인된 특정 조합만 등록해서 막는
+# 방식으로 간다(_DROPPABLE_NOUN_SUFFIXES에서 "율"을 빼고 SYNONYMS에서 "기준금리"를 뺀 것과
+# 같은 방식 — 일반화가 위험하면 사례 기반으로 좁게 막는다).
+# 2026-08-14 추가: 카탈로그 전체의 3자 이하 키워드 51종을 전수 점검하면서 같은 유형의
+# 오탐 3건을 사전에 발견해서 막음 — "유가" 때처럼 실제 배치에서 우연히 걸리기 전에 미리
+# 찾아낸 것(Kiwi로 실제 문장 토큰화까지 확인 후 등록).
+#   - "경유": 기름(디젤)과 "경유하다"(거쳐가다)가 동음이의어다. Kiwi로 확인해도 둘 다
+#     NNG "경유"로 같게 태깅돼서(품사로 구분 불가), "도쿄를 경유해서 간다"가 품목별
+#     소비자물가지수 표로 오매칭됨을 실측 확인.
+#   - "증시": "무역보증시스템을 도입했다"에서 "보증시스템"의 "증시" 부분과 우연히 겹쳐서
+#     코스피 지수 표로 오매칭됨을 실측 확인.
+#   - "환율": "혈액순환율"의 "환율" 부분과 우연히 겹쳐서 원화환율 표로 오매칭됨을 실측 확인.
+_FALSE_FRIEND_COMPOUNDS: dict[str, tuple[str, ...]] = {
+    "유가": ("유가증권",),
+    "경유": ("경유해", "경유하는", "경유했", "경유하고", "경유하여", "경유할", "경유지"),
+    "증시": ("보증시",),
+    "환율": ("순환율",),
+}
+
+
+def _is_false_friend_only(kw_norm: str, sentence: str) -> bool:
+    """kw_norm이 문장에 등장하긴 하지만, 그 등장이 전부 알려진 무관한 복합어(예:
+    '유가증권')의 일부일 뿐이고 그 외에는 독립적으로 안 나타나면 True(매칭을 거부해야 함).
+    false-friend 복합어를 문장에서 지운 뒤에도 kw_norm이 남아있으면, 그건 진짜 독립된
+    등장이 있다는 뜻이라 매칭을 인정한다(False 반환)."""
+    false_friends = _FALSE_FRIEND_COMPOUNDS.get(kw_norm)
+    if not false_friends:
+        return False
+    remaining = _normalize(sentence)
+    for ff in false_friends:
+        remaining = remaining.replace(_normalize(ff), "")
+    return kw_norm not in remaining
 
 
 def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[float, list[str]]:
@@ -249,14 +299,16 @@ def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[
 
     for kw in keywords:
         kw_norm = _normalize(kw)
-        if kw_norm in normalized_sentence:
+        if kw_norm in normalized_sentence and not _is_false_friend_only(kw_norm, sentence):
             matched.append(kw)
         elif kw in expanded_terms:
             matched.append(kw)
         elif _kiwi is not None:
             if _morph_match(kw, normalized_sentence):
                 matched.append(kw)
-        elif _stem_prefix_match(kw_norm, normalized_sentence):
+        elif _stem_prefix_match(kw_norm, normalized_sentence) and not _is_false_friend_only(
+            kw_norm, normalized_sentence
+        ):
             matched.append(kw)
 
     if table.get("title", "") and re.search(re.escape(table["title"][:6]), sentence):
@@ -378,5 +430,70 @@ if __name__ == "__main__":
         print("[수정 확인] '빵' 언급 없는 물가 claim이 더 이상 '빵 물가' 키워드로 오매칭 안 됨")
 
         print("\n[전체 통과] 형태소 매칭 오탐 회귀 테스트 3건 모두 통과")
+
+        print("\n=== 2026-08-14 회귀 테스트: false-friend 복합어(_is_false_friend_only) ===")
+        # (g) "유가"(기름값)가 "유가증권"(증권, 무관)의 앞부분과 우연히 겹쳐 소비자물가지수
+        #     표로 오매칭되던 문제 — false-friend로 등록된 조합만 거부되고, 진짜 "유가"
+        #     매칭은 살아있어야 함
+        securities_results = keyword_search(
+            Claim(
+                sentence="유가증권시장에서는 260개 종목이, 코스닥시장에서는 184개 종목이 52주 신고가를 갈아치운 것으로 나타났다",
+                claim_type="규모",
+            )
+        )
+        assert all("소비자물가지수" not in r.table_name for r in securities_results), (
+            f"❌ '유가증권시장'이 여전히 소비자물가지수 표로 오매칭됨: {securities_results}"
+        )
+        print("[수정 확인] '유가증권시장' claim이 더 이상 소비자물가지수 표로 오매칭 안 됨")
+
+        oil_price_results = keyword_search(
+            Claim(sentence="국제 유가가 배럴당 80달러를 넘어서며 물가에도 영향을 줄 전망이다", claim_type="규모")
+        )
+        assert any("소비자물가지수" in r.table_name for r in oil_price_results), (
+            f"❌ 진짜 '유가'(기름값) 매칭까지 같이 막혀버림: {oil_price_results}"
+        )
+        print("[유지 확인] 진짜 '국제 유가' claim은 여전히 소비자물가지수 표로 정상 매칭됨")
+
+        print("\n[전체 통과] false-friend 복합어 회귀 테스트 2건 모두 통과")
+
+        # (h) 카탈로그 3자 이하 키워드 51종 전수 점검으로 사전에 발견한 오탐 3건
+        # (경유/증시/환율) — "유가" 발견 이후 같은 유형의 버그를 실측 전에 미리 찾아 막음
+        transit_results = keyword_search(
+            Claim(sentence="이 항공편은 도쿄를 경유해서 간다", claim_type="규모")
+        )
+        assert all("소비자물가지수" not in r.table_name for r in transit_results), (
+            f"❌ '경유해서'(거쳐가다)가 여전히 소비자물가지수 표로 오매칭됨: {transit_results}"
+        )
+        diesel_results = keyword_search(Claim(sentence="경유 가격이 올랐다", claim_type="증감률"))
+        assert any("소비자물가지수" in r.table_name for r in diesel_results), (
+            f"❌ 진짜 '경유'(디젤) 매칭까지 같이 막혀버림: {diesel_results}"
+        )
+        print("[수정 확인] '경유하다'(거쳐가다)와 '경유'(디젤) 오탐/정상매칭 모두 정상 동작")
+
+        guarantee_results = keyword_search(
+            Claim(sentence="무역보증시스템을 새로 도입했다", claim_type="규모")
+        )
+        assert all("코스피" not in r.table_name for r in guarantee_results), (
+            f"❌ '보증시스템'이 여전히 코스피 지수 표로 오매칭됨: {guarantee_results}"
+        )
+        kospi_results = keyword_search(Claim(sentence="증시가 폭락했다", claim_type="비교"))
+        assert any("코스피" in r.table_name for r in kospi_results), (
+            f"❌ 진짜 '증시' 매칭까지 같이 막혀버림: {kospi_results}"
+        )
+        print("[수정 확인] '보증시스템' 오탐 차단, 진짜 '증시' 매칭은 정상 동작")
+
+        circulation_results = keyword_search(
+            Claim(sentence="고령층 혈액순환율 개선 프로그램을 시작했다", claim_type="규모")
+        )
+        assert all("환율" not in r.table_name for r in circulation_results), (
+            f"❌ '혈액순환율'이 여전히 환율 표로 오매칭됨: {circulation_results}"
+        )
+        fx_results = keyword_search(Claim(sentence="환율이 급등했다", claim_type="증감률"))
+        assert any("환율" in r.table_name for r in fx_results), (
+            f"❌ 진짜 '환율' 매칭까지 같이 막혀버림: {fx_results}"
+        )
+        print("[수정 확인] '혈액순환율' 오탐 차단, 진짜 '환율' 매칭은 정상 동작")
+
+        print("\n[전체 통과] 카탈로그 전수 점검으로 발견한 신규 false-friend 3건 모두 통과")
     else:
         print("\n[건너뜀] kiwipiepy 미설치 환경 — 형태소 매칭 회귀 테스트는 _stem_prefix_match 폴백만 사용됨")

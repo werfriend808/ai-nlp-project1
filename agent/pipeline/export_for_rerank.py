@@ -1,17 +1,23 @@
 """
-agent/pipeline/export_for_rerank.py — 1~2단계+키워드매칭까지를 로컬에서 돌리고,
-임베딩·리랭킹에 필요한 claim별 후보/카탈로그 정보를 파일로 내보낸다.
+agent/pipeline/export_for_rerank.py — 1~3단계(임베딩+VDB 병합까지)를 로컬에서 돌리고,
+리랭킹만 코랩에 넘긴다.
 
-배경: 임베딩(intfloat/multilingual-e5-large)과 리랭커(BAAI/bge-reranker-v2-m3, 568M)
-둘 다 로컬(RAM 7.4GB)에서 문제가 있다 — 리랭커는 로드 자체가 세그폴트, 임베딩은 큰 배치
-한 번은 되는데(build_table_embedding_cache) claim마다 반복 호출하면 세그폴트(2026-08-13
-실측, 원인 미상 — 이 컴퓨터의 고질적 리소스 불안정으로 추정). 코랩(T4, RAM 12GB+)에서는
-둘 다 문제없이 동작 확인됨. 그래서 파이프라인을 세 조각으로 나눈다:
-  1) (이 스크립트, 로컬) 분류→claim 추출→출처필터→키워드매칭까지만 하고,
-     claim 목록 + 카탈로그(임베딩용 텍스트)를 JSON으로 저장 — 임베딩/리랭킹은 안 함
-  2) (코랩, notebooks/reranker_colab.ipynb) 그 JSON을 읽어 임베딩 매칭 + 리랭킹까지
-     전부 실행하고 결과 저장
+배경: 리랭커(BAAI/bge-reranker-v2-m3, 568M)는 로컬(RAM 7.4GB)에서 로드 자체가
+세그폴트라 코랩(T4, RAM 12GB+)이 꼭 필요하다. 반면 임베딩(e5-large)은 claim마다
+반복 호출하면 세그폴트가 나지만(2026-08-13 실측), 여러 문장을 한 번의 encode() 호출에
+모아서 배치로 처리하면 로컬에서도 안전하다는 걸 확인했다(2026-08-15 실측, 40문장
+배치 테스트 통과 — build_table_embedding_cache가 표 64개를 한 번에 배치 임베딩할 때도
+항상 안전했던 것과 같은 패턴). 그래서 파이프라인을 이렇게 나눈다:
+  1) (이 스크립트, 로컬) 분류→claim 추출→출처필터→키워드매칭→(배치)임베딩(64개 카탈로그)
+     →(배치)VDB 조회(KOSIS 표 28만7천여 개, agent/kosis/chroma_db)까지 전부 수행하고,
+     merged_candidates(키워드/임베딩/VDB 다 합친 최종 후보)를 claim별로 만들어 저장
+  2) (코랩, notebooks/reranker_colab.ipynb) merged_candidates를 그대로 받아 리랭킹만 수행
   3) (resume_after_rerank.py, 로컬) 최종 결과를 받아 4~8단계 마저 실행
+
+VDB(Chroma)는 로컬 서버로 미리 띄워둬야 한다(agent/kosis/build_vdb_index.py 참고):
+    chroma run --path agent/kosis/chroma_db --port 8100
+서버가 안 떠 있으면 VDB 없이(64개 카탈로그만으로) 계속 진행한다 — VDB는 어디까지나
+보조 소스라 없어도 파이프라인이 멈추면 안 된다.
 
 batch_runner.py의 run_article()과 최대한 같은 코드를 재사용한다 — 이 스크립트가 하는
 1~2단계 로직(분류/추출/필터/전망·해외국가 즉시판정/키워드매칭)은 run_article()과 동일해야
@@ -34,8 +40,15 @@ from agent.preprocessing.classifier import classify
 from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import keyword_search
+from agent.mapping.embedding_search import (
+    batch_embedding_search,
+    build_table_embedding_cache,
+    embed_sentences_batch,
+)
+from agent.mapping.reranker import _merge_candidates
+from agent.kosis.query_vdb import batch_query_vdb, VdbUnavailableError
 from agent.orchestrator.calc_type_router import _mentions_foreign_country
-from agent.interfaces import Verdict
+from agent.interfaces import Claim, TableCandidate, Verdict
 from db.store import insert_verification
 
 from agent.pipeline.batch_runner import (
@@ -141,28 +154,56 @@ def export_article(
             print(f"[3단계 키워드매칭] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
             continue
 
-        # keyword_search가 0건이어도 그대로 내보낸다 — 코랩에서 임베딩으로 후보를 찾을 수도
-        # 있으므로, 여기서 "매칭 없음"으로 확정하지 않는다(그건 코랩이 임베딩까지 합친 뒤
-        # 최종 판단할 일).
-        print(f"[3단계 키워드매칭] {len(kw_results)}개 후보 (임베딩·리랭킹은 코랩에서, 코랩으로 넘김)")
+        # keyword_search가 0건이어도 그대로 내보낸다 — 뒤에서 임베딩/VDB로 후보를 찾을 수도
+        # 있으므로, 여기서 "매칭 없음"으로 확정하지 않는다. embedding/vdb 병합은 전체 기사를
+        # 다 돌고 나서 한 번의 배치 호출로 처리한다(claim마다 반복 호출하면 세그폴트 위험).
+        print(f"[3단계 키워드매칭] {len(kw_results)}개 후보 (임베딩·VDB 병합은 배치로 나중에)")
         pending_items.append(
             {
                 "item_id": f"{article['label']}::{i}",
                 "article": article_json,
-                "claim": dataclasses.asdict(claim),
+                "claim_obj": claim,
                 "cls_result": dataclasses.asdict(cls_result),
-                "keyword_candidates": [
-                    {
-                        "table_id": c.table_id,
-                        "table_name": c.table_name,
-                        "score": c.score,
-                        "required_slots": c.required_slots,
-                        "source_meta": c.source_meta,
-                    }
-                    for c in kw_results
-                ],
+                "keyword_candidates": kw_results,
             }
         )
+
+
+def _merge_all_candidates(pending_items: list[dict]) -> None:
+    """전체 claim의 임베딩(64개 카탈로그)+VDB(28만7천여 개)를 각각 한 번의 배치 호출로
+    처리하고, keyword/embedding/vdb 후보를 claim마다 병합해 pending_items에 채워 넣는다
+    (claim마다 반복 호출하면 세그폴트 위험 — 2026-08-13/15 실측)."""
+    if not pending_items:
+        return
+
+    sentences = [item["claim_obj"].sentence for item in pending_items]
+
+    print(f"\n[배치 임베딩] claim {len(sentences)}건을 한 번에 인코딩 중(64개 카탈로그 비교용)...")
+    cache = build_table_embedding_cache()
+    emb_results_list = batch_embedding_search(sentences, cache=cache)
+    print("[배치 임베딩] 완료")
+
+    print(f"[배치 VDB 조회] claim {len(sentences)}건을 KOSIS 전체 표(28만7천여 개)에서 조회 중...")
+    try:
+        query_vecs = embed_sentences_batch(sentences)
+        vdb_results_list = batch_query_vdb(query_vecs)
+        print("[배치 VDB 조회] 완료")
+    except VdbUnavailableError as e:
+        print(f"[배치 VDB 조회] 건너뜀 — {e}")
+        vdb_results_list = [[] for _ in sentences]
+
+    for item, emb_results, vdb_results in zip(pending_items, emb_results_list, vdb_results_list):
+        merged = _merge_candidates(item["keyword_candidates"], emb_results, vdb_results)
+        item["merged_candidates"] = [
+            {
+                "table_id": c.table_id,
+                "table_name": c.table_name,
+                "score": c.score,
+                "required_slots": c.required_slots,
+                "source_meta": c.source_meta,
+            }
+            for c in merged
+        ]
 
 
 def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> None:
@@ -174,22 +215,37 @@ def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> N
     for article in articles:
         export_article(article, catalog_by_id, pending_items)
 
-    # 임베딩 매칭을 코랩에서 하려면 카탈로그(표별 embedding_text)가 통째로 필요하다 —
-    # keyword_candidates에 걸리지 않은 claim도 코랩에서는 임베딩으로 후보를 찾아야 하므로,
-    # "이 claim에서 keyword로 이미 찾은 표"뿐 아니라 카탈로그 전체를 같이 내보낸다.
+    _merge_all_candidates(pending_items)
+
+    # 카탈로그 표별 embedding_text — 코랩 리랭킹 단계에서 문서 텍스트로 필요하다(짧은
+    # table_name만 넘기면 리랭커 성능이 떨어짐, test_mapping.py에서 이미 확인된 사실).
     catalog_export = {
         tid: {"table_name": t.get("title", tid), "embedding_text": t.get("embedding_text", t.get("title", tid))}
         for tid, t in catalog_by_id.items()
     }
 
+    # claim_obj(Claim 객체)는 JSON으로 못 그대로 직렬화하니 dict로 바꾸고, keyword_candidates도
+    # 이제 merged_candidates 안에 다 들어있으니 중복으로 안 남긴다.
+    serializable_items = []
+    for item in pending_items:
+        serializable_items.append(
+            {
+                "item_id": item["item_id"],
+                "article": item["article"],
+                "claim": dataclasses.asdict(item["claim_obj"]),
+                "cls_result": item["cls_result"],
+                "merged_candidates": item.get("merged_candidates", []),
+            }
+        )
+
     PENDING_PATH.parent.mkdir(parents=True, exist_ok=True)
     PENDING_PATH.write_text(
-        json.dumps({"catalog": catalog_export, "items": pending_items}, ensure_ascii=False, indent=2),
+        json.dumps({"catalog": catalog_export, "items": serializable_items}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(f"\n[export] 리랭킹 대기 claim {len(pending_items)}건 + 카탈로그 {len(catalog_export)}개 표를 "
-          f"{PENDING_PATH}에 저장했습니다.")
-    print("다음: 이 파일을 코랩(notebooks/reranker_colab.ipynb)에 업로드해서 임베딩+리랭킹을 실행하세요.")
+    print(f"\n[export] 리랭킹 대기 claim {len(serializable_items)}건 + 카탈로그 {len(catalog_export)}개 표를 "
+          f"{PENDING_PATH}에 저장했습니다. (merged_candidates에 keyword+embedding+VDB 후보 다 포함됨)")
+    print("다음: 이 파일을 코랩(notebooks/reranker_colab.ipynb)에 업로드해서 리랭킹을 실행하세요.")
 
 
 def _parse_int_flag(argv: list[str], flag: str, default: int) -> int:
