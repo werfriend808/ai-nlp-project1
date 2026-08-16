@@ -11,3 +11,13 @@ __pycache__/
 venv/
 .venv-wsl/
 .env
+
+# KOSIS VDB 빌드 산출물 — 재생성 가능(크롤링→코랩 임베딩→Chroma 적재 순서, 팀원 인수인계
+# PDF 참고), GitHub 100MB 파일 한도를 넘는 것도 있어서(vdb_embeddings.npy 1.1GB,
+# chroma_db 내부 파일 1.2GB) 커밋 대상에서 제외한다. crawl_output/tables.jsonl(원본
+# 크롤링 목록, 62MB)은 재크롤링(수 시간)을 건너뛸 수 있게 해주는 값진 산출물이라 예외로
+# 커밋 대상에 남겨둔다.
+data/vdb_embeddings.npy
+data/vdb_metadata.jsonl
+data/vdb_pending.jsonl
+agent/kosis/chroma_db/

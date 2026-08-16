@@ -148,6 +148,16 @@ _N_YEARS_AGO_RE = re.compile(r"(\d+)년\s*여?\s*전")
 # 4자리 숫자만 허용하다 보니 멀쩡한 절대 연도가 그냥 버려지던 문제를 여기서 먼저 벗겨낸다.
 _ABSOLUTE_YEAR_WITH_SUFFIX_RE = re.compile(r"(\d{4})년")
 
+# 2026-08-16 추가: "1955~1960년"처럼 연도 범위 표현("이전까진 5년 새 6%가량 늘던 인구수는
+# 1955~1960년 16% 넘게 늘었다" 같은 claim에서 claim_extractor가 period로 뽑음)은 위
+# _ABSOLUTE_YEAR_WITH_SUFFIX_RE(전체 문자열이 "YYYY년" 하나뿐이어야 함)에 안 걸리고,
+# RELATIVE_YEAR_OFFSET/RELATIVE_TIME_KEYWORDS에도 안 걸려서 is_valid_period()가 무효로
+# 버려지고 있었다(실측 확인: 표 매칭까지는 되어도 시점 필터링을 아예 못 함). 범위의
+# 끝 연도로 접는다 — "그 표가 범위의 마지막 해까지 커버하는가"가 죽은표 판별에 더 엄격한
+# 기준이라서다(시작 연도만 있는 표는 끝 연도 체크에서 걸러짐, 반대는 아님). 물결(~)과
+# 붙임표(-, –, —) 둘 다 허용 — claim_extractor/기사 원문에서 어느 쪽이 나올지 몰라서.
+_YEAR_RANGE_RE = re.compile(r"(\d{4})\s*[~\-–—]\s*(\d{4})\s*년?")
+
 # ---------------------------------------------------------------------------
 # 표 주기(prdSe) 인식 — 2026-08-12 실측 확인: 매칭된 표가 월간(M)/분기(Q)인데도
 # slot_filler는 표 주기를 아예 모른 채 무조건 연도 4자리만 만들어서, KOSIS API가
@@ -239,6 +249,12 @@ def normalize_time_expressions(
     absolute_year_match = _ABSOLUTE_YEAR_WITH_SUFFIX_RE.fullmatch(period_str)
     if absolute_year_match:
         extracted["period"] = absolute_year_match.group(1)
+        return extracted
+
+    # -0.9) "1955~1960년"처럼 연도 범위인 경우, 범위의 끝 연도로 접는다(위 주석 참고).
+    year_range_match = _YEAR_RANGE_RE.search(period_str)
+    if year_range_match:
+        extracted["period"] = year_range_match.group(2)
         return extracted
 
     # 0) "N년 전"(숫자 가변) — 위와 같은 이유로 연 단위 그대로 유지.
@@ -572,5 +588,23 @@ if __name__ == "__main__":
     )
     assert round2.get("region") == "전국", f"❌ 2차에서 region이 정상적으로 채워지지 않음: {round2}"
     print("✅ 2차 clarify가 1차 period를 보존하면서 region만 채움 확인")
+
+    print("=== 2026-08-16 신규: 연도 범위 표현('1955~1960년' 등) → 끝 연도로 접는지 회귀 테스트 ===")
+    r_range1 = normalize_time_expressions({"period": "1955~1960년"}, date(2025, 11, 8))
+    assert r_range1["period"] == "1960", f"❌ '1955~1960년' 범위 계산 틀림: {r_range1}"
+    print(f"[범위(물결)] '1955~1960년' -> {r_range1['period']} ✅ (끝 연도)")
+
+    r_range2 = normalize_time_expressions({"period": "2019-2022년"}, date(2025, 11, 8))
+    assert r_range2["period"] == "2022", f"❌ '2019-2022년' 범위 계산 틀림(붙임표): {r_range2}"
+    print(f"[범위(붙임표)] '2019-2022년' -> {r_range2['period']} ✅ (끝 연도)")
+
+    r_range3 = normalize_time_expressions({"period": "1955~1960"}, date(2025, 11, 8))
+    assert r_range3["period"] == "1960", f"❌ '년' 접미사 없는 범위 계산 틀림: {r_range3}"
+    print(f"[범위(년 없음)] '1955~1960' -> {r_range3['period']} ✅ (끝 연도)")
+
+    # 회귀 방지: 단일 절대 연도("2024년")는 여전히 그대로 동작하는지(범위 정규식과 안 겹침)
+    r_single = normalize_time_expressions({"period": "2024년"}, date(2025, 11, 8))
+    assert r_single["period"] == "2024", f"❌ 범위 정규식 추가로 단일 연도 처리가 깨짐: {r_single}"
+    print(f"[회귀 확인] 단일 절대 연도 '2024년'은 그대로 -> {r_single['period']} ✅")
 
     print("\n모든 테스트 통과 🎉")
