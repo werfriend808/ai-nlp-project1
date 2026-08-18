@@ -51,7 +51,7 @@
     ],
     "_table_name": "2.1.1 예산 및 세수 현황[2005~]",
     "_verified": "실제 API 호출로 확인 (2026-07-29). objL1=15133SMB070102(법인세)+itmId=16133AAB4(수납액)+prdSe=Y → 2023년=80,419,515백만원 확인.",
-    "_important_note": "연간(prdSe=Y)만 지원 — 기사의 '1~11월 누계' 같은 월별 YTD 수치는 이 표로 정확히 재현 안 될 수 있음. itmId에 예산액(16133AAB2)/징수결정액(16133AAB3)/수납액(16133AAB4)/불납결손액(16133AAB5)/미수납액(16133AAB6) 5종 있음 — 기사가 보통 인용하는 건 수납액.",
+    "_important_note": "연간(prdSe=Y)만 지원 — 기사의 '1~11월 누계' 같은 월별 YTD 수치는 이 표로 정확히 재현 안 될 수 있음. itmId에 예산액(16133AAB2)/징수결정액(16133AAB3)/수납액(16133AAB4)/불납결손액(16133AAB5)/미수납액(16133AAB6)/비율(16133AAB8) 6종 있음 — 기사가 보통 인용하는 건 수납액. 2026-08-17: objL1=15133SMB070102+itmId=ALL 실제 스캔으로 6종 전체 확인해서 마저 등록(기존엔 3종만 등록돼 있었음 — 불납결손액/미수납액/비율 3종이 누락된 채였음).",
     "dimensions": {
       "tax_type": {
         "kosis_param": "objL1",
@@ -63,7 +63,15 @@
       }
     },
     "itmId_fixed": "16133AAB4",
-    "_itm_note": "16133AAB4=수납액(기본, 기사에서 보통 인용). 16133AAB2=예산액, 16133AAB3=징수결정액.",
+    "_itm_note": "2026-08-16: 폴백 기본값(수납액)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다.",
+    "items": {
+      "16133AAB2": "예산액",
+      "16133AAB3": "징수결정액",
+      "16133AAB4": "수납액",
+      "16133AAB5": "불납결손액",
+      "16133AAB6": "미수납액",
+      "16133AAB8": "비율"
+    },
     "startPrdDe": "2023",
     "endPrdDe": "2023",
     "_period_note": "연간(prdSe=Y)만 제공, 2005~현재."
@@ -538,7 +546,12 @@
       }
     },
     "itmId_fixed": "T110",
-    "_itm_note": "T110=전체가구, T120=근로자가구, T150=근로자외가구.",
+    "_itm_note": "2026-08-16: 폴백 기본값(전체가구)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다.",
+    "items": {
+      "T110": "전체가구",
+      "T120": "근로자가구",
+      "T150": "근로자외가구"
+    },
     "startPrdDe": "202402",
     "endPrdDe": "202402",
     "_period_note": "분기(prdSe=Q)만 제공. period 포맷은 'YYYY'+분기 2자리(예: 202402)."
@@ -638,7 +651,11 @@
       }
     },
     "itmId_fixed": "T2",
-    "_itm_note": "T1=경상지수, T2=불변지수(기본, 증감률 계산용).",
+    "_itm_note": "2026-08-16: 폴백 기본값(불변지수)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다.",
+    "items": {
+      "T1": "경상지수",
+      "T2": "불변지수"
+    },
     "startPrdDe": "202405",
     "endPrdDe": "202405",
     "_period_note": "월간(prdSe=M)만 제공, 1995~현재(전체 소매판매액지수 자체는 2010~)."
@@ -666,7 +683,11 @@
       }
     },
     "itmId_fixed": "T5",
-    "_itm_note": "T3=원지수, T5=계절조정지수(기본).",
+    "_itm_note": "2026-08-16: 폴백 기본값(계절조정지수)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다.",
+    "items": {
+      "T3": "원지수",
+      "T5": "계절조정지수"
+    },
     "startPrdDe": "202405",
     "endPrdDe": "202405",
     "_period_note": "월간(prdSe=M)만 제공, 1995~현재."
@@ -880,7 +901,11 @@
       }
     },
     "itmId_fixed": "16115T2009_863",
-    "_itm_note": "16115T2009_863=신고금액(천불), 16115T2009_862=신고건수(개).",
+    "_itm_note": "2026-08-16: 폴백 기본값(신고금액)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다.",
+    "items": {
+      "16115T2009_863": "신고금액",
+      "16115T2009_862": "신고건수"
+    },
     "startPrdDe": "202301",
     "endPrdDe": "202301",
     "_period_note": "분기(prdSe=Q)만 제공. period 포맷은 'YYYY'+분기2자리(예: 2023년1분기='202301')."
@@ -996,7 +1021,11 @@
       }
     },
     "itmId_fixed": "T10",
-    "_itm_note": "T10=외환보유액(총계), T20=금제외. 기본은 T10.",
+    "_itm_note": "2026-08-16: 폴백 기본값(외환보유액 총계)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다.",
+    "items": {
+      "T10": "외환보유액",
+      "T20": "금제외 외환보유액"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "연간 데이터만 지원. slots['period']가 연도 단위(예: '2024')일 때만 정확히 매칭됨."
@@ -1281,7 +1310,17 @@
       }
     },
     "itmId_fixed": "T80",
-    "_itm_note": "여러 itmId 중 '실업률'(T80)로 임시 고정. 위 _important_note 참고.",
+    "_itm_note": "2026-08-16: itmId_fixed는 claim에 맞는 항목을 못 찾았을 때 쓰는 폴백 기본값(실업률)으로 격하됨 — 실제 선택은 batch_runner.select_itm_id()가 items 목록과 claim.statistic_expression을 비교해서 동적으로 정한다(3~4단계 사이 itmId 선택 로직, 위 _important_note가 지적하던 갭을 이걸로 채움).",
+    "items": {
+      "T10": "15세이상인구",
+      "T20": "경제활동인구",
+      "T30": "취업자",
+      "T40": "실업자",
+      "T50": "비경제활동인구",
+      "T60": "경제활동참가율",
+      "T80": "실업률",
+      "T90": "고용률"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "prdSe=Y(연간)로 연도만 넣으면 됨."
@@ -1354,7 +1393,12 @@
       }
     },
     "itmId_fixed": "T2",
-    "_itm_note": "T2=총인구수로 고정 (T3=남자, T4=여자도 있으나 자동 선택 로직 없음).",
+    "_itm_note": "2026-08-16: 폴백 기본값(총인구수)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다(예: population='남자'면 T3).",
+    "items": {
+      "T2": "총인구수",
+      "T3": "남자",
+      "T4": "여자"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "prdSe=Y(연간)로 연도만 넣으면 됨."
@@ -1416,7 +1460,11 @@
       }
     },
     "itmId_fixed": "13103103829T1",
-    "_itm_note": "수출액으로 고정. 수입액은 '13103103829T2'.",
+    "_itm_note": "2026-08-16: 폴백 기본값(수출액)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다.",
+    "items": {
+      "13103103829T1": "수출액",
+      "13103103829T2": "수입액"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "prdSe=Y(연간)로 연도만 넣으면 됨."
@@ -1484,7 +1532,7 @@
     ],
     "_table_name": "월.분기.연간 인구동향(출생,사망,혼인,이혼)",
     "_verified": "실제 API 호출로 확인 (2026-07-22). objL1=00(전국)+objL2=10(출생아수)+itmId=T1로 1행 응답 확인 (2024년 전국 출생아수=238,317명).",
-    "_important_note": "objL2가 15개 항목(출생아수/합계출산율/혼인건수/이혼건수 등)을 전부 담고 있는데, D의 generic slots엔 이걸 고를 축이 없어서 '출생아수'로 고정해뒀음. '혼인 건수'/'이혼 건수' 관련 주장이 이 표로 매핑되면 실제로는 다른 objL2 값이 필요한데 자동 선택 안 됨 (DT_1DA7001S의 itmId 문제와 동일한 종류).",
+    "_important_note": "2026-08-17: objL2 15개 항목 전체를 code_map에 등록해서 batch_runner.select_dimension_values()가 claim.statistic_expression을 보고 동적으로 고르게 됐음(DT_1DA7001S의 itmId 문제와 동일한 종류였던 갭 해소). 실제 재현 사례: '합계출산율도 작년 0.75명으로...' claim이 등록 전엔 이 축이 기본값(출생아수)으로 폴백돼서 23만8천명(출생아수)과 비교되는 바람에 '불일치'로 잘못 판정됐었음 — 합계출산율 코드(12)가 없었던 게 원인.",
     "dimensions": {
       "region": {
         "kosis_param": "objL1",
@@ -1516,11 +1564,22 @@
         "default_value": "10",
         "code_map": {
           "출생아수": "10",
+          "조출생률": "11",
+          "합계출산율": "12",
           "사망자수": "15",
+          "조사망률": "16",
+          "자연증가건수": "17",
+          "자연증가율": "18",
           "혼인건수": "20",
-          "이혼건수": "30"
+          "조혼인율": "21",
+          "일반혼인율(남편)": "23",
+          "일반혼인율(아내)": "24",
+          "이혼건수": "30",
+          "조이혼율": "31",
+          "일반이혼율(남편)": "33",
+          "일반이혼율(아내)": "34"
         },
-        "_note": "2026-08-03 golden set 재현으로 채움 — objL2 15종 전체 조회(실제 API 호출)로 확인: 10=출생아수(명), 15=사망자수(명), 20=혼인건수(건), 30=이혼건수(건). 조출생률/합계출산율/조이혼율 등 비율 지표는 뉴스에서 직접 표현으로 안 나와서 일단 보류. D가 이 축을 안 채우면 여전히 default(10=출생아수)로 조회됨."
+        "_note": "2026-08-03 golden set 재현으로 4종(출생아수/사망자수/혼인건수/이혼건수)만 먼저 채웠었음. 2026-08-17: objL2=ALL 실제 스캔으로 15종 전체 확인해서 마저 등록(2024년 값 기준 검증: 출생아수=238,317명, 합계출산율=0.748, 사망자수=358,569명 등). 합계출산율이 없어서 '합계출산율' claim이 기본값(출생아수)으로 잘못 조회되던 실제 오류가 이 등록으로 해소됨 — D가 이 축을 안 채우면(또는 select_dimension_values가 매칭 못 하면) 여전히 default(10=출생아수)로 안전하게 폴백."
       }
     },
     "itmId_fixed": "T1",
@@ -1538,7 +1597,7 @@
     ],
     "_table_name": "예금은행 대출금리(신규취급액 기준)",
     "_verified": "실제 API 호출로 확인 (2026-07-24). objL1='13102134553ACC_ITEM.BECBLA01'(대출평균)+itmId='13103134553999'로 1행 응답 확인 (202401=5.04연%).",
-    "_important_note": "objL1(계정항목별)에 대출평균/기업대출/가계대출 등 19개 항목이 있음. D의 generic slots엔 이 축이 없어 기본값(대출평균)으로 고정 조회됨.",
+    "_important_note": "objL1(계정항목별)에 대출평균/기업대출/가계대출 등 19개 항목이 있음. D의 generic slots엔 이 축이 없어 기본값(대출평균)으로 고정 조회됨. 2026-08-17: objL1=ALL 실제 스캔으로 19개 전체 확인해서 마저 등록(기존엔 3개만 등록돼 있었음).",
     "dimensions": {
       "loan_type": {
         "kosis_param": "objL1",
@@ -1546,9 +1605,25 @@
         "code_map": {
           "대출평균": "13102134553ACC_ITEM.BECBLA01",
           "기업대출": "13102134553ACC_ITEM.BECBLA02",
-          "가계대출": "13102134553ACC_ITEM.BECBLA03"
+          "대기업대출": "13102134553ACC_ITEM.BECBLA0201",
+          "중소기업대출": "13102134553ACC_ITEM.BECBLA0202",
+          "운전자금대출": "13102134553ACC_ITEM.BECBLA0203",
+          "시설자금대출": "13102134553ACC_ITEM.BECBLA0204",
+          "가계대출": "13102134553ACC_ITEM.BECBLA03",
+          "소액대출": "13102134553ACC_ITEM.BECBLA0301",
+          "주택담보대출": "13102134553ACC_ITEM.BECBLA0302",
+          "고정형주택담보대출": "13102134553ACC_ITEM.BECBLA030201",
+          "변동형주택담보대출": "13102134553ACC_ITEM.BECBLA030202",
+          "예적금담보대출": "13102134553ACC_ITEM.BECBLA0303",
+          "보증대출": "13102134553ACC_ITEM.BECBLA0304",
+          "전세자금대출": "13102134553ACC_ITEM.BECBLA03041",
+          "일반신용대출": "13102134553ACC_ITEM.BECBLA03051",
+          "집단대출": "13102134553ACC_ITEM.BECBLA03052",
+          "공공및기타부문대출": "13102134553ACC_ITEM.BECBLA04",
+          "상업어음할인": "13102134553ACC_ITEM.BECBLA05",
+          "기업일반자금대출": "13102134553ACC_ITEM.BECBLA07"
         },
-        "_note": "검증 완료 (2026-07-24). C1_NM으로 확인됨."
+        "_note": "검증 완료 (2026-07-24, 2026-08-17 재검증). C1_NM으로 확인됨. 2026-08-17: objL1=ALL 스캔으로 19개 항목(대출평균/기업대출/대기업대출/중소기업대출/운전자금대출/시설자금대출/가계대출/소액대출/주택담보대출/고정형·변동형 주택담보대출/예적금담보대출/보증대출/전세자금대출/일반신용대출/집단대출/공공및기타부문대출/상업어음할인/기업일반자금대출) 실측 확인 후 전체 등록."
       }
     },
     "itmId_fixed": "13103134553999",
@@ -1686,7 +1761,12 @@
       }
     },
     "itmId_fixed": "T10",
-    "_itm_note": "T10=총전입. T20=총전출, T25=순이동도 있음(값 동일: 총전입=총전출).",
+    "_itm_note": "2026-08-16: 폴백 기본값(총전입)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다. (T20=총전출도 값은 총전입과 동일 — 순이동이라는 별도 개념(T25)이 있어 items로 노출.)",
+    "items": {
+      "T10": "총전입",
+      "T20": "총전출",
+      "T25": "순이동"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "prdSe=Y(연간)로 연도만 넣으면 됨."
@@ -1713,7 +1793,12 @@
       }
     },
     "itmId_fixed": "T10",
-    "_itm_note": "T10=총전입률. T20=총전출률, T30=순이동률도 있음.",
+    "_itm_note": "2026-08-16: 폴백 기본값(총전입률)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다.",
+    "items": {
+      "T10": "총전입률",
+      "T20": "총전출률",
+      "T30": "순이동률"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "prdSe=Y(연간)로 연도만 넣으면 됨."
@@ -1899,7 +1984,7 @@
     ],
     "_table_name": "기업경기조사(실적)",
     "_verified": "실제 API 호출로 확인 (2026-07-30). objL1='13102134673BUSINESS_TYPE_CD.99988'(전산업)+objL2='13102134673BSI_CD.AX'(기업심리지수실적)+itmId='13103134673999'로 2025년1월=86.4 확인.",
-    "_important_note": "objL1(업종코드별)엔 전산업/제조업/대기업/중소기업/비제조업/중화학공업/경공업/수출기업/내수기업 등 다수 코드가 있음. objL2(BSI코드별)엔 기업심리지수실적(CBSI) 외 개별 항목(매출/생산/재고 등) BSI가 더 있을 수 있음 — 필요시 getMeta로 추가 코드 확인.",
+    "_important_note": "objL1(업종코드별)엔 전산업/제조업/대기업/중소기업/비제조업/중화학공업/경공업/수출기업/내수기업 등 다수 코드가 있음. objL2(BSI코드별)엔 기업심리지수실적(CBSI) 외 개별 항목(매출/생산/재고 등) BSI가 더 있을 수 있음 — 필요시 getMeta로 추가 코드 확인. 2026-08-17: objL1=ALL 실제 스캔으로 서비스업(Y9950)까지 포함 10개 전체 확인해서 마저 등록(기존엔 5개만 등록돼 있었음).",
     "dimensions": {
       "industry": {
         "kosis_param": "objL1",
@@ -1907,11 +1992,16 @@
         "code_map": {
           "전산업": "13102134673BUSINESS_TYPE_CD.99988",
           "제조업": "13102134673BUSINESS_TYPE_CD.C0000",
-          "비제조업": "13102134673BUSINESS_TYPE_CD.Y9900",
+          "중화학공업": "13102134673BUSINESS_TYPE_CD.X3000",
+          "경공업": "13102134673BUSINESS_TYPE_CD.X4000",
           "대기업": "13102134673BUSINESS_TYPE_CD.X5000",
-          "중소기업": "13102134673BUSINESS_TYPE_CD.X6000"
+          "중소기업": "13102134673BUSINESS_TYPE_CD.X6000",
+          "수출기업": "13102134673BUSINESS_TYPE_CD.X8000",
+          "내수기업": "13102134673BUSINESS_TYPE_CD.X9000",
+          "비제조업": "13102134673BUSINESS_TYPE_CD.Y9900",
+          "서비스업": "13102134673BUSINESS_TYPE_CD.Y9950"
         },
-        "_note": "검증 완료 (2026-07-30). 전산업 기본값."
+        "_note": "검증 완료 (2026-07-30, 2026-08-17 재검증). 전산업 기본값. 2026-08-17: objL1=ALL 스캔으로 10개 항목(전산업/제조업/중화학공업/경공업/대기업/중소기업/수출기업/내수기업/비제조업/서비스업) 실측 확인 후 전체 등록 — 서비스업(Y9950)은 기존 note에도 없던 항목."
       },
       "bsi_type": {
         "kosis_param": "objL2",
@@ -1959,6 +2049,12 @@
       }
     },
     "itmId_fixed": "T10",
+    "_itm_note": "2026-08-16: 폴백 기본값(전가구)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다(예: population='농가'면 T20).",
+    "items": {
+      "T10": "전가구",
+      "T20": "농가",
+      "T30": "비농가"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "연간 데이터, period 형식 'YYYY'."
@@ -2001,6 +2097,11 @@
       }
     },
     "itmId_fixed": "T1",
+    "_itm_note": "2026-08-16: 폴백 기본값(사망자수)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다(예: statistic_expression='사망률'이면 T5).",
+    "items": {
+      "T1": "사망자수",
+      "T5": "사망률"
+    },
     "startPrdDe": "2023",
     "endPrdDe": "2023",
     "_period_note": "연간 데이터, period 형식 'YYYY'. itmId='T5'로 바꾸면 사망률(십만명당) 조회 가능."
@@ -2027,6 +2128,12 @@
       }
     },
     "itmId_fixed": "TT",
+    "_itm_note": "2026-08-16: 폴백 기본값(계)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다(예: statistic_expression='시설수급자'면 02).",
+    "items": {
+      "TT": "계",
+      "01": "일반수급자",
+      "02": "시설수급자"
+    },
     "startPrdDe": "2023",
     "endPrdDe": "2023",
     "_period_note": "연간 데이터, period 형식 'YYYY'."
@@ -2189,7 +2296,12 @@
       }
     },
     "itmId_fixed": "T20",
-    "_itm_note": "T20=총인구수로 고정 (T21=남자, T22=여자도 있으나 자동 선택 로직 없음).",
+    "_itm_note": "2026-08-16: 폴백 기본값(총인구수)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다(예: population='남자'면 T21).",
+    "items": {
+      "T20": "총인구수",
+      "T21": "남자",
+      "T22": "여자"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "prdSe=Y(연간)로 연도만 넣으면 됨."
@@ -2241,7 +2353,12 @@
       }
     },
     "itmId_fixed": "T2",
-    "_itm_note": "T2=총인구수로 고정 (T3=남자, T4=여자도 있으나 자동 선택 로직 없음).",
+    "_itm_note": "2026-08-16: 폴백 기본값(총인구수)으로 격하 — 실제 선택은 batch_runner.select_itm_id()가 items와 claim.statistic_expression/population을 대조해서 동적으로 정한다(예: population='여자'면 T4).",
+    "items": {
+      "T2": "총인구수",
+      "T3": "남자",
+      "T4": "여자"
+    },
     "startPrdDe": "2024",
     "endPrdDe": "2024",
     "_period_note": "prdSe=Y(연간)로 연도만 넣으면 됨."

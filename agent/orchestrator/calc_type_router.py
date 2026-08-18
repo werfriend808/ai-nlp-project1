@@ -17,11 +17,23 @@ CalcType(5종: 합계/비율/증감/증감률/최댓값검증) 사이에 매핑 
       되는 판단을 LLM에 맡길 이유 없음
 
 라우팅 테이블:
-    규모   + 극값 패턴 있음 -> "최댓값검증" | "최솟값검증" (최고/최대 vs 최저/최소)
-    규모   + 극값 패턴 없음 -> "단순조회"
+    규모   + 극값 패턴 있음           -> "최댓값검증" | "최솟값검증" (최고/최대 vs 최저/최소)
+    규모   + 극값 패턴 없음 + 증감폭  -> "증감" (아래 2026-08-16 항목 참고)
+    규모   + 극값 패턴 없음 + 그 외   -> "단순조회"
     증감률 -> "증감률"
     비교   -> "증감" (compute_change류는 시간 대신 두 대상을 base/target으로 그대로 재사용 가능)
     전망, 스키마 밖 값(None 포함) -> None (호출부가 5~8단계를 건너뛰고 즉시 판단불가 처리하라는 신호)
+
+2026-08-16 추가: claim_type="규모"엔 사실 "수준값"(예: "취업자 수는 2857만6000명으로
+집계됐다")과 "증감폭"(예: "취업자 수가 13만5000명 늘어난 것으로 나타났다" — 그 자체가
+변화량) 두 종류가 섞여 있었는데, 지금까지는 둘 다 "단순조회"(값 하나만 조회, 계산 없음)로
+보냈다. 증감폭 주장은 단순조회로는 애초에 검증할 방법이 없다(현재 시점 값 하나만 갖고
+"13만5000명 늘었나"를 확인할 수 없음) — 실제 배치(2026-08-16)에서 이 패턴(제조업/도소매업/
+건설업/청년층 취업자 증감폭 claim 다수)이 전부 판단불가로 빠지거나, 드물게 LLM이 대상·시점만
+보고 성급하게 "일치"를 주는 사례로 확인됐다. claim_extractor.py(2단계)가 이제 value_type
+필드로 이 둘을 구분해서 뽑아주므로, "규모"+"증감폭"이면 "비교"와 똑같이 "증감"(base/target
+조회 후 실제 차이 계산)으로 보낸다 — value_type이 없는(구버전 claim, 하위 호환) 경우와
+"수준값"인 경우는 기존처럼 "단순조회" 그대로 유지.
 
 agent/interfaces.py의 CalcType 리터럴엔 원래 "단순조회"/"최솟값검증"이 없었는데(파일 상단에
 "팀 전체 합의 후 수정" 원칙 명시), 이 라우터 도입을 계기로 팀 확인 후 2026-08-05 두 값을
@@ -115,6 +127,11 @@ def route_calc_type(claim: Claim) -> Optional[CalcType]:
     if claim_type == "규모":
         signal = detect_extreme_value_claim(claim.sentence)
         if not signal.is_extreme:
+            # 2026-08-16: value가 수준값이 아니라 그 자체로 증감폭이면(예: "13만5000명
+            # 늘어난 것으로 나타났다") 단순조회(값 하나만 조회)로는 검증 불가 — "비교"와
+            # 같은 방식(base/target 조회 후 실제 차이 계산)으로 보낸다.
+            if claim.value_type == "증감폭":
+                return "증감"
             return "단순조회"
         return "최댓값검증" if signal.direction == "max" else "최솟값검증"
 
@@ -162,5 +179,32 @@ if __name__ == "__main__":
     domestic_result = route_calc_type(samples[4])  # "수도권과 비수도권 인구 격차"
     assert domestic_result == "증감", f"❌ 국내 비교 claim이 잘못 걸러짐: {domestic_result}"
     print(f"[국내 claim 회귀 확인] '{samples[4].sentence}' -> {domestic_result} ✅ (안 걸러짐)")
+
+    print("\n=== 2026-08-16 신규: value_type(수준값/증감폭) 라우팅 테스트 ===")
+    value_type_samples = [
+        (
+            Claim(
+                sentence="지난달 15세 이상 취업자 수가 13만5000명 늘어난 것으로 나타났다.",
+                claim_type="규모", value=135000, value_type="증감폭", comparison_operator="증가",
+            ),
+            "증감",
+        ),
+        (
+            Claim(
+                sentence="15세 이상 취업자 수는 2857만6000명으로 집계됐다.",
+                claim_type="규모", value=28576000, value_type="수준값",
+            ),
+            "단순조회",
+        ),
+        (
+            # 하위 호환: value_type 필드가 아예 없던(구버전) claim은 기존처럼 단순조회로.
+            Claim(sentence="작년 출생아 수는 23만8천명으로 전년보다 늘었다.", claim_type="규모"),
+            "단순조회",
+        ),
+    ]
+    for c, expected in value_type_samples:
+        result = route_calc_type(c)
+        assert result == expected, f"❌ value_type={c.value_type!r} claim 라우팅 오류: {c.sentence} -> {result} (기대: {expected})"
+        print(f"[value_type 라우팅 확인] value_type={c.value_type!r} -> {result} ✅ ('{c.sentence}')")
 
     print("\n모든 신규 테스트 통과 🎉")

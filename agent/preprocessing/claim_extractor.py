@@ -40,6 +40,7 @@ except ImportError:
             population: Optional[str] = None
             statistic_expression: Optional[str] = None
             value: Optional[float] = None
+            value_type: Optional[str] = None
             comparison_operator: Optional[str] = None
             comparison_target: Optional[str] = None
             comparison_value: Optional[float] = None
@@ -66,6 +67,14 @@ _RECOVERY_PROMPT_TEMPLATE = """아래 문장들은 규칙 기반 스캐너가 �
 - 구체적인 수치(값·비율·순위 등)를 포함하고, 실제로 조사·집계된 통계 주장이어야 합니다.
 - 제품 스펙(좌석 수, 트렁크 용량 등)이나 법령상 기준값은 제외합니다.
 - sentence는 절대 요약하거나 다시 쓰지 말고, 아래 문장 원문을 그대로 사용합니다.
+- ⚠️ 한 문장 안에 서로 다른 그룹(연령대·지역 등)의 수치가 나란히 여러 개 나와도(예: "90세
+  이상 사망자가 6만1200명으로 늘었고, 50대 사망자도 2만5800명으로 늘었다") 앞부분만 뽑고
+  뒷부분을 버리면 안 됩니다 — 그 문장이 담고 있는 통계 주장 중 하나를 대표해서(예: 첫
+  번째 수치 기준으로) claim_type/value를 채우되, sentence는 문장 전체를 그대로 사용해서
+  절대 빠뜨리지 마세요. "복합 문장이라 애매하다"는 이유로 통째로 제외하지 마세요.
+- ⚠️ OECD 평균 대비, 전년 대비처럼 다른 대상과 비교하는 문장이어도 공식 기관(통계청 등)이
+  발표한 수치라면 검증 가치 있는 claim입니다 — 비교 표현이 있다는 이유만으로 제외하지
+  마세요.
 
 ## 출력 형식 (JSON 배열만 출력, 다른 텍스트 금지 — claim_extractor와 동일 스키마)
 [
@@ -73,12 +82,26 @@ _RECOVERY_PROMPT_TEMPLATE = """아래 문장들은 규칙 기반 스캐너가 �
     "sentence": "...", "claim_type": "규모|증감률|비교|전망",
     "period": "..." 또는 null, "unit": "..." 또는 null, "population": "..." 또는 null,
     "statistic_expression": "..." 또는 null, "value": 숫자 또는 null,
+    "value_type": "수준값|증감폭" 또는 null (claim_type이 "규모"일 때만 채움 — value가 특정 시점의
+      총량이면 "수준값", value 자체가 증가/감소한 변화폭이면 "증감폭"),
     "comparison_operator": "증가|감소|동일|초과|미만" 또는 null,
     "comparison_target": "..." 또는 null, "comparison_value": 숫자 또는 null,
     "region": "..." 또는 null, "source_org": "..." 또는 null, "source_report": "..." 또는 null
   }
 ]
 검증 가치 있는 문장이 하나도 없으면 빈 배열 []을 출력합니다.
+
+## 예시 (복합 문장 처리)
+입력 문장: "90세 이상 고령층 사망자가 6만1200명으로 전년 대비 3800명 늘었고, 50대 사망자도
+2만5800명으로 600명 늘었다."
+출력: [{"sentence": "90세 이상 고령층 사망자가 6만1200명으로 전년 대비 3800명 늘었고, 50대
+사망자도 2만5800명으로 600명 늘었다.", "claim_type": "증감률", "period": null, "unit": "명",
+"population": "90세 이상 고령층", "statistic_expression": "전년 대비 3800명 증가",
+"value": 61200, "value_type": "수준값", "comparison_operator": "증가",
+"comparison_target": "전년", "comparison_value": null, "region": null, "source_org": null,
+"source_report": null}]
+(뒤에 나오는 "50대 사망자" 수치는 population/statistic_expression에 다 담지 못하더라도,
+sentence 자체는 원문 전체를 유지해서 문장이 통째로 유실되지 않게 합니다.)
 
 ## 검토할 문장들
 {candidate_sentences}
@@ -165,6 +188,19 @@ def _normalize_comparison_operator(raw: object) -> Optional[str]:
     return _COMPARISON_OPERATOR_SYNONYMS.get(text, text)
 
 
+# interfaces.py의 ValueType(2종: 수준값/증감폭, 2026-08-16 추가). claim_type과 달리 이 필드가
+# 스키마 밖 값이어도 claim 자체를 버릴 이유는 없다 — None이면 calc_type_router가 기존처럼
+# "단순조회"로 안전하게 폴백한다(하위 호환).
+_KNOWN_VALUE_TYPES = {"수준값", "증감폭"}
+
+
+def _normalize_value_type(raw: object) -> Optional[str]:
+    if raw is None:
+        return None
+    text = str(raw)
+    return text if text in _KNOWN_VALUE_TYPES else None
+
+
 def _item_to_claim(item: dict) -> Claim:
     return Claim(
         sentence=str(item["sentence"]),
@@ -174,6 +210,7 @@ def _item_to_claim(item: dict) -> Claim:
         population=item.get("population"),
         statistic_expression=item.get("statistic_expression"),
         value=_to_optional_float(item.get("value")),
+        value_type=_normalize_value_type(item.get("value_type")),
         comparison_operator=_normalize_comparison_operator(item.get("comparison_operator")),
         comparison_target=item.get("comparison_target"),
         comparison_value=_to_optional_float(item.get("comparison_value")),
@@ -294,7 +331,7 @@ def _extract_claims_single(
         )
         try:
             return _parse_claims(last_reply)
-        except (KeyError, ValueError, TypeError, json.JSONDecodeError):
+        except (ClaimExtractorError, KeyError, ValueError, TypeError, json.JSONDecodeError):
             continue
 
     salvaged = _salvage_claims(last_reply)
@@ -341,25 +378,57 @@ def extract_claims(
     return all_claims
 
 
+# 2026-08-17 실측: claim_extractor는 temperature=0에서도 같은 기사를 다시 돌리면 1차 추출
+# 결과가 달라진다(이미 알려진 비결정성) — 그리고 recover_missed_claims 자체도 같은 이유로
+# 비결정적이라, 스캐너가 정확히 찾아낸 후보를 줘도 복구 호출 한 번으로 전부 못 건지는 경우가
+# 실제로 재현됐다(4개 놓친 기사를 재실행하니 1차 추출과 복구 조합이 매번 달라짐). 그래서
+# "스캔→복구"를 한 번이 아니라 몇 번 반복한다 — 놓친 게 없는 대부분의 기사는 1회차에서
+# 바로 끝나 추가 비용이 전혀 없고(scan은 정규식이라 공짜), 놓친 게 있는 소수 기사만 최대
+# _MAX_RECOVERY_ROUNDS번까지 짧은 재확인 호출을 반복한다. 어느 회차든 새로 건진 게 0개면
+# 더 반복해도 소용없다고 보고 바로 멈춘다(비용 상한).
+_MAX_RECOVERY_ROUNDS = 2
+
+
 def recover_missed_claims(
     article_text: str,
     extracted_claims: list[Claim],
     *,
     model: str = MODEL,
-    max_tokens: int = 1024,
+    max_tokens: int = 2048,
     temperature: float = 0.0,
 ) -> list[Claim]:
     """extract_claims() 이후, 규칙 기반 스캐너(claim_candidate_scanner)가 찾은 후보 중
     LLM이 1차 추출에서 놓친 문장이 있으면 그 문장들만 다시 HCX에 물어봐서 복구한다
-    (하이브리드 추출 설계의 3단계 — recall 안전망).
+    (하이브리드 추출 설계의 3단계 — recall 안전망). 최대 _MAX_RECOVERY_ROUNDS회까지
+    "다시 스캔 → 다시 복구"를 반복해서, 복구 자체가 한 번에 다 못 건지는 경우까지 보강한다.
 
     스캐너는 정밀도가 낮게(recall 우선) 설계돼 있어서, 놓친 후보를 그대로 claim으로
     확정하지 않고 여기서 다시 LLM 판단을 한 번 더 거친다 — 제품 스펙·개별 기업 수치 같은
     노이즈는 이 단계에서 걸러진다.
 
-    실패 시(HCX 호출 오류, JSON 파싱 실패 등) 원래 extracted_claims를 그대로 반환한다 —
-    복구는 best-effort이고, 실패해도 1차 추출 결과 자체는 지켜야 배치가 안 죽는다.
+    실패 시(HCX 호출 오류, JSON 파싱 실패 등) 그때까지 모은 claims를 그대로 반환한다 —
+    복구는 best-effort이고, 실패해도 이전 라운드까지의 결과는 지켜야 배치가 안 죽는다.
     """
+    claims = extracted_claims
+    for _ in range(_MAX_RECOVERY_ROUNDS):
+        before = len(claims)
+        claims = _recover_missed_claims_once(
+            article_text, claims, model=model, max_tokens=max_tokens, temperature=temperature
+        )
+        if len(claims) == before:
+            break  # 이번 회차에서 놓친 게 없었거나(스캔 결과 0건) 하나도 못 건졌으면 종료
+    return claims
+
+
+def _recover_missed_claims_once(
+    article_text: str,
+    extracted_claims: list[Claim],
+    *,
+    model: str,
+    max_tokens: int,
+    temperature: float,
+) -> list[Claim]:
+    """recover_missed_claims()의 한 회차 분량 — 스캔 1번 + (필요하면) 복구 호출 1번."""
     already_sentences = [c.sentence for c in extracted_claims]
     missed = find_missed_candidates(article_text, already_sentences)
     if not missed:
@@ -368,6 +437,7 @@ def recover_missed_claims(
     prompt = _RECOVERY_PROMPT_TEMPLATE.replace(
         "{candidate_sentences}", "\n".join(f"- {s}" for s in missed)
     )
+    reply = ""
     try:
         reply = call_hcx(
             model=model,
@@ -378,8 +448,15 @@ def recover_missed_claims(
         )
         recovered = _parse_claims(reply)
     except (ClaimExtractorError, KeyError, ValueError, TypeError, json.JSONDecodeError) as e:
-        print(f"[claim_extractor] 놓친 claim 복구 실패 ({type(e).__name__}: {e}) → 원래 추출 결과만 사용")
-        return extracted_claims
+        # maxTokens에 걸려 배열 마지막 객체가 중간에 끊기면 _parse_claims가 통째로
+        # 실패한다 — 후보 문장이 많을 때(사망자 나이대별 여러 그룹처럼 한 회차에 건질 게
+        # 많은 경우) 실측 재현됨. 앞쪽에서 이미 완결된 객체들은 _salvage_claims로 건져서
+        # 그 회차를 통째로 날리지 않는다.
+        salvaged = _salvage_claims(reply) if reply else []
+        if not salvaged:
+            print(f"[claim_extractor] 놓친 claim 복구 실패 ({type(e).__name__}: {e}) → 이번 회차는 원래 결과만 사용")
+            return extracted_claims
+        recovered = salvaged
 
     return extracted_claims + recovered
 

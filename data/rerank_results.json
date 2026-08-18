@@ -1,0 +1,296 @@
+{
+  "items": [
+    {
+      "item_id": "[data_set.csv] 코로나 이후 다시 치솟는 청년 실업률::0",
+      "candidates": [
+        {
+          "table_id": "DT_1DA7102S",
+          "table_name": "성/연령별 실업률",
+          "score": 0.6818234539831746,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['실업률'] | embedding_search model=intfloat/multilingual-e5-large",
+          "raw_rerank_score": 0.7621643543243408
+        },
+        {
+          "table_id": "DT_1DA7001S",
+          "table_name": "성별 경제활동인구총괄",
+          "score": 0.5472206640231213,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.18944723904132843
+        },
+        {
+          "table_id": "DT_1B8000G",
+          "table_name": "월.분기.연간 인구동향(출생,사망,혼인,이혼)",
+          "score": 0.5025492138534391,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.010196943767368793
+        },
+        {
+          "table_id": "DT_IMEMIB001",
+          "table_name": "성별/연령대별/소득분위별 소득분위 이동비율",
+          "score": 0.5025191375635261,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.010076635517179966
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.5024170533601373,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['1인당 GNI']",
+          "raw_rerank_score": 0.009668288752436638
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 코로나 이후 다시 치솟는 청년 실업률::1",
+      "candidates": [
+        {
+          "table_id": "DT_1DA7102S",
+          "table_name": "성/연령별 실업률",
+          "score": 0.5045963972513301,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['청년실업률', '실업률', '청년실업'] | embedding_search model=intfloat/multilingual-e5-large",
+          "raw_rerank_score": 0.018386106938123703
+        },
+        {
+          "table_id": "DT_1DA7001S",
+          "table_name": "성별 경제활동인구총괄",
+          "score": 0.5012172219977155,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.00486889760941267
+        },
+        {
+          "table_id": "DT_IMEMIB001",
+          "table_name": "성별/연령대별/소득분위별 소득분위 이동비율",
+          "score": 0.5003339633780294,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.001335853710770607
+        },
+        {
+          "table_id": "DT_200Y102",
+          "table_name": "주요지표(분기지표)",
+          "score": 0.5002844542016261,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.0011378169292584062
+        },
+        {
+          "table_id": "DT_1B8000G",
+          "table_name": "월.분기.연간 인구동향(출생,사망,혼인,이혼)",
+          "score": 0.5002651896253696,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.0010607586009427905
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 코로나 이후 다시 치솟는 청년 실업률::2",
+      "candidates": [
+        {
+          "table_id": "DT_1DA7102S",
+          "table_name": "성/연령별 실업률",
+          "score": 0.7048548787504088,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['실업률'] | embedding_search model=intfloat/multilingual-e5-large",
+          "raw_rerank_score": 0.8705247640609741
+        },
+        {
+          "table_id": "DT_1DA7001S",
+          "table_name": "성별 경제활동인구총괄",
+          "score": 0.5946958083157295,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.3834121525287628
+        },
+        {
+          "table_id": "DT_IMEMIB001",
+          "table_name": "성별/연령대별/소득분위별 소득분위 이동비율",
+          "score": 0.5158960372351724,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.06360558420419693
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.5073058895216935,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['1인당 GNI']",
+          "raw_rerank_score": 0.029225638136267662
+        },
+        {
+          "table_id": "DT_1L9U103",
+          "table_name": "소득5분위별 가구당 가계수지 (전국,1인이상)",
+          "score": 0.5065290485471059,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.026117678731679916
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 무서운 물가 버거운 월세::0",
+      "candidates": [
+        {
+          "table_id": "DT_1J22003",
+          "table_name": "소비자물가지수(2020=100)",
+          "score": 0.5547980351136266,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['소비자물가지수', '소비자물가'] | embedding_search model=intfloat/multilingual-e5-large",
+          "raw_rerank_score": 0.22007611393928528
+        },
+        {
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.5583186015415011,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.23434096574783325
+        },
+        {
+          "table_id": "DT_1L9U103",
+          "table_name": "소득5분위별 가구당 가계수지 (전국,1인이상)",
+          "score": 0.5104434256418969,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.0417797788977623
+        },
+        {
+          "table_id": "DT_511Y002",
+          "table_name": "소비자동향조사(전국, 월, 2008.9~)",
+          "score": 0.5067414919042398,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['소비자동향지수']",
+          "raw_rerank_score": 0.026967601850628853
+        },
+        {
+          "table_id": "DT_401Y015",
+          "table_name": "수입물가지수(기본분류)",
+          "score": 0.5053234486870257,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.021294599398970604
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 무서운 물가 버거운 월세::1",
+      "candidates": [
+        {
+          "table_id": "DT_1J22003",
+          "table_name": "소비자물가지수(2020=100)",
+          "score": 0.5463649043054775,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['물가상승률'] | embedding_search model=intfloat/multilingual-e5-large",
+          "raw_rerank_score": 0.185993954539299
+        },
+        {
+          "table_id": "DT_401Y017",
+          "table_name": "수입물가지수(품목별)",
+          "score": 0.5257326575224532,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.10302165150642395
+        },
+        {
+          "table_id": "DT_404Y014",
+          "table_name": "생산자물가지수(기본분류)",
+          "score": 0.5120990364338522,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.04840559512376785
+        },
+        {
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.5104043876042818,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.0416235588490963
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.5014399046552616,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['1인당 GNI']",
+          "raw_rerank_score": 0.005759634543210268
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 무서운 물가 버거운 월세::2",
+      "candidates": [
+        {
+          "table_id": "DT_1J22003",
+          "table_name": "소비자물가지수(2020=100)",
+          "score": 0.5475866880893363,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['물가상승률'] | embedding_search model=intfloat/multilingual-e5-large",
+          "raw_rerank_score": 0.19092461466789246
+        },
+        {
+          "table_id": "DT_401Y017",
+          "table_name": "수입물가지수(품목별)",
+          "score": 0.5320723685972018,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.12846586108207703
+        },
+        {
+          "table_id": "DT_404Y014",
+          "table_name": "생산자물가지수(기본분류)",
+          "score": 0.5139338189550221,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.05574971064925194
+        },
+        {
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.512422246519567,
+          "required_slots": [],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large (embedding-only, unverified)",
+          "raw_rerank_score": 0.04969921335577965
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.5017625341761033,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['1인당 GNI']",
+          "raw_rerank_score": 0.0070501659065485
+        }
+      ]
+    }
+  ]
+}
