@@ -158,6 +158,7 @@ function App() {
             group={selectedGroup}
             articleText={articleTexts[selectedGroup.articleTitle]}
             tableOrgIds={tableOrgIds}
+            articleDates={articleDates}
             onBack={handleBack}
           />
         ) : (

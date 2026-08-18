@@ -1,13 +1,18 @@
+from typing import Optional
+
 from agent.interfaces import Slots
 from agent.orchestrator.clarify_rules import get_next_clarify_step
 
 
-def clarify(current_slots: Slots):
+def clarify(current_slots: Slots, required_slots: Optional[list[str]] = None):
     """
     슬롯이 부족하면 되물을 질문을 반환, 다 채워졌으면 None 반환.
     LLM 호출 없음 — clarify_rules.py의 템플릿 기반 로직만 사용.
+
+    required_slots: 표별 필요 슬롯 목록(2026-08-17 추가) — get_next_clarify_step()으로
+    그대로 전달. 안 넘기면 기존처럼 전역 기본값(period/region/calc_type) 사용.
     """
-    step = get_next_clarify_step(current_slots)
+    step = get_next_clarify_step(current_slots, required_slots)
     if step.clarify_question:
         return step.clarify_question
     return None

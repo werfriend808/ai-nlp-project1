@@ -47,17 +47,28 @@ class NextClarifyStep:
     clarify_question: Optional[str]     # 사용자에게 보여줄 실제 질문 문구
  
  
-def get_next_clarify_step(current_slots: Slots) -> NextClarifyStep:
+def get_next_clarify_step(current_slots: Slots, required_slots: Optional[list[str]] = None) -> NextClarifyStep:
     """
     현재까지 채워진 slots를 보고, 다음에 뭘 물어봐야 하는지 결정.
- 
+
+    required_slots: 표별로 실제 필요한 슬롯 목록(예: 지역 축이 없는 표는 "region" 제외).
+    안 넘기면(기본값 None) 기존처럼 전역 REQUIRED_SLOTS(모든 표 공통)를 그대로 쓴다 —
+    하위 호환.
+
+    2026-08-17 추가: 원래 계약(interfaces.py TableCandidate.required_slots, table_catalog.json
+    B가 표별로 채워둔 값)은 표마다 실제로 필요한 슬롯이 다르다는 걸 반영하려던 건데, 지금까지
+    이 함수가 표 구분 없이 전역 REQUIRED_SLOTS만 써서 실제로 연결이 안 돼 있었다(batch_runner.py
+    모듈 docstring에 이미 "지역 축 자체가 없는 표(DT_1DA7102S 등)인데도 지역을 되묻는다"고
+    알려진 갭으로 문서화돼 있던 문제). 여기서 그 연결을 완성한다.
+
     사용 예:
         slots = {"period": "2024"}  # region, calc_type 아직 없음
         step = get_next_clarify_step(slots)
         print(step.next_slot_to_ask)     # "region"
         print(step.clarify_question)     # "어느 지역 기준인가요?"
     """
-    missing = [slot for slot in REQUIRED_SLOTS if slot not in current_slots or not current_slots[slot]]
+    slots_to_check = required_slots if required_slots is not None else REQUIRED_SLOTS
+    missing = [slot for slot in slots_to_check if slot not in current_slots or not current_slots[slot]]
  
     if not missing:
         return NextClarifyStep(missing_slots=[], next_slot_to_ask=None, clarify_question=None)
