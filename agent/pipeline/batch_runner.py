@@ -58,9 +58,9 @@ from typing import Optional
 from agent.preprocessing.classifier import classify
 from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
-from agent.mapping.keyword_search import SYNONYMS, keyword_search
+from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank
+from agent.mapping.reranker import search_and_rerank, is_rrf_trusted
 from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback, is_region_grounded
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
@@ -417,6 +417,17 @@ def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) ->
     return kosis_slots
 
 
+# "달"/"월"이 시점이 아니라 다른 단어의 일부로 등장하는 경우가 실측 확인됐다(2026-08-18,
+# "344억달러" claim에서 "달러"의 "달"을 "지난달"의 "달"로 오인해 prd_se가 엉뚱하게 "M"으로
+# 골라짐 — "조달"/"발달"/"도달"/"배달"/"달성"/"월드컵"/"세월"/"월급"/"월요일"도 같은 위험).
+# 부분 문자열 검사 대신 형태소 분석기로 "달"/"월"이 독립된 토큰으로 떨어지는지 확인하면
+# (kiwipiepy, keyword_search.py의 _kiwi와 동일 인스턴스 재사용) 이런 오탐을 글자 하나하나
+# 블랙리스트로 등록할 필요 없이 한 번에 걸러낼 수 있다. 단, "지난달"/"이달"/"전달"/"전월"/
+# "동월"/"매달"처럼 형태소 분석기가 통째로 한 단어로 묶어버리는 소수의 사전 등재 시점
+# 표현만 예외적으로 화이트리스트에 남겨둔다(실측: kiwi.tokenize로 직접 확인).
+_MONTH_FUSED_COMPOUNDS = ("지난달", "이달", "전달", "전월", "동월", "매달")
+
+
 def _infer_desired_granularity(text: Optional[str]) -> Optional[str]:
     """claim 문장에서 이 주장이 월/분기/연 중 어느 주기를 가리키는지 best-effort로 추정한다.
 
@@ -426,6 +437,16 @@ def _infer_desired_granularity(text: Optional[str]) -> Optional[str]:
     월/달 표현, 나머지는 판단 보류(None) — 상위 호출부가 표 주기 목록에서 기본값을 쓴다."""
     if not text:
         return None
+
+    if _kiwi is not None:
+        tokens = {tok.form for tok in _kiwi.tokenize(text)}
+        if "분기" in tokens:
+            return "Q"
+        if "월" in tokens or "달" in tokens or any(kw in text for kw in _MONTH_FUSED_COMPOUNDS):
+            return "M"
+        return None
+
+    # kiwipiepy 미설치 시에만 예전 방식(단순 부분 문자열)으로 폴백 — "억달러" 등 오탐 위험 있음.
     if "분기" in text:
         return "Q"
     if "월" in text or "달" in text:
@@ -1231,13 +1252,16 @@ def _finish_claim_with_top_candidate(
     전후로 동일하다(로직 이동만, 변경 없음)."""
     print(f"[3단계 매핑] 최상위 후보: {top.table_name} ({top.table_id}) score={top.score:.3f}")
 
-    # 안전장치: keyword_search가 못 찾아서 embedding_search만으로 나온 후보는
-    # source_meta에 "unverified"로 표시된다(reranker.py의 _merge_candidates 참고).
-    # 임베딩 코사인 유사도만으로는(리랭커 없이는) 노이즈와 진짜 신호를 구분하기 어렵다는 게
-    # 실측으로 재확인됐다(2026-08-13, 완전 무관한 문장도 진짜 매칭과 비슷한 점수대가 나옴) —
-    # 검증 안 된 매칭을 억지로 쓰지 않고 "매칭 없음"으로 처리한다.
-    if top.source_meta and "unverified" in top.source_meta:
-        print(f"[3단계 매핑] 최상위 후보가 검증 안 된 임베딩 전용 매칭(신뢰도 낮음) → 매칭 없음으로 처리")
+    # 안전장치: RRF(Reciprocal Rank Fusion, reranker.py의 _rrf_fuse 참고)로 1등이 된
+    # 후보라도, keyword_search가 못 찾았고 리랭커도 독자적으로 1위로 보지 않았다면
+    # (embedding/VDB 단독 저순위 근거뿐이라면) 신뢰하지 않는다(is_rrf_trusted() 참고).
+    # 2026-08-18: 기존 "unverified면 무조건 매칭없음" 이분법 게이트를 RRF 기반으로 교체
+    # — 임베딩 코사인 유사도 하나만으로는(리랭커 없이는) 노이즈와 진짜 신호를 구분하기
+    # 어렵다는 게 실측으로 재확인됐지만(2026-08-13), 반대로 VDB 단독 후보가 keyword가
+    # 못 찾은 진짜 정답인 사례도 실측 확인돼서(울릉군 기사, "고용률(시/군/구)") 소스
+    # 종류만으로 무조건 버리진 않는다.
+    if top.source_meta and not is_rrf_trusted(top.source_meta):
+        print(f"[3단계 매핑] 최상위 후보가 RRF 기준으로도 신뢰도 낮음(keyword 미발견+리랭커 1위 아님) → 매칭 없음으로 처리")
         try:
             insert_verification(
                 _build_verification_record(
@@ -1245,7 +1269,7 @@ def _finish_claim_with_top_candidate(
                     table_params=table_params, computed=None, verdict=None, explanation=None,
                     cls_result=cls_result, catalog_by_id=catalog_by_id,
                     verification_possible="애매",
-                    ambiguity_reason="표 매칭 신뢰도가 낮아 검증 안 된 임베딩 전용 매칭임",
+                    ambiguity_reason="표 매칭 신뢰도가 낮음 (keyword 미발견 + 리랭커도 1위로 안 봄)",
                 )
             )
         except Exception as e:
