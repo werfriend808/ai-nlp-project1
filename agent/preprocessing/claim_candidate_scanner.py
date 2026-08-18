@@ -105,16 +105,38 @@ def scan_numeric_candidates(article_text: str) -> list[str]:
     return [s for s in split_sentences(article_text) if _INCLUDE_PATTERN.search(s)]
 
 
+def _count_numeric_expressions(sentence: str) -> int:
+    """문장 안에 있는 개별 수치 표현 개수를 센다(_INCLUDE_PATTERN 매치 수) — 이 문장에서
+    claim이 최소 몇 개 나와야 하는지 추정하는 용도.
+
+    완벽한 값은 아니다 — "58.2%에서 90.4%로 상승" 같은 비교(comparison) claim은 숫자가
+    2개(58.2%, 90.4%)지만 실제로는 claim 1개가 맞다. 그래도 "부분 추출"을 잡아내는
+    보수적인 하한값으로는 충분하고, 이 스캐너 자체가 recall 우선·precision은 다음
+    단계(사람/LLM 재확인)에서 흡수하는 설계라 이런 과탐지는 허용 범위로 본다."""
+    return len(_INCLUDE_PATTERN.findall(sentence))
+
+
 def find_missed_candidates(article_text: str, extracted_sentences: list[str]) -> list[str]:
-    """스캐너 후보 중 claim_extractor가 뽑은 문장 어디에도 안 걸린 것만 골라낸다.
+    """스캐너 후보 중 claim_extractor가 "충분히" 뽑지 않은 것만 골라낸다.
 
     claim_extractor의 sentence는 원문 그대로이거나(대부분) 지시어로 앞 문장과 이어붙인
     경우(claim_extractor_prompt.txt 규칙)라서, "후보 문장이 추출된 문장에 부분 문자열로
     포함되는지"로 대조한다 — 완전 일치를 요구하면 이어붙이기 케이스를 다 놓친다.
+
+    2026-08-18 수정: 예전엔 "후보 문장이 extracted_sentences 어디에라도 한 번 포함되면
+    끝"이었는데, 이러면 한 문장에서 claim이 여러 개 나와야 하는 경우(예: "건설업 취업자도
+    9만7000명 줄어, 작년 5월 이후 1년 2개월째 감소세다" — 증감량 claim + 지속기간 claim
+    2개가 나와야 함) claim_extractor가 1개만 뽑고 멈춰도 "이미 커버됐다"고 오판해서 두
+    번째 claim이 영원히 복구되지 않는 문제가 있었다(골든셋 라벨링 중 5-06a/5-06b 같은
+    실제 케이스로 확인). 이제 "몇 번 커버됐는지"(covered_count)를 "이 문장에 수치 표현이
+    몇 개 있는지"(_count_numeric_expressions)와 비교해서, 커버 횟수가 모자라면 여전히
+    missed로 본다.
     """
     missed: list[str] = []
     for candidate in scan_numeric_candidates(article_text):
-        if any(candidate in extracted for extracted in extracted_sentences):
+        covered_count = sum(1 for extracted in extracted_sentences if candidate in extracted)
+        expected_count = _count_numeric_expressions(candidate)
+        if covered_count >= expected_count:
             continue
         missed.append(candidate)
     return missed
@@ -158,4 +180,26 @@ if __name__ == "__main__":
     assert missed == ["우리나라 1인당 국민소득은 2022년부터 3년째 증가 추세이다."], missed
     print("[케이스5] claim_extractor 결과와 대조해서 놓친 문장 1건 정확히 감지 확인")
 
-    print("\n[전체 통과] 규칙 기반 후보 스캐너 회귀 테스트 5건 모두 통과")
+    # 케이스 6 — 2026-08-18 수정 확인: 한 문장에서 claim이 2개 나와야 하는데 1개만 뽑힌
+    # "부분 추출" 상황을 이제 놓치지 않고 잡아내는지 (골든셋 5-06a/5-06b 실제 사례 재현).
+    partial_sentence = "건설 경기 불황으로 건설업 취업자도 9만7000명 줄어, 작년 5월 이후 1년 2개월째 감소세다."
+    partial_article = "제조업도 어려운 상황이다. " + partial_sentence
+    # claim_extractor가 증감량 claim(9만7000명) 하나만 뽑고 지속기간 claim(1년 2개월째)을
+    # 놓친 상황을 재현 — extracted_sentences에 이 문장이 딱 1번만 들어있음.
+    only_one_extracted = [partial_sentence]
+    missed6 = find_missed_candidates(partial_article, only_one_extracted)
+    assert partial_sentence in missed6, (
+        f"❌ 부분 추출(claim 1개만 뽑힘)이 감지 안 됨 — 수정 전 버그가 재현됨: {missed6}"
+    )
+    print("[케이스6] 한 문장에 claim 2개가 나와야 하는데 1개만 뽑힌 부분 추출 상황 감지 확인")
+
+    # 케이스 7 — 케이스 6과 같은 문장인데, 이번엔 claim이 실제로 2개 다 뽑힌(정상) 상황.
+    # covered_count(2) >= expected_count(2)라 더 이상 missed로 잡히면 안 됨(과잉 재요청 방지).
+    both_extracted = [partial_sentence, partial_sentence]
+    missed7 = find_missed_candidates(partial_article, both_extracted)
+    assert partial_sentence not in missed7, (
+        f"❌ 이미 claim 2개 다 뽑힌 문장을 여전히 missed로 잘못 판단함: {missed7}"
+    )
+    print("[케이스7] claim 2개 다 정상적으로 뽑힌 경우엔 missed로 안 잡히는지 확인(회귀 방지)")
+
+    print("\n[전체 통과] 규칙 기반 후보 스캐너 회귀 테스트 7건 모두 통과")
