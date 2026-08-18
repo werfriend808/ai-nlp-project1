@@ -191,7 +191,10 @@ class KosisApiClient:
             # 6자리로 채운 경우) 표의 기본 prdSe보다 우선한다 — 같은 표를 연간/월간 양쪽으로
             # 다 조회할 수 있는 경우(예: 주민등록인구)를 위한 것.
             "prdSe": slots.get("prd_se") or _default_prd_se(base),
-            "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
+            # 2026-08-16: slots에 itm_id가 있으면(3~4단계 사이 select_itm_id()가 claim
+            # 내용 보고 골라준 값) 그걸 우선 쓴다 — 없으면 기존처럼 표의 고정 기본값으로
+            # 폴백한다(prd_se 오버라이드와 같은 원칙, 하위 호환 유지).
+            "itmId": slots.get("itm_id") or base.get("itmId_fixed", base.get("itmId", "ALL")),
         }
 
         # region/gender/age 등 "질문마다 달라지는" 축은 dimensions에 정의해두고,
@@ -302,7 +305,10 @@ class KosisApiClient:
             "orgId": base["orgId"],
             "tblId": base.get("tblId", table_id),
             "prdSe": prd_se,
-            "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
+            # 2026-08-16: slots에 itm_id가 있으면(3~4단계 사이 select_itm_id()가 claim
+            # 내용 보고 골라준 값) 그걸 우선 쓴다 — 없으면 기존처럼 표의 고정 기본값으로
+            # 폴백한다(prd_se 오버라이드와 같은 원칙, 하위 호환 유지).
+            "itmId": slots.get("itm_id") or base.get("itmId_fixed", base.get("itmId", "ALL")),
             "startPrdDe": start_period,
             "endPrdDe": end_period,
         }
@@ -382,7 +388,10 @@ class KosisApiClient:
             "orgId": base["orgId"],
             "tblId": base.get("tblId", table_id),
             "prdSe": prd_se,
-            "itmId": base.get("itmId_fixed", base.get("itmId", "ALL")),
+            # 2026-08-16: slots에 itm_id가 있으면(3~4단계 사이 select_itm_id()가 claim
+            # 내용 보고 골라준 값) 그걸 우선 쓴다 — 없으면 기존처럼 표의 고정 기본값으로
+            # 폴백한다(prd_se 오버라이드와 같은 원칙, 하위 호환 유지).
+            "itmId": slots.get("itm_id") or base.get("itmId_fixed", base.get("itmId", "ALL")),
             dim["kosis_param"]: "+".join(codes),
         }
         for other_name, other_dim in base.get("dimensions", {}).items():

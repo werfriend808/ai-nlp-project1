@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  articleDisplayDate,
   dominantVerdict,
   dominantVerdictCount,
-  latestCreatedAt,
+  formatDate,
   type ArticleGroup,
 } from "../../lib/articles";
 import { VERDICT_ACCENT_BORDER_CLASS, VERDICT_COUNT_BOX_CLASS, VERDICT_ICON } from "../../lib/verdictColors";
@@ -21,10 +22,6 @@ const SORT_MODES: SortMode[] = ["심각도순", "최신순"];
 const SEVERITY_RANK: Record<"불일치" | "애매" | "일치", number> = { 불일치: 0, 애매: 1, 일치: 2 };
 const PAGE_SIZE = 20;
 const MAX_PAGE_BUTTONS = 10;
-
-function formatDate(iso: string): string {
-  return iso ? iso.slice(0, 10).replaceAll("-", ".") : "—";
-}
 
 // 페이지 번호 버튼을 최대 MAX_PAGE_BUTTONS개까지만 보여준다. 전체 페이지가 그보다 많으면
 // 현재 페이지가 가운데쯤 오도록 윈도우를 옮긴다 (예: 25페이지 중 20페이지에 있으면
@@ -45,7 +42,7 @@ export function ArticleListPanel({ groups, articleDates, onSelect }: ArticleList
 
   // 기사 작성일(articleDates, data_set.csv 기반)을 우선 쓰고, 없으면 검증 실행 시각으로
   // 대신한다 — "최근 업데이트"(검증한 시점)가 아니라 "기사 자체의 날짜"를 보여주기 위함.
-  const groupDate = (group: ArticleGroup) => articleDates[group.articleTitle] ?? latestCreatedAt(group);
+  const groupDate = (group: ArticleGroup) => articleDisplayDate(group, articleDates);
 
   const filtered = useMemo(() => {
     if (filter === "전체") return groups;

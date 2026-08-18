@@ -8,6 +8,7 @@ import { VerdictBadge } from "../claims/VerdictBadge";
 interface ArticleTextViewerProps {
   articleText: string;
   claims: VerificationRecord[];
+  articleDate?: string;
 }
 
 interface HighlightedClaimProps {
@@ -45,22 +46,17 @@ function HighlightedClaim({ content, record, number, onClick }: HighlightedClaim
 // 이렇게 원문 전체를 보여주는 이유: 2단계(claim_extractor)가 기사 속 수치 주장을 빠짐없이
 // 다 뽑았는지 사람이 눈으로 바로 확인할 수 있게 하기 위함 — 하이라이트 안 된 수치가 원문에
 // 남아있으면 그게 곧 추출 누락(recall) 사례다.
-export function ArticleTextViewer({ articleText, claims }: ArticleTextViewerProps) {
+export function ArticleTextViewer({ articleText, claims, articleDate }: ArticleTextViewerProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const cleanedText = useMemo(() => cleanArticleTextForDisplay(articleText), [articleText]);
-  const { segments, unmatched } = useMemo(
+  // claimNumbers: 원문에 실제로 등장하는 순서(위→아래)대로 매긴 번호 — buildArticleSegments가
+  // 이미 위치순으로 정렬해둔 걸 그대로 재사용한다(원문 하이라이트, 매칭 안 된 목록 둘 다 같은
+  // 번호 체계를 공유).
+  const { segments, unmatched, claimNumbers } = useMemo(
     () => buildArticleSegments(cleanedText, claims),
     [cleanedText, claims],
   );
   const paragraphs = useMemo(() => groupSegmentsByParagraph(segments), [segments]);
-
-  // 몇 번째 주장인지 한눈에 보이게 claims 배열 순서대로 1부터 번호를 매긴다 (원문 하이라이트,
-  // 매칭 안 된 목록 둘 다 같은 번호 체계를 공유).
-  const claimNumbers = useMemo(() => {
-    const map = new Map<string, number>();
-    claims.forEach((record, i) => map.set(record.result_id, i + 1));
-    return map;
-  }, [claims]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -68,6 +64,12 @@ export function ArticleTextViewer({ articleText, claims }: ArticleTextViewerProp
         <div className="flex items-center gap-2 border-b border-gray-100 px-6 py-4 dark:border-gray-800">
           <span className="h-2 w-2 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
           <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">기사 원문</span>
+          {articleDate && (
+            <>
+              <span className="text-gray-300 dark:text-gray-600">·</span>
+              <span className="text-sm text-gray-400 dark:text-gray-500">{articleDate}</span>
+            </>
+          )}
         </div>
         <div className="p-6 text-gray-900 dark:text-gray-100">
           {paragraphs.map((paragraphSegments, pIndex) => (

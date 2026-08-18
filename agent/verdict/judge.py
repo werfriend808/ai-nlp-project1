@@ -413,14 +413,33 @@ def _claim_computed_type_mismatch(claim: Claim, computed: ComputedResult) -> boo
     6.0을 그냥 직접 빼서 "142.03%p 차이, 불일치"로 확정해버리는 사례가 나왔다(원래는
     148.03을 "2020년 대비 48.03% 상승"으로 환산한 뒤 비교했어야 함 — 8단계 LLM 설명은
     이 환산을 스스로 해냈지만 7단계 규칙 비교엔 그 로직이 없었음). 최댓값/최솟값검증인데
-    지수 단위이고 claim이 퍼센트면 규칙으로 확정하지 않고 LLM에 위임한다.)
+    지수 단위이고 claim이 퍼센트면 규칙으로 확정하지 않고 LLM에 위임한다.
+
+    2026-08-16 실측 추가: 위 방어가 _EXTREME_CALC_TYPES(최댓값검증/최솟값검증)만 막고
+    있었는데, 같은 문제가 "단순조회" 경로에서도 그대로 재현됐다 — "소매판매액은... 2.2%
+    증가했다"(퍼센트 주장)를 단순조회 계산값(raw_value=105.1, unit="2020＝100")과 그냥
+    직접 빼서 "102.9%p 차이, 불일치"로 확정한 사례. 근본 원인은 calc_type이 뭐였는지가
+    아니라 "raw_value를 그대로 반환하는 계산 경로(_RATE_CALC_TYPES가 아닌 모든 경로 —
+    단순조회/합계/규모/최댓값검증/최솟값검증)는 unit이 지수 표기일 수 있다"는 사실 자체라,
+    _EXTREME_CALC_TYPES만 나열하는 대신 "_RATE_CALC_TYPES가 아니면"으로 조건을 넓혀서
+    같은 패턴이 다른 calc_type으로 또 새는 걸 원천 차단한다(증감/증감률만 계산기가 직접
+    퍼센트로 환산해서 반환하므로 이 둘만 안전하게 제외 가능).
+
+    2026-08-16 추가: claim.value_type="증감폭"(예: "13만5000명 늘어난 것으로 나타났다")인
+    "규모" claim은 calc_type_router가 이제 의도적으로 computed.calc_type="증감"으로 보낸다
+    (단순조회로는 증감폭 자체를 검증할 수 없어서 — agent/orchestrator/calc_type_router.py
+    참고). 이 조합은 위 첫 번째 규칙(규모 vs 증감/증감률 = 종류 불일치)에 걸려 원래
+    LLM으로만 위임됐을 텐데, 사실 이건 종류가 어긋난 게 아니라 의도한 정상 조합이라
+    규칙 기반 숫자 비교를 계속 진행해도 된다.
     """
     if claim.claim_type == "규모" and computed.calc_type in _RATE_CALC_TYPES:
+        if claim.value_type == "증감폭" and computed.calc_type == "증감":
+            return False
         return True
     if claim.claim_type == "증감률" and computed.calc_type in _LEVEL_CALC_TYPES:
         return True
     if (
-        computed.calc_type in _EXTREME_CALC_TYPES
+        computed.calc_type not in _RATE_CALC_TYPES
         and _is_percent(claim, computed)
         and _BASE_100_INDEX_UNIT_RE.search(computed.unit or "")
     ):
@@ -562,7 +581,12 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
 # ---------------------------------------------------------------------------
 
 def _judge_with_llm(
-    claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE, prd_se: Optional[str] = None
+    claim: Claim,
+    computed: ComputedResult,
+    *,
+    model: str = MODEL_SIMPLE,
+    prd_se: Optional[str] = None,
+    article_date: Optional[str] = None,
 ) -> Verdict:
     template = _load_prompt_template()
     prompt = (
@@ -575,6 +599,7 @@ def _judge_with_llm(
         .replace("{computed_value}", str(computed.raw_value))
         .replace("{computed_unit}", computed.unit)
         .replace("{computed_period}", _format_period_label(computed.period, prd_se))
+        .replace("{article_date}", article_date or "명시 안 됨")
     )
 
     # 2026-08-11 재현성 문제 대응: temperature 기본값(hcx_client의 0.2)을 두면 같은
@@ -596,7 +621,12 @@ def _judge_with_llm(
 
 
 def judge(
-    claim: Claim, computed: ComputedResult, *, model: str = MODEL_SIMPLE, prd_se: Optional[str] = None
+    claim: Claim,
+    computed: ComputedResult,
+    *,
+    model: str = MODEL_SIMPLE,
+    prd_se: Optional[str] = None,
+    article_date: Optional[str] = None,
 ) -> Verdict:
     """7단계 메인 진입점 (단일 Claim vs 단일 ComputedResult).
 
@@ -606,11 +636,19 @@ def judge(
     prd_se(표 주기, "Y"/"M"/"Q"): LLM에게 넘기는 판정 설명 프롬프트에서 computed.period를
     사람이 헷갈리지 않게(월/분기 구분) 포맷하는 데만 쓰인다 — 안 넘기면(기본값 None) 기존과
     동일하게 원본 문자열을 그대로 노출한다(하위 호환).
-    """
+
+    article_date(2026-08-17 추가): claim.period가 "1월"처럼 연도 없는 상대 표현일 때, LLM이
+    기사 발행일을 기준으로 절대 시점을 스스로 계산해서 "시점이 모호하다"는 이유로 잘못
+    판단불가 처리하지 않도록 앵커를 준다 — 실제 배치에서 "지난 1월 수출액이 16개월 만에
+    마이너스로 돌아섰다"(발행일 2025-02-01) claim이, 4단계가 이미 2025년 1월로 정확히
+    resolve해서 조회했는데도 LLM이 "어느 1월인지 모호하다"며 판단불가(gap_type=기간)를 낸
+    사례로 재현됨 — 데이터 조회 자체는 맞았는데 판정 설명 단계에서만 근거 없이 틀린
+    케이스. 안 넘기면(기본값 None) "명시 안 됨"으로 표시되어 기존과 동일하게 동작한다
+    (하위 호환, prd_se와 같은 원칙)."""
     rule_verdict = _rule_based_verdict(claim, computed)
     if rule_verdict is not None:
         return rule_verdict
-    return _judge_with_llm(claim, computed, model=model, prd_se=prd_se)
+    return _judge_with_llm(claim, computed, model=model, prd_se=prd_se, article_date=article_date)
 
 
 # ---------------------------------------------------------------------------
@@ -1017,3 +1055,57 @@ if __name__ == "__main__":
         "❌ 지수단위가 아닌 정상적인 최댓값검증(%)까지 잘못 막혀버림"
     )
     print("[정상 케이스 회귀 확인] 지수단위가 아닌 최댓값검증(%)은 그대로 규칙 비교 대상으로 남음 ✅")
+
+    print("\n=== 2026-08-16 신규: 단순조회 + 지수단위(2020=100) vs 퍼센트 주장 오판정 방어 ===")
+    # 실제 배치 실행에서 재현된 버그: "9월 소매판매액은 전년 동월 대비 2.2% 증가했다"(퍼센트
+    # 주장)를 단순조회 계산값(raw_value=105.1, unit="2020＝100")과 그냥 직접 빼서
+    # "102.9%p 차이, 불일치"로 확정해버렸음. 최댓값검증만 막던 방어를 단순조회까지 넓힌 뒤
+    # 재현 안 되는지 확인.
+    retail_claim = Claim(
+        sentence="9월 소매판매액은 전년 동월 대비 2.2% 증가했다.",
+        claim_type="증감률", value=2.2, unit="%",
+    )
+    retail_computed = ComputedResult(calc_type="단순조회", raw_value=105.1, unit="2020＝100", period="202409")
+    assert _rule_based_verdict(retail_claim, retail_computed) is None, (
+        "❌ 지수단위(2020=100) 단순조회가 퍼센트 주장과 그대로 비교되어 규칙으로 확정됨 — 회귀 재발"
+    )
+    print("[단순조회+지수단위 방어] 규칙 기반으로 확정 안 하고 LLM에 위임함 ✅")
+
+    # 정상 케이스(지수단위 아닌 단순조회)까지 같이 막히면 안 됨 — 회귀 확인.
+    normal_level_claim = Claim(sentence="실업률이 3.7%로 나타났다", claim_type="규모", value=3.7, unit="%")
+    normal_level_computed = ComputedResult(calc_type="단순조회", raw_value=3.7, unit="%", period="2025")
+    assert _claim_computed_type_mismatch(normal_level_claim, normal_level_computed) is False, (
+        "❌ 지수단위가 아닌 정상적인 단순조회(%)까지 잘못 막혀버림"
+    )
+    print("[정상 케이스 회귀 확인] 지수단위가 아닌 단순조회(%)는 그대로 규칙 비교 대상으로 남음 ✅")
+
+    print("\n=== 2026-08-16 신규: 규모+증감폭(value_type) vs 증감 계산값 정상 비교 확인 ===")
+    # calc_type_router.py가 이제 claim_type="규모"+value_type="증감폭"을 "증감"으로 보내는데,
+    # 이 조합이 _claim_computed_type_mismatch의 "규모 vs 증감/증감률 = 종류 불일치" 규칙에
+    # 걸려 항상 LLM으로만 위임되면 안 된다 — 의도한 정상 조합이므로 규칙 기반 숫자 비교가
+    # 그대로 진행돼야 한다(실제로 취업자 증감폭 claim 재처리로 확인).
+    delta_claim = Claim(
+        sentence="지난달 15세 이상 취업자 수가 13만5000명 늘어난 것으로 나타났다.",
+        claim_type="규모", value=135000, unit="명", value_type="증감폭", comparison_operator="증가",
+    )
+    delta_computed = ComputedResult(calc_type="증감", raw_value=135000, unit="명", period="202412~202501")
+    assert _claim_computed_type_mismatch(delta_claim, delta_computed) is False, (
+        "❌ 규모+증감폭 vs 증감 계산값의 의도된 조합이 종류 불일치로 잘못 막힘"
+    )
+    verdict_delta = _rule_based_verdict(delta_claim, delta_computed)
+    assert verdict_delta is not None and verdict_delta.verdict == "일치", (
+        f"❌ 규모+증감폭 claim이 정확히 일치하는 증감 계산값과도 규칙으로 확정 안 됨: {verdict_delta}"
+    )
+    print(f"[규모+증감폭 정상 비교 확인] {verdict_delta} ✅")
+
+    # 회귀 확인: value_type="수준값"(또는 None, 구버전 claim)인 규모 claim이 증감 계산값과
+    # 비교되면(정상적으로는 이럴 일이 없지만, 계산 경로가 잘못 갈리는 경우를 대비) 여전히
+    # 종류 불일치로 LLM에 위임돼야 한다 — 위 예외가 "증감폭"에만 좁게 걸리는지 확인.
+    level_claim_vs_change = Claim(
+        sentence="15세 이상 취업자 수는 2857만6000명으로 집계됐다.",
+        claim_type="규모", value=28576000, unit="명", value_type="수준값",
+    )
+    assert _claim_computed_type_mismatch(level_claim_vs_change, delta_computed) is True, (
+        "❌ 수준값 규모 claim이 증감 계산값과 비교되는데도 종류 불일치로 안 막힘 — 예외 조건이 너무 넓음"
+    )
+    print("[수준값 회귀 확인] value_type='수준값'인 규모 claim은 증감 계산값과 여전히 종류 불일치로 LLM 위임 ✅")

@@ -61,7 +61,7 @@ from agent.preprocessing.source_filter import resolve_claim_sources, filter_veri
 from agent.mapping.keyword_search import SYNONYMS, keyword_search
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
 from agent.mapping.reranker import search_and_rerank
-from agent.orchestrator.slot_filler import fill_slots
+from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback, is_region_grounded
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
 from agent.shared.extreme_value_patterns import (
@@ -73,7 +73,7 @@ from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
 from agent.verdict.judge import judge, JudgeError
 from agent.explain.explainer import explain, ExplainerError
-from agent.interfaces import ComputedResult, Explanation, Verdict
+from agent.interfaces import ComputedResult, Explanation, Verdict, KosisApiResponse
 from db.store import insert_verification, make_result_id
 
 TABLE_PARAMS_PATH = Path(__file__).parent.parent / "kosis" / "table_params.json"
@@ -94,6 +94,29 @@ def _load_table_catalog_by_id(path: Path = TABLE_CATALOG_PATH) -> dict[str, dict
     return {t["tblId"]: t for t in data.get("tables", [])}
 
 
+def _table_required_slots(table_id: Optional[str], catalog_by_id: dict) -> list[str]:
+    """table_catalog.json의 표별 required_slots/optional_slots(한글 라벨)를 보고, 4단계
+    되묻기가 실제로 다뤄야 할 슬롯 목록(clarify_rules.py의 내부 이름 체계)을 정한다.
+
+    2026-08-17: "period"/"calc_type"은 표 구분 없이 항상 필요(계산 자체가 불가능하거나,
+    calc_type은 뒤에서 route_calc_type()이 항상 덮어쓰므로 물어봐도 해는 없음)하지만,
+    "region"은 표에 지역 축 자체가 없으면 되물을 이유가 없다 — table_catalog.json에
+    "지역"이 required_slots든 optional_slots든 아예 안 걸린 표(예: DT_1DA7102S)면 region을
+    뺀다. table_catalog.json에 없는 표(아직 B가 안 채웠거나 조회 실패)는 안전하게 기존
+    동작대로 region을 그대로 요구한다(하위 호환 폴백).
+
+    "업종"/"품목"처럼 그 외 표별 세부 축은 여기서 다루지 않는다 — 그건 clarify()의
+    한 번짜리 고정 clarify_reply로는 답할 수 없는 질문이고(배치 파이프라인은 실제 대화가
+    아니라 미리 준비된 문구로 재시도하는 구조), 실제로는 select_dimension_values()가
+    claim 내용을 보고 이미 채워주고 있다(2026-08-16 작업) — 여기서 또 요구하면 답 못 할
+    질문 때문에 claim이 불필요하게 스킵될 위험만 커진다."""
+    entry = catalog_by_id.get(table_id) if table_id else None
+    if entry is None:
+        return ["period", "region", "calc_type"]
+    has_region = "지역" in entry.get("required_slots", []) or "지역" in entry.get("optional_slots", [])
+    return ["period", "region", "calc_type"] if has_region else ["period", "calc_type"]
+
+
 def _normalize_statistic_name(expression: Optional[str]) -> Optional[str]:
     """3단계 keyword_search.py의 기존 SYNONYMS 사전을 재사용해서 기사 표현을 정규화된
     통계 용어로 바꾼다 (새 LLM 호출 없음). 매칭 안 되면 원래 표현 그대로 둔다."""
@@ -105,6 +128,19 @@ def _normalize_statistic_name(expression: Optional[str]) -> Optional[str]:
     return expression
 
 
+
+# 제목 뒤, 실제 본문 시작 전에 끼어드는 기자명/타임스탬프/댓글수 배지 블록.
+# 실측 확인(2026-08-17): "최아리 기자 입력 2025.02.20. 06:00 업데이트 2025.02.20. 06:07 0
+# 지난달 생산자물가가..." 식으로, 마지막 숫자(댓글수 등 UI 배지, 기사마다 0/1/4/23처럼
+# 다른 값)까지 본문에 섞여 스크랩된다 — 프론트엔드 "기사 원문"에 이 숫자가 그대로
+# 노출되는 문제로 발견됨. 업데이트 타임스탬프는 없는 기사도 있어 그 부분은 선택적으로 둔다.
+_BYLINE_RE = re.compile(
+    r"[가-힣]+\s*기자\s*입력\s*\d{4}\.\d{2}\.\d{2}\.\s*\d{2}:\d{2}"
+    r"(?:\s*업데이트\s*\d{4}\.\d{2}\.\d{2}\.\s*\d{2}:\d{2})?"
+    r"\s*\d+\s*"
+)
+
+
 def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) -> str:
     """실제 스크랩 기사(CSV의 '기사 본문 전체')는 신문사 내비게이션 메뉴가 본문 앞에
     반복적으로 붙어있어서(광고/관련기사 텍스트까지 합치면 2만자 넘는 경우도 있음),
@@ -113,11 +149,20 @@ def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) 
     기사제목의 앞부분을 raw_text 안에서 찾아 그 위치부터 잘라내는 방식으로 내비게이션
     잡음을 건너뛰고, 이후 max_len자만 남겨서 컨텍스트 길이를 안전하게 유지한다.
     제목을 못 찾으면(예외 케이스) 그냥 앞에서부터 max_len자를 쓴다.
+
+    제목 뒤에도 기자명/입력·업데이트 시각/댓글수 배지가 실제 본문 시작 전에 끼어드므로
+    (_BYLINE_RE 참고), 찾아지면 그 블록까지 건너뛰고 진짜 첫 문장부터 시작한다.
     """
     anchor = title[:12].strip()
     idx = raw_text.find(anchor) if anchor else -1
     start = idx if idx >= 0 else 0
-    return raw_text[start : start + max_len]
+    trimmed = raw_text[start : start + max_len]
+
+    m = _BYLINE_RE.search(trimmed[: len(title) + 100])
+    if m:
+        trimmed = trimmed[: m.start()] + trimmed[m.end() :]
+
+    return trimmed
 
 
 def load_articles_from_csv(
@@ -255,6 +300,91 @@ ARTICLES = [
 ]
 
 
+def _match_by_name(name_to_code: dict, texts: tuple) -> Optional[str]:
+    """(공용 매칭 로직) name_to_code(예: itmId->이름, 또는 objL 코드->이름을 뒤집은 것)에서
+    texts(claim.population, claim.statistic_expression 등)를 순서대로 하나씩 검사해,
+    처음으로 매칭이 나온 필드의 결과를 확정해서 반환한다. 매칭 하나도 없으면 None.
+
+    필드 우선순위: texts는 호출부가 이미 "더 구체적인 신호부터" 순서를 정해서 넘긴다고
+    가정한다(예: population을 statistic_expression보다 먼저) — 한 필드 안에서 매칭이
+    나오면 다른 필드는 아예 안 본다. 그 이유는 select_itm_id()가 원래 두 필드를 한꺼번에
+    비교하다가 겪은 실측 버그 때문이다: "인구수"(statistic_expression)가 "총인구수"(길이4)에
+    부분 매칭되는 게 "남자"(population, 길이2)보다 길다는 이유로 더 구체적인 population
+    매칭을 밀어내버렸다 — 필드를 섞지 않고 먼저 매칭되는 필드에서 확정해야 이 오판을 막는다.
+
+    한 필드 안에서는: (1) 완전 일치를 최우선으로 쓰고, (2) 없으면 부분 문자열 중 이름이
+    가장 긴(=가장 구체적인) 쪽을 쓴다. 완전 일치를 먼저 보는 이유는 "농가"/"비농가"처럼
+    부정 접두사로 만들어진 이름은 짧은 쪽이 긴 쪽의 부분 문자열이 돼서(population="농가"가
+    name="비농가"의 부분 문자열), 길이 기준만 쓰면 "더 긴 쪽=더 구체적"이라는 가정이
+    뒤집혀 정반대 항목이 뽑히는 실측 버그가 있었기 때문이다."""
+    for text in texts:
+        if not text:
+            continue
+        exact = next((code for name, code in name_to_code.items() if name == text), None)
+        if exact is not None:
+            return exact
+        best_code, best_len = None, 0
+        for name, code in name_to_code.items():
+            if name in text or text in name:
+                if len(name) > best_len:
+                    best_code, best_len = code, len(name)
+        if best_code is not None:
+            return best_code
+    return None
+
+
+def select_itm_id(table_id: str, claim, table_params: dict) -> Optional[str]:
+    """claim.statistic_expression/population(2단계가 이미 뽑아둔 필드)을 표의 items 목록
+    (itmId -> 항목명)과 대조해서 가장 맞는 itmId를 고른다. 표에 items가 등록 안 됐거나
+    매칭되는 항목이 없으면 None(호출부가 기존 itmId_fixed로 폴백)을 반환한다.
+
+    배경(2026-08-16 실측): "성별 경제활동인구총괄"(DT_1DA7001S)처럼 한 표 안에 여러
+    항목(취업자/실업자/실업률/고용률 등)이 같이 들어있는 표가, 지금까지는 claim 내용과
+    무관하게 항상 같은 itmId(예: 실업률)로 고정 조회되고 있었다 — "취업자 수가
+    13만5000명 늘었다"는 claim에 실업률 3.7%를 돌려주는 식으로, 표는 맞게 찾았는데
+    표 안의 항목이 틀려서 판정 자체가 무의미해지는 사례가 실측 확인됐다(table_params.json
+    등록 당시 이미 알려진 갭으로 문서화돼 있었음). 여기서 그 갭을 채운다.
+
+    간단한 부분 문자열 매칭만 쓴다(임베딩 없음) — items 이름이 소수(표 하나당 대개
+    10개 이하)이고 "취업자"/"실업률"처럼 뜻이 뚜렷이 갈리는 한국어 통계 용어라, 3단계
+    표매칭(keyword_search)과 같은 원리로 규칙 기반이면 충분하다고 판단. 매칭 로직 자체는
+    _match_by_name() 참고 — population을 statistic_expression보다 먼저 본다(성별/가구유형
+    같은 "누구/어떤 대상" 신호는 대개 population에 실리는데, statistic_expression 쪽의
+    범용 표현이 그걸 밀어내는 오판을 막기 위함)."""
+    items = table_params.get(table_id, {}).get("items")
+    if not items:
+        return None
+    return _match_by_name(items, (claim.population, claim.statistic_expression))
+
+
+def select_dimension_values(table_id: str, claim, table_params: dict, existing_slots: dict) -> dict:
+    """itmId 말고 objL1/objL2 같은 "dimension" 축도 고정값 문제가 있어서(예: 유형별
+    매매가격지수 표가 항상 "종합"으로만 조회되고 "아파트"/"단독주택" 주장은 구분 못 함),
+    select_itm_id()와 같은 원리를 표의 dimensions 전체로 일반화한 버전.
+
+    배경(2026-08-16): itmId 문제를 고치고 나서 살펴보니, 같은 모양의 문제가 itmId 아닌
+    dimensions에도 여럿 있었다(주택유형/대출종류/계정항목/사망원인 등 — 표마다 축 이름은
+    달라도 전부 "code_map은 있는데 claim 내용과 무관하게 항상 default_value로만 고정
+    조회된다"는 동일 패턴). dimensions[dim_name].code_map은 C가 표 조사할 때 이미 실제
+    API로 검증해서 다 채워둔 데이터라 새로 조사할 필요 없이 그대로 재사용 가능하다.
+
+    D(4단계 slot_filler)가 이미 값을 채운 축(가장 흔한 예: region)은 절대 덮어쓰지 않는다
+    — existing_slots에 이미 값이 있으면 그 dim_name은 건드리지 않고 건너뛴다. 이 함수가
+    실제로 값을 채우는 건 D가 애초에 모르는(제너릭 슬롯에 없는) 표별 전용 축들뿐이다."""
+    dims = table_params.get(table_id, {}).get("dimensions", {})
+    resolved: dict = {}
+    for dim_name, dim in dims.items():
+        if existing_slots.get(dim_name):
+            continue
+        code_map = dim.get("code_map")
+        if not code_map:
+            continue
+        match = _match_by_name(code_map, (claim.population, claim.statistic_expression))
+        if match is not None:
+            resolved[dim_name] = match
+    return resolved
+
+
 def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) -> Optional[dict]:
     """D의 generic slots(period/region/calc_type, 표 구분 없이 고정)를
     C의 table_params.json에 정의된 표별 dimensions로 변환한다.
@@ -272,6 +402,11 @@ def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) ->
         # 걸 골라뒀으면(prd_se), 그대로 실어서 KosisApiClient까지 전달한다 — 안 넘기면
         # api_client.py가 표의 기본 주기(_default_prd_se)로 알아서 폴백한다(하위 호환).
         kosis_slots["prd_se"] = generic_slots["prd_se"]
+    if generic_slots.get("itm_id"):
+        # 2026-08-16: select_itm_id()가 claim에 맞는 항목을 찾았으면 그대로 실어서
+        # KosisApiClient까지 전달한다 — 안 넘기면 api_client.py가 표의 itmId_fixed
+        # 기본값으로 폴백한다(하위 호환, prd_se와 같은 원칙).
+        kosis_slots["itm_id"] = generic_slots["itm_id"]
 
     for dim_name, dim in base.get("dimensions", {}).items():
         # 이 표에 정의된 축(dim_name)만 채운다. generic_slots에 값이 있으면 쓰고,
@@ -323,9 +458,27 @@ def run_stage_4(
     *,
     table_id: Optional[str] = None,
     table_params: Optional[dict] = None,
+    catalog_by_id: Optional[dict] = None,
+    claim_region: Optional[str] = None,
 ) -> Optional[dict]:
     """4단계: fill_slots + clarify. 한 번에 안 채워지면 clarify_reply로 한 번 더 시도.
     그래도 부족하면 None (되묻기 미해결 → 5단계로 못 감)을 반환한다.
+
+    claim_region(2026-08-17 추가): 2단계(claim_extractor)가 이미 뽑아둔 Claim.region을
+    4단계 시작 슬롯으로 시드한다. 예전엔 fill_slots()를 항상 빈 슬롯({})으로 불러서, 2단계가
+    이미 맞게 뽑아둔 region을 4단계가 같은 문장 놓고 LLM으로 처음부터 다시 뽑았다 — 낭비인
+    데다, DB에 저장되는 표시 필드(region은 claim.region을 그대로 씀)와 실제 KOSIS 조회에
+    쓰이는 슬롯(4단계 결과)이 서로 다른 값을 가리킬 수 있는 불일치 위험이 있었다.
+    fill_slots()는 이미 "이미 값 있는 슬롯은 안 덮어씀" 로직이 있어서, 여기서 시드만
+    넣어주면 2단계가 채운 건 그대로 쓰고 못 채운 것만 4단계 LLM이 보강한다(2단계가 아예 못
+    채웠으면 지금까지와 동일하게 동작 — 회귀 없음). 4단계 자체 로직에 있던
+    is_region_grounded 방어도 여기서 그대로 적용해서(대조 대상은 claim_sentence), 문장에
+    실제로 없는 지명이면(2단계가 기사 다른 부분 보고 잘못 지어냈을 가능성) 시드하지 않는다.
+
+    claim.period는 일부러 시드하지 않는다 — 2단계가 뽑는 period는 "작년"/"지난달"처럼
+    원문 표현 그대로라 4단계가 기대하는 정규화된 형식("2024"/"202404")이 아니다. 정규화는
+    LLM 호출(normalize_time_expressions) 안에서 같이 일어나는 과정이라 건너뛸 수 없어서,
+    이 최적화는 region에만 안전하게 적용된다.
 
     table_id/table_params: 3단계가 이미 매칭한 표의 지원 주기 목록에서, claim 문장이
     실제로 원하는 주기(_infer_desired_granularity)와 맞춰 prd_se 하나를 고른다(2026-08-13,
@@ -333,19 +486,29 @@ def run_stage_4(
     표가 여러 주기를 지원해도 claim이 원하는 걸 못 고르던 문제까지 해결). 안 넘기면 기존과
     동일하게 연 단위로만 동작한다(하위 호환).
 
+    catalog_by_id: table_catalog.json 인덱스 — 표별로 실제 필요한 슬롯이 다르다는 걸
+    반영한다(2026-08-17, _table_required_slots 참고). 안 넘기면 기존처럼 모든 표에 대해
+    region까지 무조건 요구한다(하위 호환).
+
     반환하는 slots에 "prd_se"를 실제로 채워 넣는다 — build_kosis_slots가 이 값을
     KosisApiClient까지 그대로 전달해서, 표의 기본값이 아니라 여기서 고른 주기로 조회하게
     한다."""
+    seed_slots: dict = {}
+    if claim_region and is_region_grounded(claim_region, claim_sentence):
+        seed_slots["region"] = claim_region
+
     prd_se = None
     if table_id and table_params and table_id in table_params:
         supported = table_params[table_id].get("prdSe")
         desired = _infer_desired_granularity(claim_sentence)
         prd_se = _select_prd_se(supported, desired)
 
-    slots = fill_slots(claim_sentence, {}, article_date, prd_se=prd_se)
+    required_slots = _table_required_slots(table_id, catalog_by_id) if catalog_by_id is not None else None
+
+    slots = fill_slots(claim_sentence, seed_slots, article_date, prd_se=prd_se)
     if prd_se:
         slots["prd_se"] = prd_se
-    question = clarify(slots)
+    question = clarify(slots, required_slots)
     print(f"[4단계 slot_filler] 1차 슬롯: {slots}")
 
     if question and clarify_reply:
@@ -353,7 +516,7 @@ def run_stage_4(
         slots = fill_slots(clarify_reply, slots, article_date, prd_se=prd_se)
         if prd_se:
             slots["prd_se"] = prd_se
-        question = clarify(slots)
+        question = clarify(slots, required_slots)
         print(f"[4단계 slot_filler] 2차 슬롯: {slots}")
 
     if question:
@@ -434,6 +597,257 @@ def _prior_immediate_period(period: str, prd_se: Optional[str]) -> str:
     return _prior_year_same_period(period)
 
 
+def _normalize_whitespace(text: str) -> str:
+    """공백 제거 비교용 정규화. keyword_search.py의 _normalize()와 동일한 이유 —
+    기사 문장은 "원화 기준"/"국가 채무"처럼 code_map 라벨("원화기준"/"국가채무")과
+    띄어쓰기가 다른 경우가 흔해서, 공백을 무시하고 비교한다."""
+    return re.sub(r"\s+", "", text)
+
+
+# ---------------------------------------------------------------------------
+# "20대"/"70대 이상"·"청년"/"노인" 같은 나이 표현을 KOSIS 5세 단위 code_map과 대조해서
+# 필요한 코드 목록으로 바꾸는 순수 판별 로직.
+#
+# 2026-08-17: 원래 agent_chat.py(실전2: 대화형 챗봇 에이전트)용으로 만들어져 있었는데,
+# 정작 그쪽에서도 실제로 호출하는 곳이 없어서(grep 확인) 이 배치 파이프라인은 물론
+# agent_chat.py 자신도 못 쓰고 있던 함수였다. 한 번은 agent/shared/age_group_patterns.py로
+# 옮겼었지만, 챗봇(agent_chat.py) 자체를 정리할 계획이라 실제로 이 로직을 쓰는 곳은 이
+# 배치 파이프라인 하나뿐이다 — "공용 모듈"이라는 틀이 필요 없어서, 아예 여기로 직접
+# 들여왔다(fetch_by_codes+compute_sum 배선은 아래 _resolve_decade_age/_fetch_value 참고).
+# ---------------------------------------------------------------------------
+_AGE_BAND_RANGE_RE = re.compile(r"^(\d+)~(\d+)세$")
+_AGE_100_PLUS_RE = re.compile(r"^100세이상$")
+# (?<!\d): 매칭되는 한 자리 숫자 앞에 다른 숫자가 있으면(예: "1480대"의 "80대") 매칭하지
+# 않는다 — 실제 기사 실측(2026-08-04, full_coverage_result.jsonl 3181건 분석)에서
+# "1082만1480대"(자동차 판매 대수)처럼 큰 숫자의 끝자리가 나이대로 오탐되는 사례를 발견해서
+# 추가한 정규식 레벨 방어. "20대"/"10·20대"처럼 진짜 나이대는 앞에 다른 숫자가 안 붙는다.
+_DECADE_EXPR_RE = re.compile(r"(?<!\d)(\d)0대(\s*이상)?")
+
+
+def _parse_age_band_label(label: str) -> Optional[tuple[int, Optional[int]]]:
+    """code_map의 5세 단위 라벨을 (시작나이, 끝나이) 튜플로 변환한다. "100세이상"처럼
+    끝이 없으면 끝나이는 None(무한대 취급). 매칭 안 되면 None."""
+    m = _AGE_BAND_RANGE_RE.match(label)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    if _AGE_100_PLUS_RE.match(label):
+        return 100, None
+    return None
+
+
+# "숫자0대"가 진짜 나이대인지 문맥 확인 (1차 규칙 + 2차 LLM 더블체크). 실측(2026-08-04,
+# 실제 기사 1005건/claim 3181건 분석)에서 같은 정규식이 나이대가 아닌 경우에도 오탐되는 걸
+# 확인함: "상위 10대 기업"(순위), "K2 전차 총 180대"(대수/단위). 정규식 하나로는 이 둘을
+# 못 걸러서, 확실한 신호가 있는 대다수는 규칙(공짜)으로 끝내고, 신호가 없는 애매한 소수만
+# LLM에 묻는다.
+_DECADE_AGE_FOLLOW_WHITELIST = (
+    "후반", "초반", "중반", "이상", "미만", "인구", "실업률", "취업률", "취업자",
+    "근로자", "직장인", "남성", "여성", "남자", "여자", "가구주", "세대주",
+)
+_DECADE_AGE_FOLLOW_BLACKLIST = ("기업", "은행", "국가", "기관", "대학", "도시", "종목", "그룹", "브랜드")
+_DECADE_AGE_PRECEDE_BLACKLIST = (
+    "전차", "차량", "트럭", "헬기", "전투기", "버스", "컴퓨터", "노트북", "항공기", "탱크", "장비",
+)
+# 조사로 자연스럽게 끝나는 경우("20대는", "20대가")도 나이대로 확정 — 순위/대수 표현은
+# 보통 뒤에 바로 다른 명사(기업/전차 등)가 오지 조사만 딱 붙어 끝나지 않는다.
+_DECADE_AGE_PARTICLE_CHARS = "는가이을를의도만에과와랑"
+
+
+def _check_decade_age_context(normalized_sentence: str, match: re.Match) -> Optional[bool]:
+    """"숫자0대" 매칭 앞뒤 문맥만 보고 확실히 판단되면 True/False, 확실하지 않으면(애매) None.
+
+    None을 반환하면 호출하는 쪽이 LLM(2차)에게 물어봐야 한다 — 여기서 애매한 걸 억지로
+    True/False로 단정하지 않는다."""
+    follow = normalized_sentence[match.end() : match.end() + 6]
+    precede = normalized_sentence[max(0, match.start() - 6) : match.start()]
+
+    if any(w in follow for w in _DECADE_AGE_FOLLOW_BLACKLIST):
+        return False
+    if any(w in precede for w in _DECADE_AGE_PRECEDE_BLACKLIST):
+        return False
+    if any(w in follow for w in _DECADE_AGE_FOLLOW_WHITELIST):
+        return True
+    if not follow or follow[0] in _DECADE_AGE_PARTICLE_CHARS:
+        return True
+    return None
+
+
+def _confirm_decade_age_with_llm(sentence: str, matched_expr: str) -> bool:
+    """규칙(1차)으로 확실히 판단 안 되는 애매한 경우만 호출하는 2차 확인. 실패/근거없음/
+    근거가 원문에 없으면(환각) 전부 안전하게 False(나이대 아님)로 처리한다 — "확신 없으면
+    억지로 추측하지 않는다" 원칙."""
+    prompt = f"""다음 문장에서 "{matched_expr}"라는 표현이 나이대(연령대)를 뜻하는지 판단하세요.
+
+규칙:
+- 나이대를 뜻하면(예: "20대 취업자 수", "40대 남성") value를 true로 답하세요.
+- 개수를 세는 단위(예: "전차 180대")나 순위(예: "상위 10대 기업")처럼 나이가 아니면
+  value를 false로 답하세요.
+- 판단 근거가 되는, 문장에 실제로 나온 표현을 quote에 그대로 복사하세요. 지어내지 마세요.
+- 설명이나 다른 텍스트는 절대 포함하지 마세요.
+
+문장: "{sentence}"
+
+응답 형식 (JSON만, 다른 텍스트 없이): {{"value": true 또는 false, "quote": "근거 문구"}}
+"""
+    try:
+        raw = call_hcx(prompt)
+    except Exception:
+        return False
+
+    try:
+        extracted = json.loads(raw)
+    except json.JSONDecodeError:
+        extracted = extract_json_fallback(raw)
+
+    value = extracted.get("value")
+    quote = extracted.get("quote")
+    if value is not True or not quote:
+        return False
+    if _normalize_whitespace(str(quote)) not in _normalize_whitespace(sentence):
+        return False
+    return True
+
+
+def _resolve_decade_age_codes(sentence: str, age_code_map: dict) -> Optional[tuple[str, list[str]]]:
+    """문장에서 "20대"/"70대 이상" 같은 표현을 찾아, age_code_map(5세 단위 라벨들) 중 그
+    구간에 해당하는 코드 목록을 반환한다. 매칭 없으면 None.
+
+    반환값: (매칭된 표현 원문, 해당 구간 코드 리스트) — 코드가 2개 이상이면 호출하는 쪽이
+    api_client를 코드별로 여러 번 호출한 뒤 calculator.compute_sum()으로 합산해야 한다."""
+    normalized_sentence = _normalize_whitespace(sentence)
+    m = _DECADE_EXPR_RE.search(normalized_sentence)
+    if not m:
+        return None
+
+    context_check = _check_decade_age_context(normalized_sentence, m)
+    if context_check is False:
+        return None
+    if context_check is None and not _confirm_decade_age_with_llm(sentence, m.group(0)):
+        return None
+
+    decade_start = int(m.group(1)) * 10
+    is_or_above = bool(m.group(2))
+
+    matched_codes = []
+    for label, code in age_code_map.items():
+        band = _parse_age_band_label(label)
+        if band is None:
+            continue
+        band_start, band_end = band
+        if is_or_above:
+            if band_start >= decade_start:
+                matched_codes.append(code)
+        elif band_start >= decade_start and (band_end is not None and band_end < decade_start + 10):
+            matched_codes.append(code)
+
+    if not matched_codes:
+        return None
+    return m.group(0), matched_codes
+
+
+# "청년"/"노인"/"청소년"/"중장년"/"아동"/"영유아" 같은 생애주기 명칭 처리. "20대"류(정확히
+# 10세 구간)와 달리 이런 명칭은 법령마다 정의된 나이 구간이 있다(예: 청년은 청년기본법=
+# 19~34세, 청년고용촉진법=15~29세로 법령마다 다름 — 2026-08-17 실측 확인, 표 하나가 실제로
+# "청년(15~29세)"로 등록돼 있었음). 그래서 표에 이미 그 명칭을 포함한 라벨이 있으면(그 표가
+# 실제로 채택한 정의) 그걸 최우선으로 쓰고, 없을 때만 아래 기본 범위로 5세 단위 코드를
+# 합산한다 — 우리가 임의로 범위를 정해서 표의 실제 정의를 덮어쓰지 않기 위함.
+#
+# 기본 범위는 정부 통계에서 흔히 쓰이는 기준을 그대로 채택했다(영유아=영유아보육법,
+# 아동=아동복지법, 청소년=청소년기본법(9~24세, 흔히 생각하는 "10대"보다 훨씬 넓음),
+# 청년=청년기본법과 청년고용촉진법 중 더 자주 쓰이는 후자, 중장년=중장년내일센터 등 정책
+# 기준, 노인/고령자/고령층=노인복지법). 경계(9/17/64 등)가 5세 단위 구간과 안 맞아떨어지는
+# 경우, 구간에 완전히 포함되는 5세 단위 코드만 합산 대상으로 삼는다(부분 겹침은 제외 —
+# 과대 포함보다 과소 포함이 안전하다고 판단).
+_NAMED_AGE_GROUPS: dict[str, tuple[int, Optional[int]]] = {
+    "영유아": (0, 6),
+    "아동": (0, 17),
+    "청소년": (9, 24),
+    "청년": (15, 29),
+    "중장년": (40, 64),
+    "고령층": (65, None),
+    "고령자": (65, None),
+    "노인": (65, None),
+}
+
+
+def _resolve_named_age_group_codes(sentence: str, age_code_map: dict) -> Optional[tuple[str, list[str]]]:
+    """"청년"/"노인" 같은 생애주기 명칭을 감지해서, 표에 그 명칭이 포함된 단일 라벨이
+    있으면 그 코드 하나를, 없으면 _NAMED_AGE_GROUPS의 표준 범위에 해당하는 5세 단위 코드
+    들을 합산 대상으로 반환한다. 감지 안 되거나 표에서 대응할 코드를 못 찾으면 None."""
+    normalized_sentence = _normalize_whitespace(sentence)
+    matched_group = next((g for g in _NAMED_AGE_GROUPS if g in normalized_sentence), None)
+    if matched_group is None:
+        return None
+
+    explicit = next((code for label, code in age_code_map.items() if matched_group in label), None)
+    if explicit is not None:
+        return matched_group, [explicit]
+
+    start, end = _NAMED_AGE_GROUPS[matched_group]
+    matched_codes = []
+    for label, code in age_code_map.items():
+        band = _parse_age_band_label(label)
+        if band is None:
+            continue
+        band_start, band_end = band
+        if band_start < start:
+            continue
+        if end is not None and (band_end is None or band_end > end):
+            continue
+        matched_codes.append(code)
+
+    if not matched_codes:
+        return None
+    return matched_group, matched_codes
+
+
+def _resolve_decade_age(table_id: str, table_params: dict, claim_sentence: Optional[str]):
+    """claim_sentence에서 "20대"/"70대 이상"류 10세단위 나이 표현이나 "청년"/"노인" 같은
+    생애주기 명칭이 있고 이 표에 age dimension(5세단위 code_map)이 있으면 (매칭된 표현,
+    필요한 코드 리스트)를 반환한다. 감지 안 되면 None. 숫자 기반 "20대"류를 먼저 보고,
+    없으면 명칭 기반("청년" 등, 2026-08-17 추가 — agent_chat._resolve_named_age_group_codes
+    참고)을 본다 — 한 문장에 둘 다 나오는 경우는 실질적으로 없다고 봐서 우선순위만 두고
+    별도 병합 로직은 두지 않는다.
+
+    반드시 한 claim(한 번의 run_stage_5_6 호출)당 한 번만 호출해서 재사용해야 한다 —
+    내부에서 정규식으로 애매하면 LLM(_confirm_decade_age_with_llm)에 물어보는데, 증감
+    claim처럼 같은 문장으로 base/target 두 번 조회하는 경우 매번 새로 호출하면 LLM을
+    쓸데없이 두 번 부르고, temperature 때문에 base/target이 서로 다른 답(하나는 나이대로
+    인정, 하나는 아니라고)을 받는 내부 불일치 위험도 생긴다."""
+    age_code_map = table_params.get(table_id, {}).get("dimensions", {}).get("age", {}).get("code_map")
+    if not age_code_map:
+        return None
+    sentence = claim_sentence or ""
+    return _resolve_decade_age_codes(sentence, age_code_map) or _resolve_named_age_group_codes(
+        sentence, age_code_map
+    )
+
+
+def _fetch_value(
+    table_id: str,
+    slots: dict,
+    client: KosisApiClient,
+    calculator: KosisCalculator,
+    decade: Optional[tuple],
+) -> KosisApiResponse:
+    """5단계 조회 한 번. decade가 (라벨, 코드리스트)면(_resolve_decade_age 참고) 그 코드들을
+    fetch_by_codes()로 한 번에 가져와 compute_sum()으로 합산한 뒤 KosisApiResponse 모양으로
+    돌려준다(단위/시점은 합산 결과, org_id/itm_id 등은 응답 중 첫 번째 것 재사용 — 같은
+    표·같은 조회라 전부 동일함). decade가 None이면 기존처럼 client() 단일 호출 그대로."""
+    if decade is not None:
+        label, codes = decade
+        responses = client.fetch_by_codes(table_id, slots, "age", codes)
+        summed = calculator.compute_sum(responses)
+        print(f"[나이대 합산] '{label}' → {len(responses)}개 5세단위 코드 합산 = {summed.raw_value}{summed.unit}")
+        first = responses[0]
+        return KosisApiResponse(
+            raw_value=summed.raw_value, unit=summed.unit, period=summed.period,
+            org_id=first.org_id, itm_id=first.itm_id,
+            obj_l1=first.obj_l1, obj_l2=first.obj_l2, prd_se=first.prd_se,
+        )
+    return client(table_id, slots)
+
+
 def run_stage_5_6(
     table_id: str,
     generic_slots: dict,
@@ -466,6 +880,10 @@ def run_stage_5_6(
         return None
 
     calc_type = generic_slots.get("calc_type")
+    # 2026-08-16: "20대"/"70대 이상" 같은 10세단위 나이 표현은 이 claim 안에서 base/target
+    # 등 여러 번 조회하더라도 단 한 번만 판별해서 재사용한다(_resolve_decade_age 참고 —
+    # 중복 LLM 호출/내부 불일치 방지).
+    decade = _resolve_decade_age(table_id, table_params, claim_sentence)
     try:
         if calc_type in ("증감", "증감률") and kosis_slots.get("period"):
             if _wants_prior_immediate_period(comparison_target):
@@ -473,16 +891,33 @@ def run_stage_5_6(
             else:
                 base_period = _prior_year_same_period(kosis_slots["period"])
             base_slots = dict(kosis_slots, period=base_period)
-            base_resp = client(table_id, base_slots)
-            target_resp = client(table_id, kosis_slots)
+            base_resp = _fetch_value(table_id, base_slots, client, calculator, decade)
+            target_resp = _fetch_value(table_id, kosis_slots, client, calculator, decade)
             print(f"[5단계 api_client] base   = {base_resp}")
             print(f"[5단계 api_client] target = {target_resp}")
 
             calc_fn = calculator.compute_change_rate if calc_type == "증감률" else calculator.compute_change
+            # 2026-08-17: base_resp.unit이 이미 "%"인 통계(실업률/고용률/물가상승률처럼 값
+            # 자체가 비율)는, 기사가 "5.1%로 전년 대비 0.2%포인트 상승"처럼 그 변화도 %로
+            # 적어도 실제로는 두 %값의 단순 차이(포인트차)를 말하는 것이지, compute_change_rate가
+            # 계산하는 상대적 증감률((target-base)/base*100, "%의 %")이 아니다. 이걸 구분 안
+            # 하면 5.1%->5.6% 변화가 "5.7%(원래 값 대비 상대 증가율)"로 계산돼 기사의 "0.2%p"와
+            # 전혀 다른 숫자가 나온다(실측 재현: 청년 실업률 claim, 5.1→5.6인데 증감률로
+            # 계산하면 5.7%가 나와 기사 수치와 아예 딴 세상 값이 됨). 값 자체가 이미 %인
+            # 경우엔 그냥 차이(compute_change)로 계산해야 "%포인트" 표현과 맞는다. (드물게
+            # "영업이익률이 50% 증가했다"처럼 비율 자체의 상대적 증가를 말하는 경우엔 이 휴리스틱이
+            # 틀릴 수 있지만, 한국 뉴스에서 실업률/고용률/물가상승률류 %지표는 거의 항상
+            # %포인트로 비교되므로 더 흔한 케이스를 맞춘다.)
+            if calc_type == "증감률" and base_resp.unit == "%":
+                calc_fn = calculator.compute_change
             result = calc_fn(base_resp, target_resp)
             print(f"[6단계 calculator] {result}")
             return result
         elif calc_type in ("최댓값검증", "최솟값검증") and kosis_slots.get("period"):
+            # 2026-08-16: 이 분기는 decade(나이대 합산)를 아직 지원하지 않는다 — historical
+            # 전체 구간의 매 시점마다 5세단위 코드 여러 개를 합산해야 해서 스코프가 훨씬
+            # 크다(단순조회/증감처럼 시점 1~2개가 아니라 수십 개 시점 전부). "20대 취업자
+            # 역대 최고" 같은 claim은 지금은 decade 미적용 상태로 그대로 진행된다(알려진 갭).
             start_year = resolve_since_event_start_year(claim_sentence or "")
             if start_year is None:
                 start_year = resolve_n_years_since_start_year(claim_sentence or "", article_year)
@@ -512,7 +947,7 @@ def run_stage_5_6(
             print(f"[6단계 calculator] {result}")
             return result
         else:
-            resp = client(table_id, kosis_slots)
+            resp = _fetch_value(table_id, kosis_slots, client, calculator, decade)
             print(f"[5단계 api_client] {resp}")
             print("[6단계 calculator] 단순 조회 (calc_type 없음/미지원) → 계산 없이 값 그대로 사용")
             return ComputedResult(calc_type="단순조회", raw_value=resp.raw_value, unit=resp.unit, period=resp.period)
@@ -525,7 +960,7 @@ def run_stage_5_6(
 
 
 def run_stage_7_8(
-    claim, top, computed: ComputedResult, *, prd_se: Optional[str] = None
+    claim, top, computed: ComputedResult, *, prd_se: Optional[str] = None, article_date=None
 ) -> Optional[tuple[Verdict, Optional[Explanation]]]:
     """7단계 judge + 8단계 explain. judge가 실패하면 이 주장 전체를 스킵(None)하지만,
     explain만 실패하는 경우는 Verdict는 살리고 Explanation만 None으로 반환한다 —
@@ -537,9 +972,13 @@ def run_stage_7_8(
     prdSe 하나였던 옛날엔 여기서 직접 조회해도 됐지만, 이제 prdSe가 목록이라 "실제로 어떤
     주기로 조회했는지"는 4단계의 선택 결과를 그대로 받아야만 정확하다 — table_params를
     다시 조회하면 목록 전체(예: ['Y','Q','M'])를 받아 어느 것도 특정 못 한다. 안 넘기면
-    기존과 동일하게 원본 period 문자열 그대로 노출."""
+    기존과 동일하게 원본 period 문자열 그대로 노출.
+
+    article_date(2026-08-17 추가): claim.period가 "1월"처럼 연도 없는 상대 표현일 때 judge()가
+    기사 발행일을 앵커로 시점을 확정할 수 있게 그대로 넘긴다(agent/verdict/judge.py 참고)."""
+    article_date_str = article_date.isoformat() if hasattr(article_date, "isoformat") else article_date
     try:
-        verdict = judge(claim, computed, prd_se=prd_se)
+        verdict = judge(claim, computed, prd_se=prd_se, article_date=article_date_str)
         print(f"[7단계 judge] {verdict}")
     except JudgeError as e:
         print(f"[7단계 judge] 실패 ({type(e).__name__}: {e}) → 설명 생성 스킵")
@@ -827,6 +1266,8 @@ def _finish_claim_with_top_candidate(
             article["published_date"],
             table_id=top.table_id,
             table_params=table_params,
+            catalog_by_id=catalog_by_id,
+            claim_region=claim.region,
         )
     except Exception as e:
         print(f"[4단계 slot_filler] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
@@ -875,6 +1316,26 @@ def _finish_claim_with_top_candidate(
     print(f"[calc_type 라우팅] LLM 추정값({slots.get('calc_type')!r}) 대신 규칙 기반 결과로 덮어씀 → {routed_calc_type!r}")
     slots["calc_type"] = routed_calc_type
 
+    # 2026-08-16: 표 안에 항목(itmId)이 여러 개인 표(예: "성별 경제활동인구총괄"이
+    # 취업자/실업자/실업률/고용률을 다 갖고 있는 경우)는 claim이 실제로 뭘 묻는지 보고
+    # 골라야 한다 — 안 그러면 표는 맞게 찾고도 엉뚱한 항목(예: 취업자 수 claim에 실업률
+    # 값)을 비교해서 판정 자체가 무의미해진다(오늘 실측 발견, table_params.json에 이미
+    # "알려진 갭"으로 문서화돼 있던 문제). 못 찾으면(items 미등록/매칭 실패) None이라
+    # slots에 안 실리고, build_kosis_slots가 표의 itmId_fixed 기본값으로 그대로 폴백한다.
+    selected_itm = select_itm_id(top.table_id, claim, table_params)
+    if selected_itm:
+        print(f"[itmId 선택] claim.statistic_expression={claim.statistic_expression!r} → itmId={selected_itm!r}")
+        slots["itm_id"] = selected_itm
+
+    # 2026-08-16: itmId 말고 objL1/objL2 같은 dimension 축(주택유형/대출종류/계정항목 등)도
+    # 같은 종류의 고정값 문제가 있어서(예: 유형별 매매가격지수가 "아파트" 주장에도 항상
+    # "종합"으로만 조회됨) 같은 원리로 동적 선택한다. D가 이미 채운 축(region 등)은
+    # select_dimension_values() 내부에서 건드리지 않고 건너뛴다.
+    dim_values = select_dimension_values(top.table_id, claim, table_params, slots)
+    if dim_values:
+        print(f"[dimension 선택] {dim_values}")
+        slots.update(dim_values)
+
     computed = run_stage_5_6(
         top.table_id, slots, table_params, client, calculator,
         comparison_target=claim.comparison_target,
@@ -883,7 +1344,9 @@ def _finish_claim_with_top_candidate(
     if computed is None:
         return None
 
-    outcome = run_stage_7_8(claim, top, computed, prd_se=slots.get("prd_se"))
+    outcome = run_stage_7_8(
+        claim, top, computed, prd_se=slots.get("prd_se"), article_date=article.get("published_date")
+    )
     if outcome is not None:
         verdict, explanation = outcome
         try:
@@ -905,7 +1368,36 @@ def _finish_claim_with_top_candidate(
             "gap_type": verdict.gap_type,
             "classifier_score": cls_result.score,
         }
-    return None
+
+    # 2026-08-17: run_stage_7_8이 None을 반환하는 건 judge()가 실패한 경우뿐이다(JudgeError —
+    # LLM이 JSON 대신 대화체로 응답하는 등, 이 세션에서 실제로 여러 번 재현됨). 예전엔 여기서
+    # 그냥 None을 반환해서 이 claim이 DB에 아무 기록도 안 남고 조용히 사라졌다 — 콘솔 로그에만
+    # 흔적이 남고, 프론트엔드 원문 뷰어에는 그 문장이 하이라이트도 안 된 평문으로 남아 마치
+    # "2단계 추출 누락"처럼 보였다(실제로는 추출은 됐고 판정 단계에서 버려진 것, 실제 사례로
+    # 재현 확인). 판정 실패도 하나의 결과로 남겨서(판단불가) claim 자체는 항상 눈에 보이게 한다.
+    fallback_verdict = Verdict(
+        verdict="판단불가", gap_type=None,
+        reason="7단계 판정(judge) 응답 처리 중 오류가 발생해 자동 판정에 실패했습니다.",
+    )
+    try:
+        insert_verification(
+            _build_verification_record(
+                article=article, claim=claim, top=top, generic_slots=slots,
+                table_params=table_params, computed=computed, verdict=fallback_verdict,
+                explanation=None, cls_result=cls_result, catalog_by_id=catalog_by_id,
+                verification_possible="불가", ambiguity_reason="judge() 실패(JudgeError 등) — 콘솔 로그 참고",
+            )
+        )
+    except Exception as e:
+        print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
+    return {
+        "article": article["label"],
+        "claim_sentence": claim.sentence,
+        "table_name": top.table_name,
+        "verdict": "판단불가",
+        "gap_type": None,
+        "classifier_score": cls_result.score,
+    }
 
 
 def print_review_summary(results: list[dict]) -> None:

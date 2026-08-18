@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import type { ArticleGroup } from "../../lib/articles";
+import { articleDisplayDate, formatDate, type ArticleGroup } from "../../lib/articles";
 import { VERDICT_COUNT_BOX_CLASS, VERDICT_ICON, verdictCountLabel } from "../../lib/verdictColors";
 import { VerdictBadge } from "../claims/VerdictBadge";
 import { ArticleTextViewer } from "./ArticleTextViewer";
@@ -9,12 +9,13 @@ interface ArticleDetailProps {
   group: ArticleGroup;
   articleText: string | undefined;
   tableOrgIds: Record<string, string>;
+  articleDates: Record<string, string>;
   onBack: () => void;
 }
 
 const VERDICT_ORDER = ["불일치", "애매", "일치"] as const;
 
-export function ArticleDetail({ group, articleText, tableOrgIds, onBack }: ArticleDetailProps) {
+export function ArticleDetail({ group, articleText, tableOrgIds, articleDates, onBack }: ArticleDetailProps) {
   const counts = new Map<(typeof VERDICT_ORDER)[number], number>();
   for (const r of group.records) {
     const label = verdictCountLabel(r.verification_result);
@@ -65,7 +66,11 @@ export function ArticleDetail({ group, articleText, tableOrgIds, onBack }: Artic
         </div>
 
         {articleText ? (
-          <ArticleTextViewer articleText={articleText} claims={group.records} />
+          <ArticleTextViewer
+            articleText={articleText}
+            claims={group.records}
+            articleDate={formatDate(articleDisplayDate(group, articleDates))}
+          />
         ) : (
           // 원문 텍스트를 못 구한 경우(예: 아직 export 전, 카탈로그 밖 시나리오)의 대체 화면 —
           // 하이라이트 없이 표로라도 결과를 보여준다.

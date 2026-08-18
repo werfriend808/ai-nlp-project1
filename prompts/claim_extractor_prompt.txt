@@ -13,6 +13,21 @@
   "이는", "이 중", "전달보다" 등 지시어로 바로 앞 문장에 의존하는 경우에만, 원문 그대로인
   앞 문장과 해당 문장을 이어붙여 sentence로 씁니다 (문장을 새로 만들거나 내용을 요약하는 게
   아니라, 원문 문장 두 개를 그대로 붙이는 것입니다).
+  ⚠️ 한 문장 안에 "OO을 뜻하는"/"OO를 의미하는"처럼 용어를 설명하는 수식어구가 지표명 앞에
+  붙어 있어도(예: "여성 한 명이 낳을 것으로 예상되는 아이 수를 뜻하는 합계출산율도 작년
+  0.75명으로..."), 그 수식어구를 빼고 뒷부분만 잘라서 sentence로 쓰면 안 됩니다 — 이
+  문장에서 규모/증감률 등 여러 claim을 같이 뽑을 때(아래 규칙 참고) 하나는 수식어구를 포함한
+  전체 문장으로, 다른 하나는 수식어구를 뺀 축약형으로 쓰는 실수가 실제로 재현됐습니다. 같은
+  문장에서 claim을 여러 개 뽑든 하나만 뽑든, sentence는 항상 원문 문장 전체(수식어구
+  포함)를 토씨 하나 안 틀리고 동일하게 씁니다.
+  ⚠️ "~라고 밝혔다"/"~라고 전했다"/"~라고 설명했다"처럼 문장 끝에 붙는 보도 동사(누가
+  말했다는 인용 표현)를 빼고 그 앞부분에서 마침표를 임의로 새로 붙이면 안 됩니다(예: 원문이
+  "…8포인트 올랐다고 밝혔다."인데 sentence를 "…8포인트 올랐다."로 잘라 쓰는 실수가 실제로
+  재현됐습니다). sentence가 원문의 정확한 부분 문자열이어야 프론트엔드가 기사 본문에서
+  이 문장의 위치를 찾아 하이라이트할 수 있는데, 마침표 위치를 원문과 다르게 새로 만들면
+  그 매칭이 깨져서 판정 결과가 있는데도 기사 원문에는 표시가 안 되는 문제가 생깁니다.
+  보도 동사가 문장 끝에 있으면 그 동사까지 포함한 원문 그대로("…8포인트 올랐다고
+  밝혔다.")를 sentence로 쓰세요.
 - 서로 다른 대상(예: 등급별/연령대별/지역별 항목)이나 서로 다른 시점을 가리키는 수치는, 같은
   문장·같은 단락에 나란히 나오더라도 절대 하나로 합치지 말고 각각 별도의 claim으로 만듭니다.
   기사에 숫자가 5개, 10개가 나오면 claim도 그만큼 나오는 게 정상입니다.
@@ -31,6 +46,19 @@
 - period: 주장이 가리키는 시점 (예: "2024년"). 명확하지 않으면 null.
 - unit: 수치의 단위 (예: "%", "kg", "달러"). 없으면 null.
 - population: 주장이 적용되는 대상/모집단 (예: "국민 1인당", "20대 남성"). 없으면 null.
+  ⚠️ "청년"/"고령층"/"노인"/"20대"/"여성" 같은 연령대·성별 수식어는, 문장에서 주어 자리에
+  깔끔하게 나오지 않고 "~도"/"~는"/"~의" 같은 조사로 문장 중간에 끼어 있어도(예: "'그냥
+  쉬었다'는 청년도 46만명을 넘으며..." — "청년도"처럼 주어처럼 안 보이는 위치) 반드시
+  population에 채워 넣습니다. 이런 수식어가 있는데도 population을 null로 두거나 통계
+  지표명(statistic_expression)만 채우고 넘어가는 실수를 하지 마세요 — 이 수식어가 있어야
+  KOSIS 표에서 정확히 어느 연령대/성별 항목을 조회해야 하는지 알 수 있습니다.
+- region: 주장이 한정하는 지역/국가 범위 (예: "서울", "부산"). 문장에 통계의 지리적 범위를
+  실제로 한정하는 표현이 없으면 null입니다.
+  ⚠️ 지명이 문장에 있어도, 그게 기관명·매체명 같은 고유명사 안에 붙어있는 글자일 뿐이면
+  (예: "한국은행", "서울신문", "광주은행" — 지명이 이름의 일부일 뿐 통계 범위를 말하는 게
+  아님) region으로 뽑으면 안 됩니다. "한국은행이 발표한 물가 상승률은 2.4%..." 같은 문장은
+  지역을 전혀 한정하지 않는 전국 단위 통계이므로 region은 null입니다 — "한국은행"의
+  "한국"을 region="한국"으로 뽑는 실수를 하지 마세요.
 
 ## 추출 규칙 (추가 필드)
 - statistic_expression: 기사가 실제로 쓴 지표 표현 (예: "쌀 소비량", "경제 성장률 전망치", "복구율").
@@ -38,6 +66,15 @@
 - value: 이 claim의 핵심 수치를 **부호 없는 숫자**로 씁니다 (증가/감소 방향은 comparison_operator가
   따로 담당하므로 value 자체는 항상 양수). "23만8천"처럼 한글 단위가 붙으면 그대로 풀어서 숫자로
   씁니다 (예: 238000). 수치를 특정할 수 없으면 null.
+- value_type: claim_type이 "규모"일 때만 채우고, 그 외(증감률/비교/전망)는 항상 null입니다.
+  value가 가리키는 숫자의 성격을 "수준값"(특정 시점의 총량/절대값 그 자체 — 예: "취업자 수는
+  2857만6000명으로 집계됐다")과 "증감폭"(value 자체가 늘어나거나 줄어든 변화량 — 예: "취업자
+  수가 13만5000명 늘어난 것으로 나타났다") 중 하나로 구분합니다. 구분 기준은 문장 구조입니다:
+  숫자 뒤에 "~로 나타났다/집계됐다/기록했다"처럼 어떤 시점의 값 자체를 서술하면 수준값이고,
+  숫자 뒤에 바로 "~만큼 늘었다/줄었다/증가했다/감소했다"처럼 변화량 자체를 가리키면 증감폭입니다.
+  한 문장에 수준값과 증감폭이 둘 다 나오면(예: "2804만1000명으로 전년 동월 대비 5만2000명
+  감소했다") value에는 수준값을 넣고 그 증감폭은 comparison_value에 넣은 뒤 value_type은
+  "수준값"으로 둡니다 — 즉 value_type은 항상 value 필드 자체가 어떤 종류의 숫자인지만 가리킵니다.
 - comparison_operator: 이 claim이 다른 시점/대상과 비교하는 내용이면 "증가"/"감소"/"동일"/"초과"/
   "미만" 중 하나. 단순 규모(예: "55.8kg을 기록했다")처럼 비교가 아니면 null.
 - comparison_target: 비교 기준이 되는 시점·대상의 원문 표현 (예: "1년 전", "정부 전망치", "2019년").
@@ -59,6 +96,7 @@
     "sentence": "...", "claim_type": "규모|증감률|비교|전망",
     "period": "..." 또는 null, "unit": "..." 또는 null, "population": "..." 또는 null,
     "statistic_expression": "..." 또는 null, "value": 숫자 또는 null,
+    "value_type": "수준값|증감폭" 또는 null (claim_type이 "규모"일 때만, 그 외엔 항상 null),
     "comparison_operator": "증가|감소|동일|초과|미만" 또는 null,
     "comparison_target": "..." 또는 null, "comparison_value": 숫자 또는 null,
     "region": "..." 또는 null, "source_org": "..." 또는 null, "source_report": "..." 또는 null
@@ -76,9 +114,9 @@
 두 claim에 반복해서 쓰고 claim_type/unit/value로 구분합니다. "비교" claim의 value는 그 시점의
 실제 수치, comparison_value는 비교 대상의 수치입니다.)
 [
-  {"sentence": "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, 작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다.", "claim_type": "규모", "period": "2024년", "unit": "kg", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 55.8, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"},
-  {"sentence": "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, 작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다.", "claim_type": "증감률", "period": "2024년", "unit": "%", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 1.1, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": null, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"},
-  {"sentence": "작년 소비량은 30년 전인 1994년(108.3kg)의 절반 수준이다.", "claim_type": "비교", "period": "2024년", "unit": "kg", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 55.8, "comparison_operator": "미만", "comparison_target": "1994년", "comparison_value": 108.3, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"}
+  {"sentence": "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, 작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다.", "claim_type": "규모", "period": "2024년", "unit": "kg", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 55.8, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"},
+  {"sentence": "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, 작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다.", "claim_type": "증감률", "period": "2024년", "unit": "%", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 1.1, "value_type": null, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": null, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"},
+  {"sentence": "작년 소비량은 30년 전인 1994년(108.3kg)의 절반 수준이다.", "claim_type": "비교", "period": "2024년", "unit": "kg", "population": "국민 1인당", "statistic_expression": "쌀 소비량", "value": 55.8, "value_type": null, "comparison_operator": "미만", "comparison_target": "1994년", "comparison_value": 108.3, "region": null, "source_org": "통계청", "source_report": "2024년 양곡소비량조사 결과"}
 ]
 
 [예시 입력]
@@ -88,8 +126,8 @@
 (두 번째 문장이 주어 없이 앞 문장에 이어지지만, 원문에 없는 "이는" 같은 말을 새로 넣지 않고
 원문 문장 그대로 씁니다. 빠진 맥락은 population/comparison_target 필드가 대신 채워줍니다.)
 [
-  {"sentence": "국책연구기관인 한국개발연구원(KDI)이 올해 한국 경제 성장률 전망치를 2%에서 1.6%로 낮췄다.", "claim_type": "전망", "period": "올해", "unit": "%", "population": "한국 경제 성장률", "statistic_expression": "경제 성장률 전망치", "value": 1.6, "comparison_operator": "감소", "comparison_target": "이전 전망치", "comparison_value": 2.0, "region": null, "source_org": "한국개발연구원(KDI)", "source_report": null},
-  {"sentence": "지난달 정부(1.8%)보다도 낮은 수치다.", "claim_type": "비교", "period": "올해", "unit": "%", "population": "한국 경제 성장률", "statistic_expression": "경제 성장률 전망치", "value": 1.6, "comparison_operator": "미만", "comparison_target": "정부 전망치", "comparison_value": 1.8, "region": null, "source_org": "정부", "source_report": null}
+  {"sentence": "국책연구기관인 한국개발연구원(KDI)이 올해 한국 경제 성장률 전망치를 2%에서 1.6%로 낮췄다.", "claim_type": "전망", "period": "올해", "unit": "%", "population": "한국 경제 성장률", "statistic_expression": "경제 성장률 전망치", "value": 1.6, "value_type": null, "comparison_operator": "감소", "comparison_target": "이전 전망치", "comparison_value": 2.0, "region": null, "source_org": "한국개발연구원(KDI)", "source_report": null},
+  {"sentence": "지난달 정부(1.8%)보다도 낮은 수치다.", "claim_type": "비교", "period": "올해", "unit": "%", "population": "한국 경제 성장률", "statistic_expression": "경제 성장률 전망치", "value": 1.6, "value_type": null, "comparison_operator": "미만", "comparison_target": "정부 전망치", "comparison_value": 1.8, "region": null, "source_org": "정부", "source_report": null}
 ]
 
 [예시 입력]
@@ -99,8 +137,8 @@
 (한글 단위가 붙은 큰 수는 value에 그대로 풀어서 씁니다: "4156억" -> 415600000000, "4088억2000만"
 -> 408820000000.)
 [
-  {"sentence": "작년 12월 말 우리나라 외환 보유액은 4156억달러로 집계됐다.", "claim_type": "규모", "period": "2024년 12월", "unit": "달러", "population": "외환 보유액", "statistic_expression": "외환 보유액", "value": 415600000000, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": "한국은행", "source_report": "외환 보유액 통계"},
-  {"sentence": "연말 기준으로 2019년(4088억2000만달러) 이후 5년 만에 최저치다.", "claim_type": "비교", "period": "2024년 12월", "unit": "달러", "population": "외환 보유액", "statistic_expression": "외환 보유액", "value": 415600000000, "comparison_operator": "미만", "comparison_target": "2019년", "comparison_value": 408820000000, "region": null, "source_org": "한국은행", "source_report": "외환 보유액 통계"}
+  {"sentence": "작년 12월 말 우리나라 외환 보유액은 4156억달러로 집계됐다.", "claim_type": "규모", "period": "2024년 12월", "unit": "달러", "population": "외환 보유액", "statistic_expression": "외환 보유액", "value": 415600000000, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": "한국은행", "source_report": "외환 보유액 통계"},
+  {"sentence": "연말 기준으로 2019년(4088억2000만달러) 이후 5년 만에 최저치다.", "claim_type": "비교", "period": "2024년 12월", "unit": "달러", "population": "외환 보유액", "statistic_expression": "외환 보유액", "value": 415600000000, "value_type": null, "comparison_operator": "미만", "comparison_target": "2019년", "comparison_value": 408820000000, "region": null, "source_org": "한국은행", "source_report": "외환 보유액 통계"}
 ]
 
 [예시 입력 — 여러 항목이 한 문장에 나열된 경우]
@@ -111,10 +149,22 @@
 다양했다"처럼 뭉뚱그리지 않고 등급별로 각각 별도 claim을 만듭니다. 세 claim 모두 원문
 문장이 같으므로 sentence는 동일하게 두고 population/value로만 구분합니다.)
 [
-  {"sentence": "1등급 시스템은 전체 40개 중 30개가 정상화돼 복구율은 75.0%다.", "claim_type": "규모", "period": null, "unit": "%", "population": "1등급 시스템", "statistic_expression": "복구율", "value": 75.0, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
-  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "2등급 시스템", "statistic_expression": "복구율", "value": 47.1, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
-  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "3등급 시스템", "statistic_expression": "복구율", "value": 39.8, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
-  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "4등급 시스템", "statistic_expression": "복구율", "value": 22.4, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+  {"sentence": "1등급 시스템은 전체 40개 중 30개가 정상화돼 복구율은 75.0%다.", "claim_type": "규모", "period": null, "unit": "%", "population": "1등급 시스템", "statistic_expression": "복구율", "value": 75.0, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "2등급 시스템", "statistic_expression": "복구율", "value": 47.1, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "3등급 시스템", "statistic_expression": "복구율", "value": 39.8, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "2등급 68개 중 32개(47.1%), 3등급 261개 중 104개(39.8%), 4등급 340개 중 76개(22.4%)가 정상화됐다.", "claim_type": "규모", "period": null, "unit": "%", "population": "4등급 시스템", "statistic_expression": "복구율", "value": 22.4, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+
+[예시 입력 — 문장 끝에 보도 동사가 붙은 경우]
+기사: "27일 한국은행은 '소비자 동향 조사'에서, 5월 소비자 심리 지수(CCSI)가 101.8로 4월(93.8)보다 8포인트 올랐다고 밝혔다."
+
+[예시 출력]
+("~라고 밝혔다"를 빼고 "…8포인트 올랐다."로 sentence를 잘라 쓰면 안 됩니다 — 원문은
+"올랐다고 밝혔다."이지 "올랐다."가 아니므로, sentence를 원문과 다른 위치에서 마침표로
+끝내면 프론트엔드가 기사 본문에서 이 문장을 못 찾습니다. "밝혔다"까지 포함한 원문 그대로
+씁니다.)
+[
+  {"sentence": "27일 한국은행은 '소비자 동향 조사'에서, 5월 소비자 심리 지수(CCSI)가 101.8로 4월(93.8)보다 8포인트 올랐다고 밝혔다.", "claim_type": "증감률", "period": "2025년 5월", "unit": "포인트", "population": null, "statistic_expression": "소비자 심리 지수(CCSI)", "value": 101.8, "value_type": "수준값", "comparison_operator": "증가", "comparison_target": "4월", "comparison_value": 93.8, "region": null, "source_org": "한국은행", "source_report": "소비자 동향 조사"}
 ]
 
 [예시 입력 — 여러 문단에 수치가 흩어진 실제 기사 발췌]
@@ -123,14 +173,18 @@
 [예시 출력]
 (4개 문단에 수치가 흩어져 있고 중간에 통계청 인용구·전환 문장처럼 수치 없는 문장이 섞여
 있어도, 앞쪽 한두 개만 뽑고 멈추지 않고 끝 문단까지 다 확인해서 6개 claim을 모두 뽑습니다.
-마지막 문장은 실업률·청년실업률 두 수치가 한 문장에 있으므로 앞서 배운 대로 나눕니다.)
+마지막 문장은 실업률·청년실업률 두 수치가 한 문장에 있으므로 앞서 배운 대로 나눕니다.
+첫 문장은 "5만명 넘게 줄었다"처럼 그 시점의 전체 취업자 수(수준값)가 문장에 따로 없이 변화폭
+숫자만 있으므로 value_type="증감폭"입니다. 세 번째 문장은 "2804만1000명으로 ... 감소했다"처럼
+수준값(2804만1000)과 증감폭(5만2000)이 한 문장에 같이 있으므로, value엔 수준값을 넣고
+증감폭은 comparison_value에 넣은 뒤 value_type="수준값"으로 둡니다.)
 [
-  {"sentence": "건설업과 도소매업을 중심으로 내수 부진이 장기화하면서 지난달 취업자 수가 1년 전에 비해 5만명 넘게 줄었다.", "claim_type": "규모", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수", "value": 50000, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
-  {"sentence": "취업자 수는 코로나 사태의 직격탄을 맞은 2021년 2월(-47만3000명) 이후 3년 10개월 만에 감소세로 돌아섰다.", "claim_type": "비교", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수 증감", "value": null, "comparison_operator": "미만", "comparison_target": "2021년 2월", "comparison_value": 473000, "region": null, "source_org": null, "source_report": null},
-  {"sentence": "15일 통계청이 발표한 '2024년 12월 및 연간 고용 동향'에 따르면, 지난달 취업자 수는 2804만1000명으로 전년 동월 대비 5만2000명 감소했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수", "value": 28041000, "comparison_operator": "감소", "comparison_target": "전년 동월", "comparison_value": 52000, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
-  {"sentence": "고용률은 지난달 61.4%로 1년 전(61.7%)에 비해 0.3%포인트 떨어졌다.", "claim_type": "증감률", "period": "2024년 12월", "unit": "%", "population": "전체", "statistic_expression": "고용률", "value": 61.4, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": 61.7, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
-  {"sentence": "지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "%", "population": "전체", "statistic_expression": "실업률", "value": 3.8, "comparison_operator": "초과", "comparison_target": "2022년 1월", "comparison_value": 4.1, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
-  {"sentence": "지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "%", "population": "청년", "statistic_expression": "청년 실업률", "value": 5.9, "comparison_operator": "미만", "comparison_target": "6%", "comparison_value": 6, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"}
+  {"sentence": "건설업과 도소매업을 중심으로 내수 부진이 장기화하면서 지난달 취업자 수가 1년 전에 비해 5만명 넘게 줄었다.", "claim_type": "규모", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수", "value": 50000, "value_type": "증감폭", "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "취업자 수는 코로나 사태의 직격탄을 맞은 2021년 2월(-47만3000명) 이후 3년 10개월 만에 감소세로 돌아섰다.", "claim_type": "비교", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수 증감", "value": null, "value_type": null, "comparison_operator": "미만", "comparison_target": "2021년 2월", "comparison_value": 473000, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "15일 통계청이 발표한 '2024년 12월 및 연간 고용 동향'에 따르면, 지난달 취업자 수는 2804만1000명으로 전년 동월 대비 5만2000명 감소했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수", "value": 28041000, "value_type": "수준값", "comparison_operator": "감소", "comparison_target": "전년 동월", "comparison_value": 52000, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
+  {"sentence": "고용률은 지난달 61.4%로 1년 전(61.7%)에 비해 0.3%포인트 떨어졌다.", "claim_type": "증감률", "period": "2024년 12월", "unit": "%", "population": "전체", "statistic_expression": "고용률", "value": 61.4, "value_type": null, "comparison_operator": "감소", "comparison_target": "1년 전", "comparison_value": 61.7, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
+  {"sentence": "지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "%", "population": "전체", "statistic_expression": "실업률", "value": 3.8, "value_type": "수준값", "comparison_operator": "초과", "comparison_target": "2022년 1월", "comparison_value": 4.1, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"},
+  {"sentence": "지난달 실업률은 3.8%로 2022년 1월(4.1%) 이후 가장 높았고, 청년 실업률은 5.9%로 6%에 육박했다.", "claim_type": "규모", "period": "2024년 12월", "unit": "%", "population": "청년", "statistic_expression": "청년 실업률", "value": 5.9, "value_type": "수준값", "comparison_operator": "미만", "comparison_target": "6%", "comparison_value": 6, "region": null, "source_org": "통계청", "source_report": "2024년 12월 및 연간 고용 동향"}
 ]
 
 [예시 입력 — 원인 설명/규정 서술 문장은 수치가 있어도 제외하는 경우]
@@ -146,8 +200,8 @@
 통계치가 아니라 공정위가 정한 제도상 기준일이라 역시 제외합니다. 첫 문장만 실제 통계
 주장이라 claim으로 남습니다.)
 [
-  {"sentence": "지난해 'N잡러'(부업을 가진 직장인)는 68만명으로 5년 전보다 40% 늘었다.", "claim_type": "규모", "period": "작년", "unit": "명", "population": "N잡러(부업을 가진 직장인)", "statistic_expression": "N잡러 수", "value": 680000, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
-  {"sentence": "지난해 'N잡러'(부업을 가진 직장인)는 68만명으로 5년 전보다 40% 늘었다.", "claim_type": "증감률", "period": "작년", "unit": "%", "population": "N잡러(부업을 가진 직장인)", "statistic_expression": "N잡러 수", "value": 40, "comparison_operator": "증가", "comparison_target": "5년 전", "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+  {"sentence": "지난해 'N잡러'(부업을 가진 직장인)는 68만명으로 5년 전보다 40% 늘었다.", "claim_type": "규모", "period": "작년", "unit": "명", "population": "N잡러(부업을 가진 직장인)", "statistic_expression": "N잡러 수", "value": 680000, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "지난해 'N잡러'(부업을 가진 직장인)는 68만명으로 5년 전보다 40% 늘었다.", "claim_type": "증감률", "period": "작년", "unit": "%", "population": "N잡러(부업을 가진 직장인)", "statistic_expression": "N잡러 수", "value": 40, "value_type": null, "comparison_operator": "증가", "comparison_target": "5년 전", "comparison_value": null, "region": null, "source_org": null, "source_report": null}
 ]
 
 [예시 입력 — 실제 오탐 재현 사례: "~라는 분석이 나온다"처럼 숫자 없는 해석성 문장은 제외 (단,
@@ -165,8 +219,8 @@
 문장)에는 41.2%/33%라는 실제 수치가 있으므로 앞 문장이 해석성이었다고 해서 같이 건너뛰지
 않고 정상적으로 추출합니다. 네 번째 문장도 47%/52% 수치가 있어 마찬가지로 추출합니다.)
 [
-  {"sentence": "중소기업중앙회에 따르면 올해 1분기 중소제조업 설비투자 실행률은 41.2%로 지난해 같은 기간 평균인 33%를 웃돌았다.", "claim_type": "비교", "period": "올해 1분기", "unit": "%", "population": "중소제조업", "statistic_expression": "설비투자 실행률", "value": 41.2, "comparison_operator": "초과", "comparison_target": "지난해 같은 기간 평균", "comparison_value": 33, "region": null, "source_org": "중소기업중앙회", "source_report": null},
-  {"sentence": "반면 신규 채용 계획 응답률은 과거 평균인 52%보다 낮은 47%로 나타났다.", "claim_type": "비교", "period": "올해 1분기", "unit": "%", "population": "중소제조업", "statistic_expression": "신규 채용 계획 응답률", "value": 47, "comparison_operator": "미만", "comparison_target": "과거 평균", "comparison_value": 52, "region": null, "source_org": "중소기업중앙회", "source_report": null}
+  {"sentence": "중소기업중앙회에 따르면 올해 1분기 중소제조업 설비투자 실행률은 41.2%로 지난해 같은 기간 평균인 33%를 웃돌았다.", "claim_type": "비교", "period": "올해 1분기", "unit": "%", "population": "중소제조업", "statistic_expression": "설비투자 실행률", "value": 41.2, "value_type": null, "comparison_operator": "초과", "comparison_target": "지난해 같은 기간 평균", "comparison_value": 33, "region": null, "source_org": "중소기업중앙회", "source_report": null},
+  {"sentence": "반면 신규 채용 계획 응답률은 과거 평균인 52%보다 낮은 47%로 나타났다.", "claim_type": "비교", "period": "올해 1분기", "unit": "%", "population": "중소제조업", "statistic_expression": "신규 채용 계획 응답률", "value": 47, "value_type": null, "comparison_operator": "미만", "comparison_target": "과거 평균", "comparison_value": 52, "region": null, "source_org": "중소기업중앙회", "source_report": null}
 ]
 
 [예시 입력 — "적자전환"/"흑자로 돌아섰다"처럼 문맥으로만 증감 방향이 드러나는 기업 실적 표현]
@@ -185,9 +239,56 @@
 표현을 comparison_target으로 쓰고, 명시돼 있지 않으면(세 번째 문장처럼) comparison_target은
 null로 두되 comparison_operator는 그대로 채웁니다.)
 [
-  {"sentence": "OO전자는 올해 3분기 영업이익이 전년 동기 대비 적자로 전환해 -320억원을 기록했다고 15일 공시했다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO전자", "statistic_expression": "영업이익", "value": 32000000000, "comparison_operator": "감소", "comparison_target": "전년 동기", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
-  {"sentence": "자회사인 OO바이오는 이번 분기 20억원의 순이익을 내며 전분기 대비 흑자로 돌아섰다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO바이오", "statistic_expression": "순이익", "value": 2000000000, "comparison_operator": "증가", "comparison_target": "전분기", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
-  {"sentence": "반면 계열사 OO물류는 3분기 매출 급감으로 45억원의 영업손실을 기록하며 적자를 냈다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO물류", "statistic_expression": "영업손실", "value": 4500000000, "comparison_operator": "감소", "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+  {"sentence": "OO전자는 올해 3분기 영업이익이 전년 동기 대비 적자로 전환해 -320억원을 기록했다고 15일 공시했다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO전자", "statistic_expression": "영업이익", "value": 32000000000, "value_type": "수준값", "comparison_operator": "감소", "comparison_target": "전년 동기", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "자회사인 OO바이오는 이번 분기 20억원의 순이익을 내며 전분기 대비 흑자로 돌아섰다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO바이오", "statistic_expression": "순이익", "value": 2000000000, "value_type": "수준값", "comparison_operator": "증가", "comparison_target": "전분기", "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "반면 계열사 OO물류는 3분기 매출 급감으로 45억원의 영업손실을 기록하며 적자를 냈다.", "claim_type": "규모", "period": "올해 3분기", "unit": "원", "population": "OO물류", "statistic_expression": "영업손실", "value": 4500000000, "value_type": "수준값", "comparison_operator": "감소", "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+
+[예시 입력 — value_type(수준값 vs 증감폭) 구분: 비슷해 보이는 "취업자 수" 문장도 숫자가
+가리키는 성격이 다를 수 있음]
+기사: "지난달 취업자 수가 13만5000명 늘어난 것으로 나타났다. 15세 이상 취업자 수는 2857만6000명으로 집계됐다."
+
+[예시 출력]
+(첫 문장은 "13만5000명 늘어난"처럼 그 숫자 자체가 증가폭이고, 그 시점의 전체 취업자 수(수준값)는
+문장 어디에도 없습니다 — 이 경우 value_type은 "증감폭"입니다. 둘째 문장은 "2857만6000명으로
+집계됐다"처럼 특정 시점의 총량 자체를 서술할 뿐 변화 방향/폭 언급이 없으므로 value_type은
+"수준값"입니다. 두 문장 모두 "취업자 수"를 다루지만 숫자의 성격이 다르므로 반드시 문장 구조를
+보고 구분해야 합니다 — population/statistic_expression이 비슷하다고 value_type도 같은 게
+아닙니다.)
+[
+  {"sentence": "지난달 취업자 수가 13만5000명 늘어난 것으로 나타났다.", "claim_type": "규모", "period": "지난달", "unit": "명", "population": "취업자 수", "statistic_expression": "취업자 수", "value": 135000, "value_type": "증감폭", "comparison_operator": "증가", "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "15세 이상 취업자 수는 2857만6000명으로 집계됐다.", "claim_type": "규모", "period": "지난달", "unit": "명", "population": "15세 이상", "statistic_expression": "취업자 수", "value": 28576000, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+
+[예시 입력 — population(연령대 수식어)이 주어 자리가 아니라 "~도"로 문장 중간에 낄 때도
+놓치면 안 되는 경우: 실제 오탐 재현 사례]
+기사: "청년 실업률이 지난달 7.5%까지 치솟으며 코로나 위기 때인 2021년 이후 4년 만에 최대치를 기록했다. '그냥 쉬었다'는 청년도 1분기(1~3월) 46만명을 넘으며 통계 작성 이래 가장 많았다."
+
+[예시 출력]
+(첫 문장은 "청년 실업률이"로 주어부터 시작해서 population="청년"을 뽑기 쉽지만, 둘째 문장은
+"'그냥 쉬었다'는 청년도"처럼 "청년"이 조사 "도"에 걸려 문장 중간에 있습니다. 이런 위치라고
+population을 비워두면 안 됩니다 — 이 claim이 매칭될 KOSIS 표에는 "청년(15~29세)" 항목이
+따로 있는데, population이 비어 있으면 그 항목을 못 찾고 전체 연령 합계와 잘못 비교되는
+실제 오류로 이어집니다.)
+[
+  {"sentence": "청년 실업률이 지난달 7.5%까지 치솟으며 코로나 위기 때인 2021년 이후 4년 만에 최대치를 기록했다.", "claim_type": "규모", "period": "2025년 3월", "unit": "%", "population": "청년", "statistic_expression": "실업률", "value": 7.5, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "'그냥 쉬었다'는 청년도 1분기(1~3월) 46만명을 넘으며 통계 작성 이래 가장 많았다.", "claim_type": "규모", "period": "2025년 1분기", "unit": "명", "population": "청년", "statistic_expression": "'그냥 쉬었음' 인구", "value": 460000, "value_type": "수준값", "comparison_operator": "초과", "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+
+[예시 입력 — 지표를 설명하는 수식어구가 붙은 문장에서 규모+증감률을 같이 뽑을 때, sentence를
+축약하지 않고 항상 전체 문장 그대로 반복하는 경우: 실제 오탐 재현 사례]
+기사: "여성 한 명이 낳을 것으로 예상되는 아이 수를 뜻하는 합계출산율도 작년 0.75명으로 전년(0.72명) 대비 0.03명 늘었다."
+
+[예시 출력]
+("여성 한 명이 낳을 것으로 예상되는 아이 수를 뜻하는"은 "합계출산율"이 뭔지 설명하는 수식어구
+입니다. 이 문장에서 규모(0.75명)와 증감폭(0.03명 증가) 두 claim을 뽑을 때, 하나는 이
+수식어구를 포함한 전체 문장을 쓰고 다른 하나는 수식어구를 빼고 "합계출산율도..."부터 잘라
+쓰는 실수가 실제로 있었습니다 — 그러면 두 claim의 sentence가 서로 다른 문자열이 되어, 나중에
+같은 문장에서 나온 claim인지 프로그램이 알아볼 수 없게 됩니다. 두 claim 모두 수식어구를
+포함한 원문 문장 전체를 토씨 하나 안 틀리고 똑같이 씁니다.)
+[
+  {"sentence": "여성 한 명이 낳을 것으로 예상되는 아이 수를 뜻하는 합계출산율도 작년 0.75명으로 전년(0.72명) 대비 0.03명 늘었다.", "claim_type": "규모", "period": "작년", "unit": "명", "population": null, "statistic_expression": "합계출산율", "value": 0.75, "value_type": "수준값", "comparison_operator": "증가", "comparison_target": "전년", "comparison_value": 0.72, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "여성 한 명이 낳을 것으로 예상되는 아이 수를 뜻하는 합계출산율도 작년 0.75명으로 전년(0.72명) 대비 0.03명 늘었다.", "claim_type": "증감률", "period": "작년", "unit": "명", "population": null, "statistic_expression": "합계출산율", "value": 0.03, "value_type": "증감폭", "comparison_operator": "증가", "comparison_target": "전년", "comparison_value": null, "region": null, "source_org": null, "source_report": null}
 ]
 
 ## 추출할 기사
