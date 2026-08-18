@@ -38,6 +38,12 @@ class ClassificationResult:
 
 ClaimType = Literal["규모", "증감률", "비교", "전망"]
 ComparisonOperator = Literal["증가", "감소", "동일", "초과", "미만"]
+# 2026-08-16 추가(C, 팀 공유 예정) — claim_type="규모"에 "수준값"(특정 시점의 총량/절대값,
+# 예: "취업자 수는 2857만6000명으로 집계됐다")과 "증감폭"(그 자체가 변화량, 예: "취업자 수가
+# 13만5000명 늘어난 것으로 나타났다")이 섞여 있는데 구분할 방법이 없어서, calc_type_router가
+# 후자도 전부 "단순조회"(값 하나만 조회)로 보내는 바람에 증감폭 주장을 검증할 방법 자체가
+# 없던 버그(실제 배치 재현: 취업자 증감폭 claim 다수가 판단불가로 빠짐)를 고치기 위해 도입.
+ValueType = Literal["수준값", "증감폭"]
 
 @dataclass
 class Claim:
@@ -51,6 +57,7 @@ class Claim:
     # Claim(sentence=..., claim_type=...)처럼 키워드 인자로 생성하는 기존 코드는 안 깨짐.
     statistic_expression: Optional[str] = None  # 기사가 실제로 쓴 지표 표현 (예: "청년 고용")
     value: Optional[float] = None               # 문장의 핵심 수치 (부호 없음 — 방향은 comparison_operator가 담당)
+    value_type: Optional[ValueType] = None      # value가 수준값인지 증감폭인지 (claim_type="규모"일 때만 의미 있음)
     comparison_operator: Optional[ComparisonOperator] = None  # 수치의 비교/변화 방향
     comparison_target: Optional[str] = None     # 비교 시점·대상 원문 표현 (예: "전년동월", "정부 전망치")
     comparison_value: Optional[float] = None    # 기사에 명시된 비교 대상 수치 (없으면 None)
