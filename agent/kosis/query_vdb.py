@@ -125,3 +125,46 @@ def batch_query_vdb(
             )
         results.append(candidates)
     return results
+
+
+if __name__ == "__main__":
+    # 회귀 테스트 (인수인계 문서 "작업 0" 실측 사례) — 이 claim의 진짜 정답 표는
+    # DT_1ES4I001S("1인 취업가구 현황")인데, 기본 HNSW 파라미터로 구축한 그래프는
+    # top_k=50/search_ef=5000까지 넓혀도 이 표를 단 한 번도 찾지 못했다(그래프 "구축" 자체가
+    # 부실한 문제 — 질의 시점 탐색 강도를 올려도 소용없었음). M=48/construction_ef=400으로
+    # 재구축한 뒤 이 표가 top-15 안에 들어오는지로 recall 개선을 확인한다. VDB_MIN_SIMILARITY
+    # 필터를 거치는 batch_query_vdb 대신 순위 자체를 보려고 Chroma를 직접 조회한다.
+    from agent.mapping.embedding_search import embed_sentences_batch
+
+    CLAIM_SENTENCE = "지난해 1인 취업 가구는 510만 가구로 전년 대비 42만 6000가구 증가했다"
+    TARGET_TABLE_ID = "DT_1ES4I001S"
+    TOP_K_FOR_TEST = 15
+
+    print(f"[회귀 테스트] claim: {CLAIM_SENTENCE!r}")
+    print(f"[회귀 테스트] 기대 정답 표: {TARGET_TABLE_ID} (top-{TOP_K_FOR_TEST} 안에 있어야 함)")
+
+    query_vec = embed_sentences_batch([CLAIM_SENTENCE])[0]
+
+    client = _get_client()
+    collection = client.get_collection(COLLECTION_NAME)
+    raw = collection.query(query_embeddings=[query_vec], n_results=TOP_K_FOR_TEST)
+
+    ids = raw["ids"][0]
+    dists = raw["distances"][0]
+    docs = raw["documents"][0]
+
+    found_rank = None
+    print()
+    for rank, (tbl_id, dist, doc) in enumerate(zip(ids, dists, docs), start=1):
+        similarity = 1.0 - dist
+        marker = "  <-- 정답" if tbl_id == TARGET_TABLE_ID else ""
+        print(f"  {rank:2d}. {tbl_id}  sim={similarity:.4f}  {doc}{marker}")
+        if tbl_id == TARGET_TABLE_ID:
+            found_rank = rank
+
+    print()
+    if found_rank is not None:
+        print(f"[통과] {TARGET_TABLE_ID}가 top-{TOP_K_FOR_TEST} 중 {found_rank}위에서 발견됨 — recall 개선 확인됨")
+    else:
+        print(f"[실패] {TARGET_TABLE_ID}가 top-{TOP_K_FOR_TEST} 안에 없음 — recall 결함이 아직 안 고쳐짐")
+        raise SystemExit(1)
