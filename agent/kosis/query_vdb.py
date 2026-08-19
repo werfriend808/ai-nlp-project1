@@ -127,7 +127,18 @@ def batch_query_vdb(
                         )
                     )
                 results.append(candidates)
-    except psycopg2.OperationalError as e:
+    except psycopg2.Error as e:
+        # 쿼리 도중 끊기면(SSL 종료 등) 커넥션이 "aborted transaction" 상태로 남는다 —
+        # .closed는 여전히 0이라 _get_connection()이 이 망가진 커넥션을 계속 재사용해서,
+        # 다음 claim부터는 매번 InFailedSqlTransaction으로 즉시 죽는 문제가 실측됐다
+        # (2026-08-19, rerank_local.py 로컬 실행 중). 다음 호출이 새 커넥션을 만들도록
+        # 여기서 확실히 버린다.
+        global _conn
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _conn = None
         raise VdbUnavailableError(f"Supabase(pgvector) 조회 중 연결 오류: {e}") from e
 
     return results

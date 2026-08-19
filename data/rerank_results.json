@@ -1,1554 +1,2000 @@
 {
   "items": [
     {
-      "item_id": "[data_set.csv] 현기증 나는 롤러코스터 증시… 코스피 변동성, 4년 만에 최고::0",
+      "item_id": "[data_set.csv] 5년마다 돌아오는 인구조사... 호구조사 같지만 정책에 쓰인다::0",
+      "candidates": [
+        {
+          "table_id": "DT_1B040A3",
+          "table_name": "행정구역(시군구)별 성별 인구수",
+          "score": 0.045027161156193415,
+          "required_slots": [
+            "시점",
+            "지역"
+          ],
+          "source_meta": "keyword_search matched=['인구'] | keyword_rank=2 | embedding_rank=5 | reranker_rank=14 rrf_score=0.0450",
+          "raw_rerank_score": 0.0015641251811757684
+        },
+        {
+          "table_id": "DT_1SSSP051R",
+          "table_name": "국가데이터처 (2019-11) 단체 참여 (지난 1년간, 주된 응답, 13세 이상 인구)",
+          "score": 0.03252247488101534,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.011964085511863232
+        },
+        {
+          "table_id": "DT_1SSSP052R",
+          "table_name": "국가데이터처 (2019-11) 단체 참여 (지난 1년간, 복수응답, 13세 이상 인구)",
+          "score": 0.03149801587301587,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.009673240594565868
+        },
+        {
+          "table_id": "DT_20WBH022",
+          "table_name": "국가데이터처 (2025-11) 조사망률(인구 천 명당)",
+          "score": 0.03131881575727918,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=7 | reranker_rank=1 rrf_score=0.0313",
+          "raw_rerank_score": 0.021389849483966827
+        },
+        {
+          "table_id": "TX_10505_A001",
+          "table_name": "과학기술정보통신부 (2015-05) 실태조사 전체 응답률(2007~2008)",
+          "score": 0.03128054740957967,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=6 rrf_score=0.0313",
+          "raw_rerank_score": 0.0056199803948402405
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 5년마다 돌아오는 인구조사... 호구조사 같지만 정책에 쓰인다::1",
+      "candidates": [
+        {
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.03278688524590164,
+          "required_slots": [
+            "시점",
+            "품목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 1.6839443560456857e-05
+        },
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03200204813108039,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=2 rrf_score=0.0320",
+          "raw_rerank_score": 1.681447247392498e-05
+        },
+        {
+          "table_id": "DT_512Y013",
+          "table_name": "기업경기조사(실적)",
+          "score": 0.0315136476426799,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 1.636796150705777e-05
+        },
+        {
+          "table_id": "DT_133001_9832",
+          "table_name": "100대 생활밀접업종 폐업 사업자 현황Ⅰ(지역, 업종)",
+          "score": 0.03125763125763126,
+          "required_slots": [
+            "시점",
+            "업종"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=3 rrf_score=0.0313",
+          "raw_rerank_score": 1.638242247281596e-05
+        },
+        {
+          "table_id": "DT_1R11001_FRM101",
+          "table_name": "품목별 수출액, 수입액",
+          "score": 0.03125,
+          "required_slots": [
+            "시점",
+            "품목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=4 rrf_score=0.0312",
+          "raw_rerank_score": 1.6368414435419254e-05
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 5년마다 돌아오는 인구조사... 호구조사 같지만 정책에 쓰인다::2",
+      "candidates": [
+        {
+          "table_id": "DT_1B040A3",
+          "table_name": "행정구역(시군구)별 성별 인구수",
+          "score": 0.046606981923268856,
+          "required_slots": [
+            "시점",
+            "지역"
+          ],
+          "source_meta": "keyword_search matched=['인구'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=11 rrf_score=0.0466",
+          "raw_rerank_score": 0.004361762665212154
+        },
+        {
+          "table_id": "DT_1BF0506",
+          "table_name": "국가데이터처 (2007-06) 성/경제활동상태/육체적·정신적 활동제약유형별 인구(15세 이상)-시도",
+          "score": 0.032018442622950824,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=4 | reranker_rank=1 rrf_score=0.0320",
+          "raw_rerank_score": 0.18712252378463745
+        },
+        {
+          "table_id": "DT_1BF0505",
+          "table_name": "국가데이터처 (2007-06) 성/세대구성/육체적·정신적 활동제약유형별 인구(5세 이상)-시도",
+          "score": 0.03200204813108039,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=3 rrf_score=0.0320",
+          "raw_rerank_score": 0.16881439089775085
+        },
+        {
+          "table_id": "DT_1BF0517",
+          "table_name": "국가데이터처 (2007-06) 성/일상·사회 활동제약유형/육체적·정신적 활동제약유형별 인구(5+)-시도",
+          "score": 0.031544957774465976,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=6 rrf_score=0.0315",
+          "raw_rerank_score": 0.1405690759420395
+        },
+        {
+          "table_id": "DT_1BF0504",
+          "table_name": "국가데이터처 (2007-06) 성/혼인상태/육체적·정신적 활동제약유형별 인구(15세 이상)-시도",
+          "score": 0.03076923076923077,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=5 | reranker_rank=5 rrf_score=0.0308",
+          "raw_rerank_score": 0.15215522050857544
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 5년마다 돌아오는 인구조사... 호구조사 같지만 정책에 쓰인다::3",
+      "candidates": [
+        {
+          "table_id": "DT_1B04005N",
+          "table_name": "행정구역(읍면동)별/5세별 주민등록인구(2011년~)",
+          "score": 0.048171500630517027,
+          "required_slots": [
+            "시점",
+            "지역"
+          ],
+          "source_meta": "keyword_search matched=['인구'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=5 rrf_score=0.0482",
+          "raw_rerank_score": 9.032241359818727e-05
+        },
+        {
+          "table_id": "DT_1B040A3",
+          "table_name": "행정구역(시군구)별 성별 인구수",
+          "score": 0.04738666351569577,
+          "required_slots": [
+            "시점",
+            "지역"
+          ],
+          "source_meta": "keyword_search matched=['인구'] | keyword_rank=2 | embedding_rank=5 | reranker_rank=3 rrf_score=0.0474",
+          "raw_rerank_score": 0.00016513156879227608
+        },
+        {
+          "table_id": "DT_999N_406I1010",
+          "table_name": "조선총독부통계연보 (2008-11) 보통학교 교원 및 생도(1910)",
+          "score": 0.03252247488101534,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.0003369238693267107
+        },
+        {
+          "table_id": "DT_999N_187042",
+          "table_name": "조선총독부통계연보 (2008-11) 일본인 학령아동(1910~1942)",
+          "score": 0.032018442622950824,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.00013298231351654977
+        },
+        {
+          "table_id": "DT_1DA7001S",
+          "table_name": "성별 경제활동인구총괄",
+          "score": 0.03200204813108039,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=2 rrf_score=0.0320",
+          "raw_rerank_score": 0.00018831920169759542
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 5년마다 돌아오는 인구조사... 호구조사 같지만 정책에 쓰인다::4",
+      "candidates": [
+        {
+          "table_id": "DT_11714_N001",
+          "table_name": "국민기초생활수급자총괄(일반,시설)-시도별",
+          "score": 0.03252247488101534,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.0031853304244577885
+        },
+        {
+          "table_id": "TX_13301_A169",
+          "table_name": "폐업자 현황(폐업사유,지역,업태) [2005~]",
+          "score": 0.032266458495966696,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=1 rrf_score=0.0323",
+          "raw_rerank_score": 0.005545728839933872
+        },
+        {
+          "table_id": "DT_1BD1021",
+          "table_name": "국가데이터처 (2024-12) 시도별 조직형태별 종사자수",
+          "score": 0.031746031746031744,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=3 rrf_score=0.0317",
+          "raw_rerank_score": 0.0025677664671093225
+        },
+        {
+          "table_id": "DT_1FS1010_S",
+          "table_name": "국가데이터처 (2024-01) 시도/산업분류별, 성별 대표자수 및 종사자수(10인 이상)",
+          "score": 0.031054405392392875,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=7 rrf_score=0.0311",
+          "raw_rerank_score": 0.0011735213920474052
+        },
+        {
+          "table_id": "DT_32202_B004",
+          "table_name": "급여종류별·연령별·성별 수급자 현황",
+          "score": 0.030621785881252923,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=9 rrf_score=0.0306",
+          "raw_rerank_score": 0.0004764607292599976
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 5년마다 돌아오는 인구조사... 호구조사 같지만 정책에 쓰인다::5",
+      "candidates": [
+        {
+          "table_id": "DT_1B040A3",
+          "table_name": "행정구역(시군구)별 성별 인구수",
+          "score": 0.046606981923268856,
+          "required_slots": [
+            "시점",
+            "지역"
+          ],
+          "source_meta": "keyword_search matched=['인구'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=11 rrf_score=0.0466",
+          "raw_rerank_score": 0.004361762665212154
+        },
+        {
+          "table_id": "DT_1BF0506",
+          "table_name": "국가데이터처 (2007-06) 성/경제활동상태/육체적·정신적 활동제약유형별 인구(15세 이상)-시도",
+          "score": 0.032018442622950824,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=4 | reranker_rank=1 rrf_score=0.0320",
+          "raw_rerank_score": 0.18712252378463745
+        },
+        {
+          "table_id": "DT_1BF0505",
+          "table_name": "국가데이터처 (2007-06) 성/세대구성/육체적·정신적 활동제약유형별 인구(5세 이상)-시도",
+          "score": 0.03200204813108039,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=3 rrf_score=0.0320",
+          "raw_rerank_score": 0.16881439089775085
+        },
+        {
+          "table_id": "DT_1BF0517",
+          "table_name": "국가데이터처 (2007-06) 성/일상·사회 활동제약유형/육체적·정신적 활동제약유형별 인구(5+)-시도",
+          "score": 0.031544957774465976,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=6 rrf_score=0.0315",
+          "raw_rerank_score": 0.1405690759420395
+        },
+        {
+          "table_id": "DT_1BF0504",
+          "table_name": "국가데이터처 (2007-06) 성/혼인상태/육체적·정신적 활동제약유형별 인구(15세 이상)-시도",
+          "score": 0.03076923076923077,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=5 | reranker_rank=5 rrf_score=0.0308",
+          "raw_rerank_score": 0.15215522050857544
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] “하루도 안 빼고 1조6000억원 순매수” 연기금 연초 코스피 상승 주도::0",
       "candidates": [
         {
           "table_id": "DT_343_2010_S0027",
           "table_name": "코스피 지수",
-          "score": 0.04865990111891751,
+          "score": 0.04839549075403121,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['코스피', '코스피지수', 'KOSPI', '증시'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=3 rrf_score=0.0487",
-          "raw_rerank_score": 0.0580492839217186
-        },
-        {
-          "table_id": "DT_343_2010_S0039",
-          "table_name": "코스피 지수 등락기록",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.8255972266197205
-        },
-        {
-          "table_id": "DT_127004_A212",
-          "table_name": "비대면화로 인한 투자 변화",
-          "score": 0.03225806451612903,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=2 rrf_score=0.0323",
-          "raw_rerank_score": 0.204347163438797
+          "source_meta": "keyword_search matched=['코스피', '코스피지수', 'KOSPI'] | keyword_rank=1 | embedding_rank=3 | reranker_rank=2 rrf_score=0.0484",
+          "raw_rerank_score": 0.013243811205029488
         },
         {
           "table_id": "DT_343_2010_S0016",
           "table_name": "유가증권 산업별 상장주식 총괄",
-          "score": 0.03128054740957967,
+          "score": 0.04814747488101534,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['코스피 시가총액', '시가총액'] | keyword_rank=2 | reranker_rank=6 rrf_score=0.0313",
-          "raw_rerank_score": 0.004630608018487692
+          "source_meta": "keyword_search matched=['유가증권시장 시가총액'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=4 rrf_score=0.0481",
+          "raw_rerank_score": 0.0043896096758544445
         },
         {
-          "table_id": "DT_301Y013",
-          "table_name": "국제수지",
-          "score": 0.030834914611005692,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=2 | reranker_rank=8 rrf_score=0.0308",
-          "raw_rerank_score": 0.0015981680480763316
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 현기증 나는 롤러코스터 증시… 코스피 변동성, 4년 만에 최고::1",
-      "candidates": [
-        {
-          "table_id": "DT_343_2010_S0027",
-          "table_name": "코스피 지수",
-          "score": 0.048171500630517027,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['코스피', '코스피지수', '[title]코스피 지수'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=5 rrf_score=0.0482",
-          "raw_rerank_score": 0.20742177963256836
-        },
-        {
-          "table_id": "DT_343_2010_S0039",
-          "table_name": "코스피 지수 등락기록",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.642543375492096
-        },
-        {
-          "table_id": "DT_744002_B025",
-          "table_name": "하락 전망 이유",
-          "score": 0.03200204813108039,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=3 rrf_score=0.0320",
-          "raw_rerank_score": 0.3155550956726074
-        },
-        {
-          "table_id": "DT_744002_A028",
-          "table_name": "하락 전망 이유",
-          "score": 0.03149801587301587,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=4 rrf_score=0.0315",
-          "raw_rerank_score": 0.3155550956726074
-        },
-        {
-          "table_id": "DT_343_2010_S0075",
-          "table_name": "코스닥 거래실적",
-          "score": 0.03128054740957967,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=6 | reranker_rank=2 rrf_score=0.0313",
-          "raw_rerank_score": 0.3672519624233246
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 현기증 나는 롤러코스터 증시… 코스피 변동성, 4년 만에 최고::2",
-      "candidates": [
-        {
-          "table_id": "DT_343_2010_S0027",
-          "table_name": "코스피 지수",
-          "score": 0.04865990111891751,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['코스피', '코스피지수', 'KOSPI'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=3 rrf_score=0.0487",
-          "raw_rerank_score": 0.018248766660690308
-        },
-        {
-          "table_id": "DT_343_2010_S0039",
-          "table_name": "코스피 지수 등락기록",
+          "table_id": "DT_376_90_SDMP034V_1",
+          "table_name": "금융감독원 (2016-11) [자본시장] 12. 유가증권시장 주요지표",
           "score": 0.03252247488101534,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
-          "raw_rerank_score": 0.6239612698554993
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.028292153030633926
+        },
+        {
+          "table_id": "DT_376_90_SDMP035V_1",
+          "table_name": "금융감독원 (2016-11) [자본시장] 13. 코스닥시장 주요지표",
+          "score": 0.031746031746031744,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=3 rrf_score=0.0317",
+          "raw_rerank_score": 0.009042449295520782
+        },
+        {
+          "table_id": "DT_376_20_SDMF027V_1",
+          "table_name": "금융감독원 (2016-11) [증권] 89. 집합투자업자 주요경영지표",
+          "score": 0.031544957774465976,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=6 rrf_score=0.0315",
+          "raw_rerank_score": 0.0017886824207380414
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] “하루도 안 빼고 1조6000억원 순매수” 연기금 연초 코스피 상승 주도::1",
+      "candidates": [
+        {
+          "table_id": "DT_343_2010_S0027",
+          "table_name": "코스피 지수",
+          "score": 0.06269759953161592,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['코스피', '코스피지수', 'KOSPI'] | keyword_rank=1 | embedding_rank=1 | vdb_rank=4 | reranker_rank=10 rrf_score=0.0627",
+          "raw_rerank_score": 0.07568343728780746
+        },
+        {
+          "table_id": "DT_343_2010_S0039",
+          "table_name": "한국거래소 (2026-07) 코스피 지수 등락기록",
+          "score": 0.03278688524590164,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.26724469661712646
+        },
+        {
+          "table_id": "DT_343_2010_S0065",
+          "table_name": "한국거래소 (2026-07) 코스닥 지수",
+          "score": 0.03200204813108039,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=2 rrf_score=0.0320",
+          "raw_rerank_score": 0.2626926302909851
+        },
+        {
+          "table_id": "DT_343_2010_S0028",
+          "table_name": "한국거래소 (2026-07) 코스피 200 지수",
+          "score": 0.03200204813108039,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=3 rrf_score=0.0320",
+          "raw_rerank_score": 0.260844349861145
         },
         {
           "table_id": "DT_343_2010_S0132",
-          "table_name": "코스피 200 섹터 지수",
-          "score": 0.03252247488101534,
+          "table_name": "한국거래소 (2026-07) 코스피 200 섹터 지수",
+          "score": 0.03076923076923077,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=2 rrf_score=0.0325",
-          "raw_rerank_score": 0.09575772285461426
-        },
-        {
-          "table_id": "DT_343_2010_S0095",
-          "table_name": "코스피200선물 거래실적",
-          "score": 0.030776515151515152,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=6 | reranker_rank=4 rrf_score=0.0308",
-          "raw_rerank_score": 0.011479543522000313
-        },
-        {
-          "table_id": "DT_343_2010_S0149",
-          "table_name": "미니코스피200옵션 거래실적",
-          "score": 0.03057889822595705,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=8 rrf_score=0.0306",
-          "raw_rerank_score": 0.00222375919111073
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=5 | reranker_rank=5 rrf_score=0.0308",
+          "raw_rerank_score": 0.14339585602283478
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 현기증 나는 롤러코스터 증시… 코스피 변동성, 4년 만에 최고::3",
+      "item_id": "[data_set.csv] “하루도 안 빼고 1조6000억원 순매수” 연기금 연초 코스피 상승 주도::2",
       "candidates": [
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.032018442622950824,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.017131993547081947
+        },
+        {
+          "table_id": "DT_376_110_SDMK009V_1",
+          "table_name": "금융감독원 (2016-11) [금융권역별 비교표] 9. 간접투자기구 판매잔액",
+          "score": 0.03131881575727918,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=7 | reranker_rank=1 rrf_score=0.0313",
+          "raw_rerank_score": 0.05030359700322151
+        },
+        {
+          "table_id": "DT_376_20_SDMF023V_2",
+          "table_name": "금융감독원 (2016-11) [증권] 85. 투자매매중개업자1 부문별 손익(외국증권사)",
+          "score": 0.031024531024531024,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=6 rrf_score=0.0310",
+          "raw_rerank_score": 0.009333536028862
+        },
+        {
+          "table_id": "DT_376_20_SDMF011V_2",
+          "table_name": "금융감독원 (2016-11) [증권] 75. 투자매매중개업자1 주요경영지표(외국)",
+          "score": 0.03076923076923077,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=5 | reranker_rank=5 rrf_score=0.0308",
+          "raw_rerank_score": 0.014331748709082603
+        },
+        {
+          "table_id": "DT_2IFS099",
+          "table_name": "국가데이터처 (2026-07) 통화 및 금융 통계: 기타 금융기관(순 채권(순 자산))",
+          "score": 0.030621785881252923,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=9 | reranker_rank=2 rrf_score=0.0306",
+          "raw_rerank_score": 0.04892025887966156
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] “하루도 안 빼고 1조6000억원 순매수” 연기금 연초 코스피 상승 주도::3",
+      "candidates": [
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03252247488101534,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.0014398744096979499
+        },
+        {
+          "table_id": "DT_1C8015",
+          "table_name": "경기종합지수(2020=100)(10차)",
+          "score": 0.03177805800756621,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=1 rrf_score=0.0318",
+          "raw_rerank_score": 0.001494013355113566
+        },
+        {
+          "table_id": "DT_343_2010_S0016",
+          "table_name": "유가증권 산업별 상장주식 총괄",
+          "score": 0.031746031746031744,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=3 rrf_score=0.0317",
+          "raw_rerank_score": 0.0008189865038730204
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.0315136476426799,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 0.0003036049020010978
+        },
+        {
+          "table_id": "DT_102N_AD01",
+          "table_name": "통합재정수지",
+          "score": 0.03125,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=4 rrf_score=0.0312",
+          "raw_rerank_score": 0.00032721130992285907
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] “하루도 안 빼고 1조6000억원 순매수” 연기금 연초 코스피 상승 주도::4",
+      "candidates": [
+        {
+          "table_id": "DT_343_2010_S0016",
+          "table_name": "유가증권 산업별 상장주식 총괄",
+          "score": 0.04788306451612903,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['유가증권시장 시가총액'] | keyword_rank=2 | embedding_rank=4 | reranker_rank=2 rrf_score=0.0479",
+          "raw_rerank_score": 0.012495912611484528
+        },
         {
           "table_id": "DT_343_2010_S0027",
           "table_name": "코스피 지수",
-          "score": 0.04727963886909005,
+          "score": 0.03278688524590164,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['코스피', '코스피지수', 'KOSPI'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=9 rrf_score=0.0473",
-          "raw_rerank_score": 0.06846793740987778
+          "source_meta": "keyword_search matched=['코스피'] | keyword_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.026113595813512802
         },
         {
-          "table_id": "DT_343_2010_S0107",
-          "table_name": "주식옵션 거래실적",
-          "score": 0.03278688524590164,
+          "table_id": "DT_200Y056",
+          "table_name": "한국은행 (2024-06) 총저축과 총투자(원계열, 명목, 분기 및 연간)",
+          "score": 0.032018442622950824,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.48056715726852417
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.007545209489762783
         },
         {
-          "table_id": "DT_343_2010_S0174",
-          "table_name": "코스닥150옵션 거래실적",
-          "score": 0.031054405392392875,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=7 rrf_score=0.0311",
-          "raw_rerank_score": 0.19454583525657654
+          "table_id": "DT_32202_B004",
+          "table_name": "급여종류별·연령별·성별 수급자 현황",
+          "score": 0.03200204813108039,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=3 rrf_score=0.0320",
+          "raw_rerank_score": 0.007631773594766855
         },
         {
-          "table_id": "DT_343_2010_S0039",
-          "table_name": "코스피 지수 등락기록",
+          "table_id": "DT_200Y156",
+          "table_name": "한국은행 (2026-08) 총저축과 총투자(원계열, 명목, 분기 및 연간)",
           "score": 0.031009615384615385,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=5 rrf_score=0.0310",
-          "raw_rerank_score": 0.25826433300971985
-        },
-        {
-          "table_id": "DT_343_2010_S0180",
-          "table_name": "주식옵션 투자자별 거래실적",
-          "score": 0.030798389007344232,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=7 | reranker_rank=3 rrf_score=0.0308",
-          "raw_rerank_score": 0.2919679880142212
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=4 | reranker_rank=5 rrf_score=0.0310",
+          "raw_rerank_score": 0.00708964467048645
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 서울 집값 16% 오를 때, 비수도권은 오히려 2% 하락::0",
+      "item_id": "[data_set.csv] “하루도 안 빼고 1조6000억원 순매수” 연기금 연초 코스피 상승 주도::5",
       "candidates": [
         {
-          "table_id": "DT_1YL1701",
-          "table_name": "주택매매가격변동률(시도/시/군/구)",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.08075634390115738
-        },
-        {
-          "table_id": "DT_104Y282",
-          "table_name": "시도별 주택시가총액(명목, 연말기준)",
-          "score": 0.032266458495966696,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=1 | reranker_rank=3 rrf_score=0.0323",
-          "raw_rerank_score": 0.058444999158382416
-        },
-        {
-          "table_id": "DT_MLTM_6134",
-          "table_name": "지난 1년 간 주거비가 부담스러운 정도",
-          "score": 0.0315136476426799,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=5 rrf_score=0.0315",
-          "raw_rerank_score": 0.016373824328184128
-        },
-        {
-          "table_id": "DT_30404_B012",
-          "table_name": "유형별 매매가격지수",
-          "score": 0.03131881575727918,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['주택매매가격지수', '아파트 매매가격', '집값'] | keyword_rank=1 | reranker_rank=7 rrf_score=0.0313",
-          "raw_rerank_score": 0.01221566740423441
-        },
-        {
-          "table_id": "DT_218010_2022D002",
-          "table_name": "거주지역 주택가격 체감도(매매)",
-          "score": 0.031054405392392875,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=7 | reranker_rank=2 rrf_score=0.0311",
-          "raw_rerank_score": 0.06447223573923111
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 서울 집값 16% 오를 때, 비수도권은 오히려 2% 하락::1",
-      "candidates": [
-        {
-          "table_id": "DT_304004_WEEK_005_C",
-          "table_name": "주간 규모별 아파트 매매가격지수 변동률",
-          "score": 0.032266458495966696,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=3 rrf_score=0.0323",
-          "raw_rerank_score": 0.7786174416542053
-        },
-        {
-          "table_id": "DT_304004_WEEK_005_B",
-          "table_name": "주간 규모별 아파트 매매가격지수 변동률",
-          "score": 0.031754032258064516,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=4 rrf_score=0.0318",
-          "raw_rerank_score": 0.7786174416542053
-        },
-        {
-          "table_id": "DT_304004_WEEK_005_A",
-          "table_name": "주간 규모별 아파트 매매가격지수 변동률",
-          "score": 0.03125763125763126,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=5 rrf_score=0.0313",
-          "raw_rerank_score": 0.7786174416542053
-        },
-        {
-          "table_id": "DT_304004_WEEK_001_A",
-          "table_name": "주간 아파트 매매가격지수 변동률",
-          "score": 0.030886196246139225,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=9 | reranker_rank=1 rrf_score=0.0309",
-          "raw_rerank_score": 0.7916233539581299
-        },
-        {
-          "table_id": "DT_304004_WEEK_005",
-          "table_name": "주간 규모별 아파트 매매가격지수 변동률",
-          "score": 0.030776515151515152,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=6 rrf_score=0.0308",
-          "raw_rerank_score": 0.7786174416542053
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 서울 집값 16% 오를 때, 비수도권은 오히려 2% 하락::2",
-      "candidates": [
-        {
-          "table_id": "DT_104Y282",
-          "table_name": "시도별 주택시가총액(명목, 연말기준)",
-          "score": 0.032266458495966696,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=1 | reranker_rank=3 rrf_score=0.0323",
-          "raw_rerank_score": 0.10700549185276031
-        },
-        {
-          "table_id": "DT_724001_G000002",
-          "table_name": "하수도보급률",
-          "score": 0.03125,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=4 rrf_score=0.0312",
-          "raw_rerank_score": 0.06848746538162231
-        },
-        {
-          "table_id": "DT_65101_G000013",
-          "table_name": "하수도 보급률",
-          "score": 0.030886196246139225,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=9 | reranker_rank=1 rrf_score=0.0309",
-          "raw_rerank_score": 0.14236809313297272
-        },
-        {
-          "table_id": "DT_76701_G001013",
-          "table_name": "하수도보급률",
-          "score": 0.03076923076923077,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=5 | reranker_rank=5 rrf_score=0.0308",
-          "raw_rerank_score": 0.06848746538162231
-        },
-        {
-          "table_id": "DT_66701_G000013",
-          "table_name": "하수도 보급률",
-          "score": 0.0304147465437788,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=10 | reranker_rank=2 rrf_score=0.0304",
-          "raw_rerank_score": 0.14236809313297272
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 작년 한국 1인당 국민소득 3만6745달러... 2년 연속 일본 앞질러::0",
-      "candidates": [
-        {
-          "table_id": "DT_200Y001",
-          "table_name": "주요지표(연간지표)",
-          "score": 0.04793840039741679,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['국민총소득', 'GNI', '1인당 국민총소득', '1인당 GNI', '국민소득'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=6 rrf_score=0.0479",
-          "raw_rerank_score": 0.2863963544368744
-        },
-        {
-          "table_id": "DT_IZGI01_310",
-          "table_name": "국민총소득(GNI)",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.9682372212409973
-        },
-        {
-          "table_id": "DT_2WEO005",
-          "table_name": "1인당 국내총생산, 당해년가격",
-          "score": 0.03125763125763126,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=5 | reranker_rank=3 rrf_score=0.0313",
-          "raw_rerank_score": 0.5573688745498657
-        },
-        {
-          "table_id": "DT_2AS017",
-          "table_name": "1인당 국민총소득",
-          "score": 0.031054405392392875,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=7 | reranker_rank=2 rrf_score=0.0311",
-          "raw_rerank_score": 0.8246456384658813
-        },
-        {
-          "table_id": "DT_691005_2024F009",
-          "table_name": "지난 1년간 월평균 가구 총소득",
-          "score": 0.031054405392392875,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=7 rrf_score=0.0311",
-          "raw_rerank_score": 0.0936109870672226
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 작년 한국 1인당 국민소득 3만6745달러... 2년 연속 일본 앞질러::1",
-      "candidates": [
-        {
-          "table_id": "DT_200Y001",
-          "table_name": "주요지표(연간지표)",
-          "score": 0.047492767598842814,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['국민총소득', 'GNI', '1인당 국민총소득', '1인당 GNI', '국민소득'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=8 rrf_score=0.0475",
-          "raw_rerank_score": 0.9801666140556335
-        },
-        {
-          "table_id": "DT_IZGI01_310",
-          "table_name": "국민총소득(GNI)",
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
           "score": 0.03252247488101534,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=2 rrf_score=0.0325",
-          "raw_rerank_score": 0.996991753578186
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.003862563520669937
         },
         {
-          "table_id": "DT_2AS017",
-          "table_name": "1인당 국민총소득",
+          "table_id": "DT_343_2010_S0167",
+          "table_name": "한국거래소 (2025-06) 유로스톡스50선물 투자자별 거래실적",
+          "score": 0.032266458495966696,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=3 rrf_score=0.0323",
+          "raw_rerank_score": 0.002514870371669531
+        },
+        {
+          "table_id": "DT_343_2010_S0158",
+          "table_name": "한국거래소 (2026-07) 10년국채선물 투자자별 거래실적",
           "score": 0.03177805800756621,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=5 | reranker_rank=1 rrf_score=0.0318",
-          "raw_rerank_score": 0.9970073103904724
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=5 | reranker_rank=1 rrf_score=0.0318",
+          "raw_rerank_score": 0.0045017097145318985
         },
         {
-          "table_id": "DT_711008_2022013",
-          "table_name": "지난 1년간 월평균 가구 총소득",
+          "table_id": "DT_2IFS044",
+          "table_name": "국가데이터처 (2026-07) 분기 정부재정통계(주식 및 기타 자본 거래)",
           "score": 0.0315136476426799,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=5 rrf_score=0.0315",
-          "raw_rerank_score": 0.9816446304321289
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 0.0019383442122489214
         },
         {
-          "table_id": "DT_338001_0047",
-          "table_name": "지난 1년간 가구 총소득",
+          "table_id": "DT_200Y019",
+          "table_name": "한국은행 (2024-06) 자본거래(명목, 연간)",
           "score": 0.031024531024531024,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=6 | reranker_rank=3 rrf_score=0.0310",
-          "raw_rerank_score": 0.993541955947876
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=6 rrf_score=0.0310",
+          "raw_rerank_score": 0.0009217041078954935
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 작년 한국 1인당 국민소득 3만6745달러... 2년 연속 일본 앞질러::2",
+      "item_id": "[data_set.csv] 2000만톤 넘겼다… 美원유 수입 역대 최대::2",
       "candidates": [
         {
-          "table_id": "DT_200Y001",
-          "table_name": "주요지표(연간지표)",
-          "score": 0.04891591750396616,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['1인당 GNI', '국민소득'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=2 rrf_score=0.0489",
-          "raw_rerank_score": 0.8406376838684082
-        },
-        {
-          "table_id": "DT_2AS017",
-          "table_name": "1인당 국민총소득",
-          "score": 0.032266458495966696,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=1 rrf_score=0.0323",
-          "raw_rerank_score": 0.9088784456253052
-        },
-        {
-          "table_id": "DT_2WEO005",
-          "table_name": "1인당 국내총생산, 당해년가격",
-          "score": 0.032018442622950824,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
-          "raw_rerank_score": 0.4727860987186432
-        },
-        {
-          "table_id": "DT_2KAA902",
-          "table_name": "1인당 국민총소득(2015년 기준년가격)",
-          "score": 0.03149801587301587,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=3 rrf_score=0.0315",
-          "raw_rerank_score": 0.7048943638801575
-        },
-        {
-          "table_id": "DT_30015",
-          "table_name": "1인당 개인소득, 1인당 민간소비지출",
-          "score": 0.030834914611005692,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=8 rrf_score=0.0308",
-          "raw_rerank_score": 0.3952846825122833
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 작년 한국 1인당 국민소득 3만6745달러... 2년 연속 일본 앞질러::6",
-      "candidates": [
-        {
-          "table_id": "DT_213010_2016_33",
-          "table_name": "1년전과 비교하여 최근 1년간의 변화",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.2995092570781708
-        },
-        {
-          "table_id": "DT_213100021",
-          "table_name": "1년 전 대비 소득의 변화",
-          "score": 0.03128054740957967,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=6 | reranker_rank=2 rrf_score=0.0313",
-          "raw_rerank_score": 0.17826633155345917
-        },
-        {
-          "table_id": "DT_731Y001",
-          "table_name": "주요국 통화의 대원화환율",
-          "score": 0.03128054740957967,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=2 | reranker_rank=6 rrf_score=0.0313",
-          "raw_rerank_score": 0.04922866448760033
-        },
-        {
-          "table_id": "DT_401Y015",
-          "table_name": "수입물가지수(기본분류)",
-          "score": 0.031099324975891997,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=1 | reranker_rank=8 rrf_score=0.0311",
-          "raw_rerank_score": 0.04117390140891075
-        },
-        {
-          "table_id": "DT_438001_CD006",
-          "table_name": "작년 대비 현재 경제 상태 변화 정도",
-          "score": 0.031054405392392875,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=7 rrf_score=0.0311",
-          "raw_rerank_score": 0.04169013723731041
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 작년 한국 1인당 국민소득 3만6745달러... 2년 연속 일본 앞질러::7",
-      "candidates": [
-        {
-          "table_id": "DT_200Y001",
-          "table_name": "주요지표(연간지표)",
-          "score": 0.04918032786885246,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['1인당 GNI', '국민소득'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=1 rrf_score=0.0492",
-          "raw_rerank_score": 0.16041556000709534
-        },
-        {
-          "table_id": "DT_154013_24AA002101",
-          "table_name": "최근 1년 동안 가구 월평균 소득",
-          "score": 0.03252247488101534,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=2 rrf_score=0.0325",
-          "raw_rerank_score": 0.12002496421337128
-        },
-        {
-          "table_id": "DT_768002_2019A039",
-          "table_name": "지난 1년간 월평균 가구 소득",
-          "score": 0.03200204813108039,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=3 rrf_score=0.0320",
-          "raw_rerank_score": 0.044818006455898285
-        },
-        {
-          "table_id": "DT_776002_2019A039",
-          "table_name": "지난 1년간 월평균 가구 소득",
-          "score": 0.03149801587301587,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=4 rrf_score=0.0315",
-          "raw_rerank_score": 0.044818006455898285
-        },
-        {
-          "table_id": "DT_779002_2019A039",
-          "table_name": "지난 1년간 월평균 가구 소득",
-          "score": 0.031009615384615385,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=5 rrf_score=0.0310",
-          "raw_rerank_score": 0.044818006455898285
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 반도체·車 수출 호조에 3월 1~20일 수출, 전년 동기 대비 4.5% ::0",
-      "candidates": [
-        {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04675081813931744,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출 증가율', '수출건수'] | keyword_rank=2 | embedding_rank=2 | reranker_rank=9 rrf_score=0.0468",
-          "raw_rerank_score": 0.07585864514112473
-        },
-        {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.04610294966520434,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출액', '수출 증가율'] | keyword_rank=1 | embedding_rank=4 | reranker_rank=11 rrf_score=0.0461",
-          "raw_rerank_score": 0.022970911115407944
-        },
-        {
-          "table_id": "DT_358004_024",
-          "table_name": "수출액 및 해외 매출액 증가 주요 요인_1순위",
-          "score": 0.03177805800756621,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=5 rrf_score=0.0318",
-          "raw_rerank_score": 0.2379167079925537
-        },
-        {
-          "table_id": "DT_395N_S2017012",
-          "table_name": "2017년 수출액 수준",
-          "score": 0.03131881575727918,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=7 | reranker_rank=1 rrf_score=0.0313",
-          "raw_rerank_score": 0.6289919018745422
-        },
-        {
-          "table_id": "DT_395N_I2019278",
-          "table_name": "수출액 수준: 2017년",
-          "score": 0.03125,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=4 rrf_score=0.0312",
-          "raw_rerank_score": 0.2880201041698456
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 반도체·車 수출 호조에 3월 1~20일 수출, 전년 동기 대비 4.5% ::1",
-      "candidates": [
-        {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04628776241679467,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출건수'] | keyword_rank=3 | embedding_rank=2 | reranker_rank=10 rrf_score=0.0463",
-          "raw_rerank_score": 0.2910810112953186
-        },
-        {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.04583853930031804,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출액'] | keyword_rank=2 | embedding_rank=4 | reranker_rank=11 rrf_score=0.0458",
-          "raw_rerank_score": 0.10857950896024704
-        },
-        {
-          "table_id": "DT_13622_A782",
-          "table_name": "1일평균 가동 시간 및 월간 평균 조업일수",
-          "score": 0.03177805800756621,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=5 | reranker_rank=1 rrf_score=0.0318",
-          "raw_rerank_score": 0.9118993878364563
-        },
-        {
-          "table_id": "DT_13622N_2016C010",
-          "table_name": "월간평균 조업일수 및 1일 평균 가동시간",
-          "score": 0.03177805800756621,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=5 rrf_score=0.0318",
-          "raw_rerank_score": 0.6969594359397888
-        },
-        {
-          "table_id": "TX_136_2009_H8192",
-          "table_name": "1일평균 가동 시간 및 월간 평균 조업일수",
-          "score": 0.03128054740957967,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=6 | reranker_rank=2 rrf_score=0.0313",
-          "raw_rerank_score": 0.9118993878364563
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 반도체·車 수출 호조에 3월 1~20일 수출, 전년 동기 대비 4.5% ::2",
-      "candidates": [
-        {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.045717072759937125,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수입액'] | keyword_rank=1 | embedding_rank=4 | reranker_rank=13 rrf_score=0.0457",
-          "raw_rerank_score": 0.02526700124144554
-        },
-        {
-          "table_id": "DT_1R11001_FRM101",
-          "table_name": "품목별 수출액, 수입액",
-          "score": 0.04424323720098368,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=3 | vdb_rank=10 | reranker_rank=11 rrf_score=0.0442",
-          "raw_rerank_score": 0.036685023456811905
-        },
-        {
-          "table_id": "DT_13622N_A100",
-          "table_name": "최근 3년간 수액 생산 수입 변화 및 감소이유",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.7734507918357849
-        },
-        {
-          "table_id": "TX_136_2009_H2098",
-          "table_name": "최근 3년간 수액 생산량 및 감소 이유",
+          "table_id": "TX_31801_A008",
+          "table_name": "한국석유공사 (2025-08) 국가별 원유수입",
           "score": 0.03225806451612903,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=2 rrf_score=0.0323",
-          "raw_rerank_score": 0.5603681206703186
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.250348836183548
         },
         {
-          "table_id": "DT_13622N_A098",
-          "table_name": "최근 3년간 수액 생산량 변화 및 감소 이유",
-          "score": 0.03149801587301587,
+          "table_id": "TX_31801_A009",
+          "table_name": "한국석유공사 (2025-08) 유질별 원유수입",
+          "score": 0.031544957774465976,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=4 rrf_score=0.0315",
-          "raw_rerank_score": 0.4020980894565582
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=6 | reranker_rank=1 rrf_score=0.0315",
+          "raw_rerank_score": 0.2958362400531769
+        },
+        {
+          "table_id": "DT_IZGI01_515",
+          "table_name": "국가데이터처 (2026-03) 연료유 수입",
+          "score": 0.031544957774465976,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=6 rrf_score=0.0315",
+          "raw_rerank_score": 0.12849657237529755
+        },
+        {
+          "table_id": "TX_31801_A012",
+          "table_name": "한국석유공사 (2026-05) 국가별 제품별 수입",
+          "score": 0.03125763125763126,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=5 rrf_score=0.0313",
+          "raw_rerank_score": 0.13971255719661713
+        },
+        {
+          "table_id": "DT_1ZGA75",
+          "table_name": "국가데이터처 (2025-12) 원유수입량 및 정제능력",
+          "score": 0.03125,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=4 | reranker_rank=4 rrf_score=0.0312",
+          "raw_rerank_score": 0.18027779459953308
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 반도체·車 수출 호조에 3월 1~20일 수출, 전년 동기 대비 4.5% ::3",
+      "item_id": "[data_set.csv] 2000만톤 넘겼다… 美원유 수입 역대 최대::3",
       "candidates": [
-        {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04722835723395651,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['무역수지', '무역흑자', '수출건수', '수입건수'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=8 rrf_score=0.0472",
-          "raw_rerank_score": 0.21350225806236267
-        },
         {
           "table_id": "DT_1R11006_FRM101",
           "table_name": "국가별 수출액, 수입액",
-          "score": 0.04635096553822021,
+          "score": 0.04630415690866511,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['수출액', '수입액', '무역수지', '무역흑자'] | keyword_rank=1 | embedding_rank=3 | reranker_rank=11 rrf_score=0.0464",
-          "raw_rerank_score": 0.06456061452627182
+          "source_meta": "keyword_search matched=['수입액'] | keyword_rank=1 | embedding_rank=4 | reranker_rank=10 rrf_score=0.0463",
+          "raw_rerank_score": 0.009379967115819454
         },
         {
-          "table_id": "DT_301Y013",
-          "table_name": "국제수지",
-          "score": 0.0460397465437788,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['무역수지'] | keyword_rank=4 | embedding_rank=2 | reranker_rank=10 rrf_score=0.0460",
-          "raw_rerank_score": 0.13697783648967743
-        },
-        {
-          "table_id": "DT_1R11001_FRM101",
-          "table_name": "품목별 수출액, 수입액",
-          "score": 0.04379960317460317,
+          "table_id": "DT_1ZGG12",
+          "table_name": "국가데이터처 (2023-12) 식량 도입량",
+          "score": 0.03252247488101534,
           "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=4 | vdb_rank=10 | reranker_rank=12 rrf_score=0.0438",
-          "raw_rerank_score": 0.0581103079020977
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.06127207726240158
         },
         {
-          "table_id": "DT_395N_S2014009",
-          "table_name": "2011년 수출액 수준",
+          "table_id": "DT_2STES043",
+          "table_name": "국가데이터처 (2026-07) 국제 상품 무역 통계 ＞ 수입",
           "score": 0.032266458495966696,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=3 rrf_score=0.0323",
-          "raw_rerank_score": 0.3394393026828766
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=3 rrf_score=0.0323",
+          "raw_rerank_score": 0.053548891097307205
+        },
+        {
+          "table_id": "DT_136034_2024_J029",
+          "table_name": "산림청 (2026-01) 집성재 국가별 수입량",
+          "score": 0.0315136476426799,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=5 | reranker_rank=2 rrf_score=0.0315",
+          "raw_rerank_score": 0.058902252465486526
+        },
+        {
+          "table_id": "DT_115035_012",
+          "table_name": "산업통상부 (2021-09) 수입금액 기준 제1수입국가",
+          "score": 0.03149801587301587,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=4 rrf_score=0.0315",
+          "raw_rerank_score": 0.05171950161457062
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 반도체·車 수출 호조에 3월 1~20일 수출, 전년 동기 대비 4.5% ::4",
+      "item_id": "[data_set.csv] 2000만톤 넘겼다… 美원유 수입 역대 최대::4",
       "candidates": [
         {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04891591750396616,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['무역수지', '무역흑자'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=1 rrf_score=0.0489",
-          "raw_rerank_score": 0.14410826563835144
+          "table_id": "TX_31801_A008",
+          "table_name": "한국석유공사 (2025-08) 국가별 원유수입",
+          "score": 0.03225806451612903,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.250348836183548
         },
+        {
+          "table_id": "TX_31801_A009",
+          "table_name": "한국석유공사 (2025-08) 유질별 원유수입",
+          "score": 0.031544957774465976,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=6 | reranker_rank=1 rrf_score=0.0315",
+          "raw_rerank_score": 0.2958362400531769
+        },
+        {
+          "table_id": "DT_IZGI01_515",
+          "table_name": "국가데이터처 (2026-03) 연료유 수입",
+          "score": 0.031544957774465976,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=6 rrf_score=0.0315",
+          "raw_rerank_score": 0.12849657237529755
+        },
+        {
+          "table_id": "TX_31801_A012",
+          "table_name": "한국석유공사 (2026-05) 국가별 제품별 수입",
+          "score": 0.03125763125763126,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=5 rrf_score=0.0313",
+          "raw_rerank_score": 0.13971255719661713
+        },
+        {
+          "table_id": "DT_1ZGA75",
+          "table_name": "국가데이터처 (2025-12) 원유수입량 및 정제능력",
+          "score": 0.03125,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=4 | reranker_rank=4 rrf_score=0.0312",
+          "raw_rerank_score": 0.18027779459953308
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 2000만톤 넘겼다… 美원유 수입 역대 최대::5",
+      "candidates": [
         {
           "table_id": "DT_1R11006_FRM101",
           "table_name": "국가별 수출액, 수입액",
-          "score": 0.047907090265630725,
+          "score": 0.04630415690866511,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['무역수지', '무역흑자'] | keyword_rank=1 | embedding_rank=5 | reranker_rank=2 rrf_score=0.0479",
-          "raw_rerank_score": 0.026955939829349518
+          "source_meta": "keyword_search matched=['수입액'] | keyword_rank=1 | embedding_rank=4 | reranker_rank=10 rrf_score=0.0463",
+          "raw_rerank_score": 0.009379967115819454
         },
         {
-          "table_id": "DT_301Y013",
-          "table_name": "국제수지",
-          "score": 0.04787506400409626,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['무역수지'] | keyword_rank=3 | embedding_rank=2 | reranker_rank=3 rrf_score=0.0479",
-          "raw_rerank_score": 0.02151394821703434
-        },
-        {
-          "table_id": "TX_11006_A016",
-          "table_name": "지난년도 수입세외 수입 징수실적",
-          "score": 0.032018442622950824,
+          "table_id": "DT_1ZGG12",
+          "table_name": "국가데이터처 (2023-12) 식량 도입량",
+          "score": 0.03252247488101534,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
-          "raw_rerank_score": 0.0065083010122179985
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.06127207726240158
         },
         {
-          "table_id": "TX_11006_A044",
-          "table_name": "지난년도 수입세외 수입 징수실적",
+          "table_id": "DT_2STES043",
+          "table_name": "국가데이터처 (2026-07) 국제 상품 무역 통계 ＞ 수입",
+          "score": 0.032266458495966696,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=3 rrf_score=0.0323",
+          "raw_rerank_score": 0.053548891097307205
+        },
+        {
+          "table_id": "DT_136034_2024_J029",
+          "table_name": "산림청 (2026-01) 집성재 국가별 수입량",
           "score": 0.0315136476426799,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=5 rrf_score=0.0315",
-          "raw_rerank_score": 0.0065083010122179985
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=5 | reranker_rank=2 rrf_score=0.0315",
+          "raw_rerank_score": 0.058902252465486526
+        },
+        {
+          "table_id": "DT_115035_012",
+          "table_name": "산업통상부 (2021-09) 수입금액 기준 제1수입국가",
+          "score": 0.03149801587301587,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=4 rrf_score=0.0315",
+          "raw_rerank_score": 0.05171950161457062
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 공정위, 롯데홈쇼핑·롯데웰푸드 현장조사...‘부당지원’ 혐의::0",
+      "item_id": "[data_set.csv] “경제으뜸도시 홍천 위한 마지막 관문”… 홍천철도 성공적 유치에 총력::0",
       "candidates": [
         {
-          "table_id": "DT_30404_B012",
-          "table_name": "유형별 매매가격지수",
-          "score": 0.04553195613646434,
+          "table_id": "DT_113_STBL_1021551",
+          "table_name": "문화체육관광부 (2014-09) 장르별 지역 공연예술축제 방문객 수",
+          "score": 0.031544957774465976,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=6 | reranker_rank=1 rrf_score=0.0315",
+          "raw_rerank_score": 0.22525277733802795
+        },
+        {
+          "table_id": "DT_113_STBL_1027196",
+          "table_name": "문화체육관광부 (2023-03) 축제 방문 의향",
+          "score": 0.03149801587301587,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.0809238851070404
+        },
+        {
+          "table_id": "DT_113_STBL_1026216",
+          "table_name": "문화체육관광부 (2026-06) 여행업 세부 항목별 연간 총 이용객 수",
+          "score": 0.03149801587301587,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=4 rrf_score=0.0315",
+          "raw_rerank_score": 0.04161839187145233
+        },
+        {
+          "table_id": "DT_113_STBL_1026116",
+          "table_name": "문화체육관광부 (2026-06) 관광사업체 연간 총 이용/참가자 수(지역별)",
+          "score": 0.031099324975891997,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=8 rrf_score=0.0311",
+          "raw_rerank_score": 0.02273055724799633
+        },
+        {
+          "table_id": "DT_113_STBL_1023540",
+          "table_name": "문화체육관광부 (2014-09) 관광사업체 연간 이용객 및 참가자 수 추이",
+          "score": 0.0304147465437788,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=10 | reranker_rank=2 rrf_score=0.0304",
+          "raw_rerank_score": 0.1649516373872757
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] “경제으뜸도시 홍천 위한 마지막 관문”… 홍천철도 성공적 유치에 총력::1",
+      "candidates": [
+        {
+          "table_id": "DT_1G18007",
+          "table_name": "공종별 건설기성액(경상)",
+          "score": 0.032266458495966696,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['주택매매가격지수', '주택가격동향'] | keyword_rank=1 | embedding_rank=4 | reranker_rank=14 rrf_score=0.0455",
-          "raw_rerank_score": 2.4101576855173334e-05
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=1 rrf_score=0.0323",
+          "raw_rerank_score": 0.011391334235668182
         },
         {
-          "table_id": "DT_30303N_5153",
-          "table_name": "'14년 계열사와의 차입/대여 등의 자금거래 여부",
-          "score": 0.03200204813108039,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=3 rrf_score=0.0320",
-          "raw_rerank_score": 0.01462758332490921
-        },
-        {
-          "table_id": "DT_467002_A088",
-          "table_name": "한국콘텐츠진흥원/공정거래위원회 등 조사/모니터링을 통한 불공정행위에 대한 인식 환기",
-          "score": 0.03128054740957967,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=6 | reranker_rank=2 rrf_score=0.0313",
-          "raw_rerank_score": 0.01894686184823513
-        },
-        {
-          "table_id": "DT_142N_B30378",
-          "table_name": "거래기업과의 마찰",
-          "score": 0.031099324975891997,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=8 | reranker_rank=1 rrf_score=0.0311",
-          "raw_rerank_score": 0.049229636788368225
-        },
-        {
-          "table_id": "DT_395N_2008180",
-          "table_name": "회사에서 개발한 공정혁신을 외부 고객에게 판매한 경우가 있는지 여부",
-          "score": 0.030679156908665108,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=10 rrf_score=0.0307",
-          "raw_rerank_score": 7.771472883177921e-05
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 공정위, 롯데홈쇼핑·롯데웰푸드 현장조사...‘부당지원’ 혐의::1",
-      "candidates": [
-        {
-          "table_id": "DT_1KE10071",
-          "table_name": "온라인쇼핑몰 판매매체별/상품군별거래액",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.004278269130736589
-        },
-        {
-          "table_id": "DT_104Y282",
-          "table_name": "시도별 주택시가총액(명목, 연말기준)",
-          "score": 0.03200204813108039,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=3 | reranker_rank=2 rrf_score=0.0320",
-          "raw_rerank_score": 0.0008995411917567253
+          "table_id": "TX_13301_A169",
+          "table_name": "폐업자 현황(폐업사유,지역,업태) [2005~]",
+          "score": 0.032018442622950824,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.0016579034272581339
         },
         {
           "table_id": "TX_13301_A011",
           "table_name": "2.1.1 예산 및 세수 현황[2005~]",
           "score": 0.03200204813108039,
-          "required_slots": [],
-          "source_meta": "embedding_search model=intfloat/multilingual-e5-small | embedding_rank=2 | reranker_rank=3 rrf_score=0.0320",
-          "raw_rerank_score": 0.0008219440351240337
-        },
-        {
-          "table_id": "DT_1B26001_A01",
-          "table_name": "시군구별 이동자수",
-          "score": 0.03177805800756621,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['국내이동', '인구이동', '이사하는', '이사한', '이사를'] | keyword_rank=1 | reranker_rank=5 rrf_score=0.0318",
-          "raw_rerank_score": 8.480343967676163e-05
-        },
-        {
-          "table_id": "DT_620003_2019E004",
-          "table_name": "가구의 생활비 지출",
-          "score": 0.03131881575727918,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=7 rrf_score=0.0313",
-          "raw_rerank_score": 1.7001109881675802e-05
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::0",
-      "candidates": [
-        {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04694381575727918,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출건수'] | keyword_rank=4 | embedding_rank=1 | reranker_rank=7 rrf_score=0.0469",
-          "raw_rerank_score": 0.013124371878802776
-        },
-        {
-          "table_id": "DT_092_115_2009_S023",
-          "table_name": "IT산업별/월별 수출 현황",
-          "score": 0.045027161156193415,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['IT수출', 'ICT수출'] | keyword_rank=2 | embedding_rank=5 | reranker_rank=14 rrf_score=0.0450",
-          "raw_rerank_score": 0.0023575713858008385
-        },
-        {
-          "table_id": "TX_136_2009_H5097",
-          "table_name": "생산품목의 향후 3년간 국내시장 전망 및 이유",
-          "score": 0.03200204813108039,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=2 rrf_score=0.0320",
-          "raw_rerank_score": 0.2168164998292923
-        },
-        {
-          "table_id": "DT_114056_2022_0020_03",
-          "table_name": "농축산식품산업 분야 업황 전망(3년후)",
-          "score": 0.0315136476426799,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=5 rrf_score=0.0315",
-          "raw_rerank_score": 0.03405823931097984
-        },
-        {
-          "table_id": "TX_136_2009_H5311",
-          "table_name": "생산품목의 향후 3년간 국내시장 전망 및 이유",
-          "score": 0.03149801587301587,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=3 rrf_score=0.0315",
-          "raw_rerank_score": 0.2168164998292923
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::1",
-      "candidates": [
-        {
-          "table_id": "DT_1R11001_FRM101",
-          "table_name": "품목별 수출액, 수입액",
-          "score": 0.046606981923268856,
           "required_slots": [
             "시점",
-            "품목"
+            "세목"
           ],
-          "source_meta": "keyword_search matched=['품목별 수출액', '15대 수출 품목', '10대 수출 품목', '수출 품목별'] | keyword_rank=1 | embedding_rank=2 | reranker_rank=11 rrf_score=0.0466",
-          "raw_rerank_score": 0.02934923954308033
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=3 rrf_score=0.0320",
+          "raw_rerank_score": 0.0016827150247991085
         },
         {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.045011529386529386,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출액'] | keyword_rank=3 | embedding_rank=4 | reranker_rank=14 rrf_score=0.0450",
-          "raw_rerank_score": 0.00569702684879303
-        },
-        {
-          "table_id": "DT_115042_25_045",
-          "table_name": "자동차 부품 수출계획 관련 애로사항",
-          "score": 0.03278688524590164,
+          "table_id": "TX_11007_A415",
+          "table_name": "행정안전부 (2025-11) 13-8-2. 기초자치단체별 부과징수 현황-계룡시(시세)",
+          "score": 0.03177805800756621,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.6496062278747559
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=5 rrf_score=0.0318",
+          "raw_rerank_score": 0.0005384753458201885
         },
         {
-          "table_id": "DT_213009_18A37",
-          "table_name": "수입 전망",
+          "table_id": "DT_104Y282",
+          "table_name": "시도별 주택시가총액(명목, 연말기준)",
           "score": 0.031754032258064516,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=2 rrf_score=0.0318",
-          "raw_rerank_score": 0.40360012650489807
-        },
-        {
-          "table_id": "DT_115042_25_047",
-          "table_name": "자동차 부품 신규 수출 및 확대 계획이 없는 이유_1+2순위",
-          "score": 0.03125763125763126,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=5 rrf_score=0.0313",
-          "raw_rerank_score": 0.04746101051568985
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=2 rrf_score=0.0318",
+          "raw_rerank_score": 0.0050967102870345116
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::2",
+      "item_id": "[data_set.csv] “경제으뜸도시 홍천 위한 마지막 관문”… 홍천철도 성공적 유치에 총력::2",
       "candidates": [
         {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.045642921146953404,
+          "table_id": "DT_1G18007",
+          "table_name": "공종별 건설기성액(경상)",
+          "score": 0.032266458495966696,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['수출건수'] | keyword_rank=4 | embedding_rank=2 | reranker_rank=12 rrf_score=0.0456",
-          "raw_rerank_score": 0.009199698455631733
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=1 rrf_score=0.0323",
+          "raw_rerank_score": 0.011391334235668182
         },
         {
-          "table_id": "DT_512Y013",
-          "table_name": "기업경기조사(실적)",
-          "score": 0.045599791829300025,
+          "table_id": "TX_13301_A169",
+          "table_name": "폐업자 현황(폐업사유,지역,업태) [2005~]",
+          "score": 0.032018442622950824,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['BSI'] | keyword_rank=3 | embedding_rank=1 | reranker_rank=15 rrf_score=0.0456",
-          "raw_rerank_score": 0.002084946259856224
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.0016579034272581339
         },
         {
-          "table_id": "DT_36005_A013",
-          "table_name": "가전제품 항목별 EBSI 전망",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.8319069147109985
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.03200204813108039,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=3 rrf_score=0.0320",
+          "raw_rerank_score": 0.0016827150247991085
         },
         {
-          "table_id": "DT_36005_A001",
-          "table_name": "품목별 수출산업경기전망지수(EBSI)",
-          "score": 0.03225806451612903,
+          "table_id": "TX_11007_A415",
+          "table_name": "행정안전부 (2025-11) 13-8-2. 기초자치단체별 부과징수 현황-계룡시(시세)",
+          "score": 0.03177805800756621,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=2 rrf_score=0.0323",
-          "raw_rerank_score": 0.48937511444091797
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=5 rrf_score=0.0318",
+          "raw_rerank_score": 0.0005384753458201885
         },
         {
-          "table_id": "DT_36005_A023",
-          "table_name": "플라스틱·고무·가죽제품 항목별 EBSI 전망",
-          "score": 0.03149801587301587,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=4 rrf_score=0.0315",
-          "raw_rerank_score": 0.11962787061929703
+          "table_id": "DT_104Y282",
+          "table_name": "시도별 주택시가총액(명목, 연말기준)",
+          "score": 0.031754032258064516,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=2 rrf_score=0.0318",
+          "raw_rerank_score": 0.0050967102870345116
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::3",
+      "item_id": "[data_set.csv] 환율 1387.2원… 6개월 만에 최저::0",
       "candidates": [
         {
-          "table_id": "DT_2UNS0374",
-          "table_name": "무관세가 적용된 수입품 비율",
+          "table_id": "DT_343_2010_S0039",
+          "table_name": "한국거래소 (2026-07) 코스피 지수 등락기록",
           "score": 0.03252247488101534,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
-          "raw_rerank_score": 0.020345132797956467
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.06329023092985153
         },
         {
-          "table_id": "DT_BUNS0105",
-          "table_name": "10.a.1. 무관세 수입품 관세선의 비율(%)",
+          "table_id": "DT_028Y015",
+          "table_name": "한국은행 (2017-12) 주식거래 및 주가지수",
+          "score": 0.03252247488101534,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.05989236384630203
+        },
+        {
+          "table_id": "DT_376_90_SDMP035V_1",
+          "table_name": "금융감독원 (2016-11) [자본시장] 13. 코스닥시장 주요지표",
           "score": 0.031746031746031744,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=3 rrf_score=0.0317",
-          "raw_rerank_score": 0.0027552854735404253
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=3 rrf_score=0.0317",
+          "raw_rerank_score": 0.050423040986061096
         },
         {
-          "table_id": "DT_34006G_053A",
-          "table_name": "기술개발에 의한 수출효과",
-          "score": 0.03125,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=4 rrf_score=0.0312",
-          "raw_rerank_score": 0.0008235838613472879
-        },
-        {
-          "table_id": "DT_34006H_051_1",
-          "table_name": "기술개발에 의한 수출효과",
-          "score": 0.03076923076923077,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=5 | reranker_rank=5 rrf_score=0.0308",
-          "raw_rerank_score": 0.0008235838613472879
-        },
-        {
-          "table_id": "DT_380004_A094",
-          "table_name": "기술변화로 인한 영향 여부",
-          "score": 0.0304147465437788,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=10 | reranker_rank=2 rrf_score=0.0304",
-          "raw_rerank_score": 0.020170673727989197
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::4",
-      "candidates": [
-        {
-          "table_id": "DT_1R11001_FRM101",
-          "table_name": "품목별 수출액, 수입액",
-          "score": 0.04841188524590164,
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.031544957774465976,
           "required_slots": [
             "시점",
             "품목"
           ],
-          "source_meta": "keyword_search matched=['품목별 수출액', '15대 수출 품목', '10대 수출 품목', '수출 품목별'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=4 rrf_score=0.0484",
-          "raw_rerank_score": 0.10272988677024841
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=6 rrf_score=0.0315",
+          "raw_rerank_score": 0.003020547330379486
         },
         {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04624678588125292,
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.0315136476426799,
           "required_slots": [
-            "시점"
+            "시점",
+            "세목"
           ],
-          "source_meta": "keyword_search matched=['수출건수'] | keyword_rank=4 | embedding_rank=2 | reranker_rank=9 rrf_score=0.0462",
-          "raw_rerank_score": 0.0017668758518993855
-        },
-        {
-          "table_id": "DT_092_115_2009_S023",
-          "table_name": "IT산업별/월별 수출 현황",
-          "score": 0.045799361928394185,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['IT수출', 'ICT수출'] | keyword_rank=2 | embedding_rank=5 | reranker_rank=10 rrf_score=0.0458",
-          "raw_rerank_score": 0.0011069572065025568
-        },
-        {
-          "table_id": "TX_136_2009_H5097",
-          "table_name": "생산품목의 향후 3년간 국내시장 전망 및 이유",
-          "score": 0.03252247488101534,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
-          "raw_rerank_score": 0.4974786341190338
-        },
-        {
-          "table_id": "TX_136_2009_H5311",
-          "table_name": "생산품목의 향후 3년간 국내시장 전망 및 이유",
-          "score": 0.03200204813108039,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=2 rrf_score=0.0320",
-          "raw_rerank_score": 0.4974786341190338
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 0.0034344166051596403
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::5",
+      "item_id": "[data_set.csv] 환율 1387.2원… 6개월 만에 최저::1",
       "candidates": [
         {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04712301587301587,
+          "table_id": "DT_731Y001",
+          "table_name": "주요국 통화의 대원화환율",
+          "score": 0.04918032786885246,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['무역수지', '수출건수'] | keyword_rank=4 | embedding_rank=3 | reranker_rank=4 rrf_score=0.0471",
-          "raw_rerank_score": 0.35465285181999207
+          "source_meta": "keyword_search matched=['환율'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=1 rrf_score=0.0492",
+          "raw_rerank_score": 0.27943143248558044
+        },
+        {
+          "table_id": "DT_401Y015",
+          "table_name": "수입물가지수(기본분류)",
+          "score": 0.0315136476426799,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=2 rrf_score=0.0315",
+          "raw_rerank_score": 0.0070440033450722694
+        },
+        {
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.0315136476426799,
+          "required_slots": [
+            "시점",
+            "품목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 5.237618461251259e-05
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.03149801587301587,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.0023309262469410896
         },
         {
           "table_id": "DT_301Y013",
           "table_name": "국제수지",
-          "score": 0.044485028860028863,
+          "score": 0.03149801587301587,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['국제수지', '무역수지'] | keyword_rank=3 | embedding_rank=4 | reranker_rank=17 rrf_score=0.0445",
-          "raw_rerank_score": 0.016033999621868134
-        },
-        {
-          "table_id": "DT_36005_A001",
-          "table_name": "품목별 수출산업경기전망지수(EBSI)",
-          "score": 0.03278688524590164,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
-          "raw_rerank_score": 0.9111730456352234
-        },
-        {
-          "table_id": "TX_36005_A000",
-          "table_name": "산업별 수출경기 EBSI추이(2003 1/4~ 2009 1/4)",
-          "score": 0.03225806451612903,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=2 rrf_score=0.0323",
-          "raw_rerank_score": 0.5402307510375977
-        },
-        {
-          "table_id": "TX_36005_A001",
-          "table_name": "품목별 수출경기 EBSI(2003 1/4~ 2009 1/4)",
-          "score": 0.03125763125763126,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=5 rrf_score=0.0313",
-          "raw_rerank_score": 0.34002774953842163
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=4 rrf_score=0.0315",
+          "raw_rerank_score": 0.0007720079156570137
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::6",
+      "item_id": "[data_set.csv] 환율 1387.2원… 6개월 만에 최저::2",
       "candidates": [
         {
-          "table_id": "DT_1R11001_FRM101",
-          "table_name": "품목별 수출액, 수입액",
-          "score": 0.04891591750396616,
-          "required_slots": [
-            "시점",
-            "품목"
-          ],
-          "source_meta": "keyword_search matched=['품목별 수출액', '15대 수출 품목', '10대 수출 품목', '수출 품목별'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=2 rrf_score=0.0489",
-          "raw_rerank_score": 0.10175132751464844
-        },
-        {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.045582522915269395,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출건수'] | keyword_rank=4 | embedding_rank=3 | reranker_rank=11 rrf_score=0.0456",
-          "raw_rerank_score": 0.0021333799231797457
-        },
-        {
-          "table_id": "DT_71301_H007",
-          "table_name": "수출실적(품목별)",
+          "table_id": "DT_343_2010_S0039",
+          "table_name": "한국거래소 (2026-07) 코스피 지수 등락기록",
           "score": 0.03252247488101534,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
-          "raw_rerank_score": 0.15000085532665253
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.06329023092985153
         },
         {
-          "table_id": "DT_145009_013",
-          "table_name": "원료의약품 수출액 상위 10개 품목 현황-연도별",
+          "table_id": "DT_028Y015",
+          "table_name": "한국은행 (2017-12) 주식거래 및 주가지수",
+          "score": 0.03252247488101534,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.05989236384630203
+        },
+        {
+          "table_id": "DT_376_90_SDMP035V_1",
+          "table_name": "금융감독원 (2016-11) [자본시장] 13. 코스닥시장 주요지표",
           "score": 0.031746031746031744,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=3 rrf_score=0.0317",
-          "raw_rerank_score": 0.08422127366065979
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=3 rrf_score=0.0317",
+          "raw_rerank_score": 0.050423040986061096
         },
         {
-          "table_id": "DT_14508_008",
-          "table_name": "의료기기 수출액 기준 상위 10개 품목 현황",
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
           "score": 0.031544957774465976,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=6 rrf_score=0.0315",
-          "raw_rerank_score": 0.05200798436999321
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::7",
-      "candidates": [
-        {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.04559139784946237,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출액'] | keyword_rank=2 | embedding_rank=2 | reranker_rank=15 rrf_score=0.0456",
-          "raw_rerank_score": 0.003777318401262164
-        },
-        {
-          "table_id": "DT_092_115_2009_S023",
-          "table_name": "IT산업별/월별 수출 현황",
-          "score": 0.04517633735979293,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['IT수출', 'ICT수출'] | keyword_rank=1 | embedding_rank=4 | reranker_rank=16 rrf_score=0.0452",
-          "raw_rerank_score": 0.0024272119626402855
-        },
-        {
-          "table_id": "DT_D24058",
-          "table_name": "수출 관련 애로사항 여부",
-          "score": 0.032266458495966696,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=3 rrf_score=0.0323",
-          "raw_rerank_score": 0.9704381227493286
-        },
-        {
-          "table_id": "DT_D23058",
-          "table_name": "수출 관련 애로사항 여부",
-          "score": 0.031754032258064516,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=4 rrf_score=0.0318",
-          "raw_rerank_score": 0.9704381227493286
-        },
-        {
-          "table_id": "DT_D22059",
-          "table_name": "수출 관련 애로사항 – 복수응답",
-          "score": 0.03131881575727918,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=7 | reranker_rank=1 rrf_score=0.0313",
-          "raw_rerank_score": 0.9970388412475586
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::8",
-      "candidates": [
-        {
-          "table_id": "DT_092_115_2009_S023",
-          "table_name": "IT산업별/월별 수출 현황",
-          "score": 0.04701522850420374,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['반도체 수출', '반도체 수출액', 'IT수출', 'ICT수출'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=9 rrf_score=0.0470",
-          "raw_rerank_score": 0.054810475558042526
-        },
-        {
-          "table_id": "DT_1R11001_FRM101",
-          "table_name": "품목별 수출액, 수입액",
-          "score": 0.04641136376990422,
           "required_slots": [
             "시점",
             "품목"
           ],
-          "source_meta": "keyword_search matched=['품목별 수출액', '15대 수출 품목', '10대 수출 품목', '주력 수출 품목', '수출 품목별'] | keyword_rank=1 | embedding_rank=2 | reranker_rank=12 rrf_score=0.0464",
-          "raw_rerank_score": 0.036646146327257156
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=6 rrf_score=0.0315",
+          "raw_rerank_score": 0.003020547330379486
         },
         {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.045582522915269395,
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.0315136476426799,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 0.0034344166051596403
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 환율 1387.2원… 6개월 만에 최저::3",
+      "candidates": [
+        {
+          "table_id": "DT_731Y001",
+          "table_name": "주요국 통화의 대원화환율",
+          "score": 0.04918032786885246,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['수출액', '수출 증가율'] | keyword_rank=3 | embedding_rank=4 | reranker_rank=11 rrf_score=0.0456",
-          "raw_rerank_score": 0.045026276260614395
+          "source_meta": "keyword_search matched=['원화환율', '환율'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=1 rrf_score=0.0492",
+          "raw_rerank_score": 0.8844820261001587
         },
         {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04529532967032967,
+          "table_id": "DT_401Y015",
+          "table_name": "수입물가지수(기본분류)",
+          "score": 0.03225806451612903,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['수출 증가율', '수출건수'] | keyword_rank=4 | embedding_rank=5 | reranker_rank=10 rrf_score=0.0453",
-          "raw_rerank_score": 0.05281371250748634
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.7393781542778015
         },
         {
-          "table_id": "DT_2KAA523",
-          "table_name": "주요국의 자동차 수출·수입",
+          "table_id": "DT_999N_212C8008",
+          "table_name": "조선총독부통계연보 (2008-11) 한국농공은행 한국, 일본간 환 수불고",
           "score": 0.032018442622950824,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
-          "raw_rerank_score": 0.3336330056190491
-        }
-      ]
-    },
-    {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::9",
-      "candidates": [
-        {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04744784801534369,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출 증가율', '수출건수'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=7 rrf_score=0.0474",
-          "raw_rerank_score": 0.024660469964146614
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.6409496665000916
         },
         {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.04701522850420374,
-          "required_slots": [
-            "시점"
-          ],
-          "source_meta": "keyword_search matched=['수출액', '수출 증가율'] | keyword_rank=1 | embedding_rank=2 | reranker_rank=9 rrf_score=0.0470",
-          "raw_rerank_score": 0.0182732492685318
-        },
-        {
-          "table_id": "DT_611007_2023034",
-          "table_name": "지난해 대비 매출 감소 이유(3가지 복수응답)",
-          "score": 0.031754032258064516,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=4 rrf_score=0.0318",
-          "raw_rerank_score": 0.04658425971865654
-        },
-        {
-          "table_id": "DT_625004_B005",
-          "table_name": "올해 매출규모 감소 이유",
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
           "score": 0.03149801587301587,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=3 rrf_score=0.0315",
-          "raw_rerank_score": 0.5472033619880676
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.6972709894180298
         },
         {
-          "table_id": "DT_395N_S2017012",
-          "table_name": "2017년 수출액 수준",
-          "score": 0.03131881575727918,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=7 | reranker_rank=1 rrf_score=0.0313",
-          "raw_rerank_score": 0.5924937129020691
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03125763125763126,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=5 rrf_score=0.0313",
+          "raw_rerank_score": 0.0525800883769989
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::10",
+      "item_id": "[data_set.csv] 환율 1387.2원… 6개월 만에 최저::4",
       "candidates": [
         {
-          "table_id": "DT_1R11001_FRM101",
-          "table_name": "품목별 수출액, 수입액",
-          "score": 0.04841188524590164,
+          "table_id": "DT_731Y001",
+          "table_name": "주요국 통화의 대원화환율",
+          "score": 0.04918032786885246,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "keyword_search matched=['환율'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=1 rrf_score=0.0492",
+          "raw_rerank_score": 0.27943143248558044
+        },
+        {
+          "table_id": "DT_401Y015",
+          "table_name": "수입물가지수(기본분류)",
+          "score": 0.0315136476426799,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=2 rrf_score=0.0315",
+          "raw_rerank_score": 0.0070440033450722694
+        },
+        {
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.0315136476426799,
           "required_slots": [
             "시점",
             "품목"
           ],
-          "source_meta": "keyword_search matched=['품목별 수출액', '15대 수출 품목', '10대 수출 품목', '수출 품목별'] | keyword_rank=1 | embedding_rank=1 | reranker_rank=4 rrf_score=0.0484",
-          "raw_rerank_score": 0.10272988677024841
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 5.237618461251259e-05
         },
         {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04624678588125292,
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.03149801587301587,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['수출건수'] | keyword_rank=4 | embedding_rank=2 | reranker_rank=9 rrf_score=0.0462",
-          "raw_rerank_score": 0.0017668758518993855
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.0023309262469410896
         },
         {
-          "table_id": "DT_092_115_2009_S023",
-          "table_name": "IT산업별/월별 수출 현황",
-          "score": 0.045799361928394185,
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03149801587301587,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['IT수출', 'ICT수출'] | keyword_rank=2 | embedding_rank=5 | reranker_rank=10 rrf_score=0.0458",
-          "raw_rerank_score": 0.0011069572065025568
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=4 rrf_score=0.0315",
+          "raw_rerank_score": 0.0007720079156570137
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::0",
+      "candidates": [
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03278688524590164,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.0011590459616854787
         },
         {
-          "table_id": "TX_136_2009_H5097",
-          "table_name": "생산품목의 향후 3년간 국내시장 전망 및 이유",
+          "table_id": "DT_102006_001",
+          "table_name": "국가채무(D1)",
+          "score": 0.03225806451612903,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.0008430008892901242
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.031746031746031744,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=3 rrf_score=0.0317",
+          "raw_rerank_score": 0.0002025625726673752
+        },
+        {
+          "table_id": "DT_102N_AD01",
+          "table_name": "통합재정수지",
+          "score": 0.031009615384615385,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=4 rrf_score=0.0310",
+          "raw_rerank_score": 7.281967555172741e-05
+        },
+        {
+          "table_id": "DT_115_2009_H3001_18_1",
+          "table_name": "산업별 외국인 투자 유치 실적",
+          "score": 0.031009615384615385,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=5 rrf_score=0.0310",
+          "raw_rerank_score": 7.018456381047145e-05
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::1",
+      "candidates": [
+        {
+          "table_id": "DT_2OEEO034",
+          "table_name": "국가데이터처 (2026-06) 장기 국채 이자율",
+          "score": 0.03278688524590164,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.1313885599374771
+        },
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03252247488101534,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.00514006894081831
+        },
+        {
+          "table_id": "DT_102006_001",
+          "table_name": "국가채무(D1)",
+          "score": 0.03200204813108039,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=3 rrf_score=0.0320",
+          "raw_rerank_score": 0.002746343147009611
+        },
+        {
+          "table_id": "DT_1L9U103",
+          "table_name": "소득5분위별 가구당 가계수지 (전국,1인이상)",
+          "score": 0.03125763125763126,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=5 rrf_score=0.0313",
+          "raw_rerank_score": 0.0012830927735194564
+        },
+        {
+          "table_id": "DT_IMEMIB001",
+          "table_name": "성별/연령대별/소득분위별 소득분위 이동비율",
+          "score": 0.031009615384615385,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=4 rrf_score=0.0310",
+          "raw_rerank_score": 0.00130080699454993
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::2",
+      "candidates": [
+        {
+          "table_id": "DT_121Y006",
+          "table_name": "예금은행 대출금리(신규취급액 기준)",
+          "score": 0.03278688524590164,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.0015865768073126674
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.03200204813108039,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=2 rrf_score=0.0320",
+          "raw_rerank_score": 0.0012156160082668066
+        },
+        {
+          "table_id": "DT_IMEMIB001",
+          "table_name": "성별/연령대별/소득분위별 소득분위 이동비율",
+          "score": 0.0315136476426799,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 0.000529627432115376
+        },
+        {
+          "table_id": "DT_102N_AD01",
+          "table_name": "통합재정수지",
+          "score": 0.03125763125763126,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=3 rrf_score=0.0313",
+          "raw_rerank_score": 0.001087940763682127
+        },
+        {
+          "table_id": "DT_1L9U103",
+          "table_name": "소득5분위별 가구당 가계수지 (전국,1인이상)",
+          "score": 0.03125,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=4 rrf_score=0.0312",
+          "raw_rerank_score": 0.0008346933173015714
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::3",
+      "candidates": [
+        {
+          "table_id": "DT_2OEEO034",
+          "table_name": "국가데이터처 (2026-06) 장기 국채 이자율",
+          "score": 0.03278688524590164,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.008947480469942093
+        },
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03252247488101534,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.001115009537898004
+        },
+        {
+          "table_id": "DT_102006_001",
+          "table_name": "국가채무(D1)",
+          "score": 0.03200204813108039,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=3 rrf_score=0.0320",
+          "raw_rerank_score": 0.0007226696470752358
+        },
+        {
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.031024531024531024,
+          "required_slots": [
+            "시점",
+            "품목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=6 rrf_score=0.0310",
+          "raw_rerank_score": 3.487923095235601e-05
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.031009615384615385,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=4 rrf_score=0.0310",
+          "raw_rerank_score": 0.0006006569019518793
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::4",
+      "candidates": [
+        {
+          "table_id": "TX_13301_A367",
+          "table_name": "국세청 (2014-12) 연도별 외국인 투자법인 관련 감면통보 현황 [2002~2004]",
           "score": 0.03252247488101534,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
-          "raw_rerank_score": 0.4974786341190338
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.001592696295119822
         },
         {
-          "table_id": "TX_136_2009_H5311",
-          "table_name": "생산품목의 향후 3년간 국내시장 전망 및 이유",
-          "score": 0.03200204813108039,
+          "table_id": "TX_13301_A217",
+          "table_name": "국세청 (2026-07) 12.2.9 외국인투자법인 감면 현황[2005~]",
+          "score": 0.032266458495966696,
           "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=3 | reranker_rank=2 rrf_score=0.0320",
-          "raw_rerank_score": 0.4974786341190338
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=3 rrf_score=0.0323",
+          "raw_rerank_score": 0.0011317708995193243
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.03225806451612903,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.0015160628827288747
+        },
+        {
+          "table_id": "DT_115_2009_H3001_18_1",
+          "table_name": "산업별 외국인 투자 유치 실적",
+          "score": 0.03131881575727918,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=7 rrf_score=0.0313",
+          "raw_rerank_score": 0.00010704903252189979
+        },
+        {
+          "table_id": "DT_102N_AD01",
+          "table_name": "통합재정수지",
+          "score": 0.03125763125763126,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=5 rrf_score=0.0313",
+          "raw_rerank_score": 0.0002687366504687816
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::11",
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::5",
       "candidates": [
         {
-          "table_id": "DT_092_115_2009_S023",
-          "table_name": "IT산업별/월별 수출 현황",
-          "score": 0.04701522850420374,
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03278688524590164,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['반도체 수출', '반도체 수출액', 'IT수출', 'ICT수출'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=9 rrf_score=0.0470",
-          "raw_rerank_score": 0.054810475558042526
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.002819910878315568
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.03225806451612903,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.002563556656241417
+        },
+        {
+          "table_id": "DT_102006_001",
+          "table_name": "국가채무(D1)",
+          "score": 0.03149801587301587,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.0015531464014202356
+        },
+        {
+          "table_id": "DT_102N_AD01",
+          "table_name": "통합재정수지",
+          "score": 0.03149801587301587,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=4 rrf_score=0.0315",
+          "raw_rerank_score": 0.0012578322784975171
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.03076923076923077,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=5 rrf_score=0.0308",
+          "raw_rerank_score": 0.0012450567446649075
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::6",
+      "candidates": [
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03278688524590164,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.0006577968597412109
+        },
+        {
+          "table_id": "DT_102006_001",
+          "table_name": "국가채무(D1)",
+          "score": 0.03225806451612903,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.0005636398564092815
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.03149801587301587,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.0004939042846672237
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.03125763125763126,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=5 rrf_score=0.0313",
+          "raw_rerank_score": 9.262953244615346e-05
+        },
+        {
+          "table_id": "DT_102N_AD01",
+          "table_name": "통합재정수지",
+          "score": 0.031009615384615385,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=4 rrf_score=0.0310",
+          "raw_rerank_score": 0.00012550615065265447
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::7",
+      "candidates": [
+        {
+          "table_id": "TX_13301_A367",
+          "table_name": "국세청 (2014-12) 연도별 외국인 투자법인 관련 감면통보 현황 [2002~2004]",
+          "score": 0.03252247488101534,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.001592696295119822
+        },
+        {
+          "table_id": "TX_13301_A217",
+          "table_name": "국세청 (2026-07) 12.2.9 외국인투자법인 감면 현황[2005~]",
+          "score": 0.032266458495966696,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=3 rrf_score=0.0323",
+          "raw_rerank_score": 0.0011317708995193243
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.03225806451612903,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.0015160628827288747
+        },
+        {
+          "table_id": "DT_115_2009_H3001_18_1",
+          "table_name": "산업별 외국인 투자 유치 실적",
+          "score": 0.03131881575727918,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=7 rrf_score=0.0313",
+          "raw_rerank_score": 0.00010704903252189979
+        },
+        {
+          "table_id": "DT_102N_AD01",
+          "table_name": "통합재정수지",
+          "score": 0.03125763125763126,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=5 rrf_score=0.0313",
+          "raw_rerank_score": 0.0002687366504687816
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 개인 투자용 국채, 3월부터 年 구매한도 2억으로 늘어::8",
+      "candidates": [
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.03278688524590164,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.0006577968597412109
+        },
+        {
+          "table_id": "DT_102006_001",
+          "table_name": "국가채무(D1)",
+          "score": 0.03225806451612903,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.0005636398564092815
+        },
+        {
+          "table_id": "DT_200Y001",
+          "table_name": "주요지표(연간지표)",
+          "score": 0.03149801587301587,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.0004939042846672237
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.03125763125763126,
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=5 rrf_score=0.0313",
+          "raw_rerank_score": 9.262953244615346e-05
+        },
+        {
+          "table_id": "DT_102N_AD01",
+          "table_name": "통합재정수지",
+          "score": 0.031009615384615385,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=4 rrf_score=0.0310",
+          "raw_rerank_score": 0.00012550615065265447
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 밥상 물가 비상… 쌀 소매가 27만원 돌파, 전년比 30% 증가::0",
+      "candidates": [
+        {
+          "table_id": "DT_999N_166C6008",
+          "table_name": "조선총독부통계연보 (2008-11) 쌀가격(현미1두)",
+          "score": 0.03225806451612903,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.4444979429244995
+        },
+        {
+          "table_id": "DT_999N_299D1011",
+          "table_name": "조선총독부통계연보 (2008-02) 벼, 현미 및 콩 가액 누년비교",
+          "score": 0.032018442622950824,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.11501993238925934
+        },
+        {
+          "table_id": "DT_999N_165C6008",
+          "table_name": "조선총독부통계연보 (2008-11) 쌀가격(정미1두)",
+          "score": 0.031746031746031744,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=3 rrf_score=0.0317",
+          "raw_rerank_score": 0.4377438426017761
+        },
+        {
+          "table_id": "DT_1ED0001",
+          "table_name": "1인당 연간 양곡소비량",
+          "score": 0.03128054740957967,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=6 rrf_score=0.0313",
+          "raw_rerank_score": 0.05891444534063339
+        },
+        {
+          "table_id": "CSO23011942",
+          "table_name": "조선총독부통계연보 (2008-11) 쌀",
+          "score": 0.030886196246139225,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=9 | reranker_rank=1 rrf_score=0.0309",
+          "raw_rerank_score": 0.568859875202179
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 밥상 물가 비상… 쌀 소매가 27만원 돌파, 전년比 30% 증가::1",
+      "candidates": [
+        {
+          "table_id": "DT_999N_166C6008",
+          "table_name": "조선총독부통계연보 (2008-11) 쌀가격(현미1두)",
+          "score": 0.03225806451612903,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=2 rrf_score=0.0323",
+          "raw_rerank_score": 0.4444979429244995
+        },
+        {
+          "table_id": "DT_999N_299D1011",
+          "table_name": "조선총독부통계연보 (2008-02) 벼, 현미 및 콩 가액 누년비교",
+          "score": 0.032018442622950824,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.11501993238925934
+        },
+        {
+          "table_id": "DT_999N_165C6008",
+          "table_name": "조선총독부통계연보 (2008-11) 쌀가격(정미1두)",
+          "score": 0.031746031746031744,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=3 rrf_score=0.0317",
+          "raw_rerank_score": 0.4377438426017761
+        },
+        {
+          "table_id": "DT_1ED0001",
+          "table_name": "1인당 연간 양곡소비량",
+          "score": 0.03128054740957967,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=6 rrf_score=0.0313",
+          "raw_rerank_score": 0.05891444534063339
+        },
+        {
+          "table_id": "CSO23011942",
+          "table_name": "조선총독부통계연보 (2008-11) 쌀",
+          "score": 0.030886196246139225,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=9 | reranker_rank=1 rrf_score=0.0309",
+          "raw_rerank_score": 0.568859875202179
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 벼랑 끝 몰렸던 중형 조선 4社의 부활… 1분기 모두 흑자::0",
+      "candidates": [
+        {
+          "table_id": "DT_301Y013",
+          "table_name": "국제수지",
+          "score": 0.032266458495966696,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=3 rrf_score=0.0323",
+          "raw_rerank_score": 0.00013919445336796343
         },
         {
           "table_id": "DT_1R11001_FRM101",
           "table_name": "품목별 수출액, 수입액",
-          "score": 0.04641136376990422,
+          "score": 0.03200204813108039,
           "required_slots": [
             "시점",
             "품목"
           ],
-          "source_meta": "keyword_search matched=['품목별 수출액', '15대 수출 품목', '10대 수출 품목', '주력 수출 품목', '수출 품목별'] | keyword_rank=1 | embedding_rank=2 | reranker_rank=12 rrf_score=0.0464",
-          "raw_rerank_score": 0.036646146327257156
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=2 rrf_score=0.0320",
+          "raw_rerank_score": 0.00015765980060677975
         },
         {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.045582522915269395,
+          "table_id": "DT_1F70011",
+          "table_name": "설비투자지수",
+          "score": 0.03177805800756621,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['수출액', '수출 증가율'] | keyword_rank=3 | embedding_rank=4 | reranker_rank=11 rrf_score=0.0456",
-          "raw_rerank_score": 0.045026276260614395
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=5 | reranker_rank=1 rrf_score=0.0318",
+          "raw_rerank_score": 0.0011667225044220686
         },
         {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04529532967032967,
+          "table_id": "DT_1J22112",
+          "table_name": "품목별 소비자물가지수(품목성질별: 2020=100)",
+          "score": 0.0315136476426799,
+          "required_slots": [
+            "시점",
+            "품목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 3.274258415331133e-05
+        },
+        {
+          "table_id": "DT_102006_001",
+          "table_name": "국가채무(D1)",
+          "score": 0.03125,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['수출 증가율', '수출건수'] | keyword_rank=4 | embedding_rank=5 | reranker_rank=10 rrf_score=0.0453",
-          "raw_rerank_score": 0.05281371250748634
-        },
-        {
-          "table_id": "DT_2KAA523",
-          "table_name": "주요국의 자동차 수출·수입",
-          "score": 0.032018442622950824,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
-          "raw_rerank_score": 0.3336330056190491
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=4 rrf_score=0.0312",
+          "raw_rerank_score": 5.0226230086991563e-05
         }
       ]
     },
     {
-      "item_id": "[data_set.csv] 올 3분기까지 3개 분기 연속 ‘수출 위축’ 전망… 15개 중 10개 품::12",
+      "item_id": "[data_set.csv] 벼랑 끝 몰렸던 중형 조선 4社의 부활… 1분기 모두 흑자::1",
       "candidates": [
         {
-          "table_id": "DT_134001_001",
-          "table_name": "수출입총괄",
-          "score": 0.04744784801534369,
+          "table_id": "DT_2STES007",
+          "table_name": "국가데이터처 (2026-07) 기업 조사 ＞ 설비 가동률",
+          "score": 0.03278688524590164,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=1 rrf_score=0.0328",
+          "raw_rerank_score": 0.044562146067619324
+        },
+        {
+          "table_id": "DT_1F32002",
+          "table_name": "국가데이터처 (2026-07) 제조업 평균가동률",
+          "score": 0.03128054740957967,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=6 | reranker_rank=2 rrf_score=0.0313",
+          "raw_rerank_score": 0.04359441623091698
+        },
+        {
+          "table_id": "TX_10506_A068",
+          "table_name": "과학기술정보통신부 (2015-04) 원자력공급산업체의 평균 조업율",
+          "score": 0.031054405392392875,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=7 rrf_score=0.0311",
+          "raw_rerank_score": 0.005661435425281525
+        },
+        {
+          "table_id": "DT_B10121",
+          "table_name": "중소기업중앙회 (2023-03) 평균가동률",
+          "score": 0.03076923076923077,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=5 | reranker_rank=5 rrf_score=0.0308",
+          "raw_rerank_score": 0.02026437222957611
+        },
+        {
+          "table_id": "DT_40901N_016",
+          "table_name": "한국방위산업진흥회 (2026-01) 방산업체 평균가동률",
+          "score": 0.03057889822595705,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=8 | reranker_rank=3 rrf_score=0.0306",
+          "raw_rerank_score": 0.0262446291744709
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 벼랑 끝 몰렸던 중형 조선 4社의 부활… 1분기 모두 흑자::2",
+      "candidates": [
+        {
+          "table_id": "DT_430001_01_009",
+          "table_name": "한국전시산업진흥회 (2024-12) 전시시설 사업자의 매출액 및 영업이익 규모",
+          "score": 0.03252247488101534,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=2 rrf_score=0.0325",
+          "raw_rerank_score": 0.01511723455041647
+        },
+        {
+          "table_id": "DT_200Y102",
+          "table_name": "주요지표(분기지표)",
+          "score": 0.032266458495966696,
           "required_slots": [
             "시점"
           ],
-          "source_meta": "keyword_search matched=['수출 증가율', '수출건수'] | keyword_rank=2 | embedding_rank=1 | reranker_rank=7 rrf_score=0.0474",
-          "raw_rerank_score": 0.024660469964146614
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=3 | reranker_rank=1 rrf_score=0.0323",
+          "raw_rerank_score": 0.023888561874628067
         },
         {
-          "table_id": "DT_1R11006_FRM101",
-          "table_name": "국가별 수출액, 수입액",
-          "score": 0.04701522850420374,
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
+          "score": 0.032266458495966696,
           "required_slots": [
-            "시점"
+            "시점",
+            "세목"
           ],
-          "source_meta": "keyword_search matched=['수출액', '수출 증가율'] | keyword_rank=1 | embedding_rank=2 | reranker_rank=9 rrf_score=0.0470",
-          "raw_rerank_score": 0.0182732492685318
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=1 | reranker_rank=3 rrf_score=0.0323",
+          "raw_rerank_score": 0.005152280442416668
         },
         {
-          "table_id": "DT_611007_2023034",
-          "table_name": "지난해 대비 매출 감소 이유(3가지 복수응답)",
+          "table_id": "DT_115_2009_H3001_18_1",
+          "table_name": "산업별 외국인 투자 유치 실적",
           "score": 0.031754032258064516,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=2 | reranker_rank=4 rrf_score=0.0318",
-          "raw_rerank_score": 0.04658425971865654
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=4 rrf_score=0.0318",
+          "raw_rerank_score": 0.004982908256351948
         },
         {
-          "table_id": "DT_625004_B005",
-          "table_name": "올해 매출규모 감소 이유",
+          "table_id": "DT_1G18007",
+          "table_name": "공종별 건설기성액(경상)",
+          "score": 0.030776515151515152,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=6 rrf_score=0.0308",
+          "raw_rerank_score": 0.0009311657049693167
+        }
+      ]
+    },
+    {
+      "item_id": "[data_set.csv] 벼랑 끝 몰렸던 중형 조선 4社의 부활… 1분기 모두 흑자::3",
+      "candidates": [
+        {
+          "table_id": "DT_512Y013",
+          "table_name": "기업경기조사(실적)",
+          "score": 0.03252247488101534,
+          "required_slots": [
+            "시점"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=2 | reranker_rank=1 rrf_score=0.0325",
+          "raw_rerank_score": 0.0022949816193431616
+        },
+        {
+          "table_id": "DT_430001_02_006",
+          "table_name": "한국전시산업진흥회 (2024-11) 전시주최 사업자의 영업이익 현황",
+          "score": 0.032018442622950824,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=1 | reranker_rank=4 rrf_score=0.0320",
+          "raw_rerank_score": 0.0005665307980962098
+        },
+        {
+          "table_id": "DT_11526N_2015_A080",
+          "table_name": "산업통상부 (2016-09) [전문디자인업체]2014년 사업실적 - 영업 이익",
+          "score": 0.03200204813108039,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=3 | reranker_rank=2 rrf_score=0.0320",
+          "raw_rerank_score": 0.0009084867197088897
+        },
+        {
+          "table_id": "DT_430001_04_005",
+          "table_name": "한국전시산업진흥회 (2024-11) 전시 서비스 사업자의 영업이익 현황",
+          "score": 0.0315136476426799,
+          "required_slots": [],
+          "source_meta": "kosis_vdb model=Qwen/Qwen3-Embedding-4B | vdb_rank=2 | reranker_rank=5 rrf_score=0.0315",
+          "raw_rerank_score": 0.0005317024770192802
+        },
+        {
+          "table_id": "TX_13301_A011",
+          "table_name": "2.1.1 예산 및 세수 현황[2005~]",
           "score": 0.03149801587301587,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=4 | reranker_rank=3 rrf_score=0.0315",
-          "raw_rerank_score": 0.5472033619880676
-        },
-        {
-          "table_id": "DT_395N_S2017012",
-          "table_name": "2017년 수출액 수준",
-          "score": 0.03131881575727918,
-          "required_slots": [],
-          "source_meta": "kosis_vdb model=intfloat/multilingual-e5-small | vdb_rank=7 | reranker_rank=1 rrf_score=0.0313",
-          "raw_rerank_score": 0.5924937129020691
+          "required_slots": [
+            "시점",
+            "세목"
+          ],
+          "source_meta": "embedding_search model=intfloat/multilingual-e5-large | embedding_rank=4 | reranker_rank=3 rrf_score=0.0315",
+          "raw_rerank_score": 0.0006381615530699492
         }
       ]
     }
