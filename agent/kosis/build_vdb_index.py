@@ -86,6 +86,25 @@ def main() -> None:
     try:
         with conn.cursor() as cur:
             cur.execute("create extension if not exists vector;")
+            # 2026-08-19: e5-small(384차원) -> Qwen3-Embedding-4B(truncate_dim=1024)로
+            # 바꾸면서, 기존 테이블이 다른 차원으로 이미 있으면 "create table if not
+            # exists"가 아무것도 안 하고 조용히 넘어가버려서 이후 insert가 차원 불일치로
+            # 실패한다(pgvector는 컬럼 차원을 사후에 못 바꿈, 모듈 docstring 참고). 기존
+            # 테이블의 실제 차원을 먼저 확인해서, 지금 로드한 데이터와 다르면 통째로
+            # 지우고 새로 만든다 — 이번 재적재는 모델을 통째로 교체하는 것이라 기존
+            # 384차원 데이터를 남겨둘 이유가 없다.
+            cur.execute(
+                """
+                select atttypmod from pg_attribute
+                where attrelid = %s::regclass and attname = 'embedding';
+                """,
+                (TABLE_NAME,),
+            )
+            existing = cur.fetchone()
+            existing_dim = existing[0] if existing else None
+            if existing_dim is not None and existing_dim != dim:
+                print(f"기존 테이블 차원({existing_dim}) != 새 데이터 차원({dim}) → 테이블 재생성")
+                cur.execute(f"drop table if exists {TABLE_NAME};")
             cur.execute(
                 f"""
                 create table if not exists {TABLE_NAME} (
@@ -98,31 +117,41 @@ def main() -> None:
             )
         conn.commit()
 
-        total = len(rows)
+        # 2026-08-19: 중간에 끊겨서 재실행할 때마다 이미 들어간 행까지 전부
+        # ON CONFLICT DO UPDATE로 재작성하면 (특히 벡터 컬럼이 TOAST라) 새로 INSERT하는
+        # 것보다 훨씬 느려서, 이미 적재된 tbl_id는 건너뛰고 안 들어간 행만 적재한다.
         with conn.cursor() as cur:
-            for start in range(0, total, BATCH_SIZE):
-                end = min(start + BATCH_SIZE, total)
-                batch_rows = rows[start:end]
-                batch_vecs = embeddings[start:end]
+            cur.execute(f"select tbl_id from {TABLE_NAME};")
+            already_loaded = {r[0] for r in cur.fetchall()}
+        if already_loaded:
+            print(f"이미 적재된 {len(already_loaded)}건은 건너뜁니다.")
+        pending = [
+            (r, vec) for r, vec in zip(rows, embeddings) if r["tbl_id"] not in already_loaded
+        ]
+
+        total = len(rows)
+        done = len(already_loaded)
+        with conn.cursor() as cur:
+            for start in range(0, len(pending), BATCH_SIZE):
+                end = min(start + BATCH_SIZE, len(pending))
+                batch = pending[start:end]
                 values = [
                     (r["tbl_id"], r.get("org_id") or "", r["text"], vec.tolist())
-                    for r, vec in zip(batch_rows, batch_vecs)
+                    for r, vec in batch
                 ]
                 execute_values(
                     cur,
                     f"""
                     insert into {TABLE_NAME} (tbl_id, org_id, text, embedding)
                     values %s
-                    on conflict (tbl_id) do update set
-                        org_id = excluded.org_id,
-                        text = excluded.text,
-                        embedding = excluded.embedding;
+                    on conflict (tbl_id) do nothing;
                     """,
                     values,
                     template="(%s, %s, %s, %s::vector)",
                 )
                 conn.commit()
-                print(f"  적재 진행: {end}/{total}")
+                done += len(batch)
+                print(f"  적재 진행: {done}/{total}")
 
         print(f"\n[완료] '{TABLE_NAME}'에 {total}건 적재됨")
 

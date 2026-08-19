@@ -23,4 +23,6 @@ supabase_config.json
 data/vdb_embeddings.npy
 data/vdb_metadata.jsonl
 data/vdb_pending.jsonl
+data/vdb_pending.jsonl.bak
+data/vdb_pending.jsonl.bak2
 agent/kosis/chroma_db/
