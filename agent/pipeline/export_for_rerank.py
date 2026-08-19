@@ -1,23 +1,23 @@
 """
-agent/pipeline/export_for_rerank.py — 1~3단계(임베딩+VDB 병합까지)를 로컬에서 돌리고,
-리랭킹만 코랩에 넘긴다.
+agent/pipeline/export_for_rerank.py — 1~3단계(키워드+64개 카탈로그 임베딩 병합까지)를
+로컬에서 돌리고, VDB 조회+리랭킹은 코랩에 넘긴다.
 
 배경: 리랭커(BAAI/bge-reranker-v2-m3, 568M)는 로컬(RAM 7.4GB)에서 로드 자체가
-세그폴트라 코랩(T4, RAM 12GB+)이 꼭 필요하다. 반면 임베딩(e5-large)은 claim마다
-반복 호출하면 세그폴트가 나지만(2026-08-13 실측), 여러 문장을 한 번의 encode() 호출에
-모아서 배치로 처리하면 로컬에서도 안전하다는 걸 확인했다(2026-08-15 실측, 40문장
-배치 테스트 통과 — build_table_embedding_cache가 표 64개를 한 번에 배치 임베딩할 때도
-항상 안전했던 것과 같은 패턴). 그래서 파이프라인을 이렇게 나눈다:
+세그폴트라 코랩이 꼭 필요하다. 임베딩(e5-small, 64개 카탈로그용)은 claim마다 반복
+호출하면 세그폴트가 나지만(2026-08-13 실측), 여러 문장을 한 번의 encode() 호출에
+모아서 배치로 처리하면 로컬에서도 안전하다(2026-08-15 실측). 그래서 파이프라인을
+이렇게 나눈다:
   1) (이 스크립트, 로컬) 분류→claim 추출→출처필터→키워드매칭→(배치)임베딩(64개 카탈로그)
-     →(배치)VDB 조회(KOSIS 표 28만7천여 개, agent/kosis/chroma_db)까지 전부 수행하고,
-     merged_candidates(키워드/임베딩/VDB 다 합친 최종 후보)를 claim별로 만들어 저장
-  2) (코랩, notebooks/reranker_colab.ipynb) merged_candidates를 그대로 받아 리랭킹만 수행
+     까지 수행하고, merged_candidates(키워드+임베딩 후보, VDB는 아직 안 섞임)를
+     claim별로 만들어 저장
+  2) (코랩, notebooks/reranker_colab.ipynb) VDB(KOSIS 표 28만7천여 개) 조회를 마저
+     수행해 merged_candidates에 합친 뒤 리랭킹까지 수행
   3) (resume_after_rerank.py, 로컬) 최종 결과를 받아 4~8단계 마저 실행
 
-VDB(Chroma)는 로컬 서버로 미리 띄워둬야 한다(agent/kosis/build_vdb_index.py 참고):
-    chroma run --path agent/kosis/chroma_db --port 8100
-서버가 안 떠 있으면 VDB 없이(64개 카탈로그만으로) 계속 진행한다 — VDB는 어디까지나
-보조 소스라 없어도 파이프라인이 멈추면 안 된다.
+2026-08-19: VDB 조회를 로컬에서 코랩으로 옮겼다 — VDB 임베딩 모델이 Qwen3-Embedding-4B
+(4B 파라미터)로 바뀌면서 로컬(RAM 7.4GB)에서 아예 못 돌게 됐다(리랭커 568M도 이미
+세그폴트였는데 그보다 7배 큼). 그래서 이 스크립트는 이제 VDB를 건드리지 않고, 64개
+카탈로그(keyword+embedding)까지만 로컬에서 병합해서 내보낸다.
 
 batch_runner.py의 run_article()과 최대한 같은 코드를 재사용한다 — 이 스크립트가 하는
 1~2단계 로직(분류/추출/필터/전망·해외국가 즉시판정/키워드매칭)은 run_article()과 동일해야
@@ -40,13 +40,8 @@ from agent.preprocessing.classifier import classify
 from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import keyword_search
-from agent.mapping.embedding_search import (
-    batch_embedding_search,
-    build_table_embedding_cache,
-    embed_sentences_batch,
-)
+from agent.mapping.embedding_search import batch_embedding_search, build_table_embedding_cache
 from agent.mapping.reranker import _merge_candidates
-from agent.kosis.query_vdb import batch_query_vdb, VdbUnavailableError
 from agent.orchestrator.calc_type_router import _mentions_foreign_country
 from agent.interfaces import Claim, TableCandidate, Verdict
 from db.store import insert_verification
@@ -170,9 +165,11 @@ def export_article(
 
 
 def _merge_all_candidates(pending_items: list[dict]) -> None:
-    """전체 claim의 임베딩(64개 카탈로그)+VDB(28만7천여 개)를 각각 한 번의 배치 호출로
-    처리하고, keyword/embedding/vdb 후보를 claim마다 병합해 pending_items에 채워 넣는다
-    (claim마다 반복 호출하면 세그폴트 위험 — 2026-08-13/15 실측)."""
+    """전체 claim의 임베딩(64개 카탈로그)을 한 번의 배치 호출로 처리하고, keyword/embedding
+    후보를 claim마다 병합해 pending_items에 채워 넣는다(claim마다 반복 호출하면 세그폴트
+    위험 — 2026-08-13/15 실측). VDB(28만7천여 개)는 여기서 안 합친다 — 2026-08-19,
+    VDB 임베딩 모델(Qwen3-Embedding-4B)이 로컬에서 못 돌아서 코랩(reranker_colab.ipynb)
+    으로 옮겼다."""
     if not pending_items:
         return
 
@@ -183,17 +180,8 @@ def _merge_all_candidates(pending_items: list[dict]) -> None:
     emb_results_list = batch_embedding_search(sentences, cache=cache)
     print("[배치 임베딩] 완료")
 
-    print(f"[배치 VDB 조회] claim {len(sentences)}건을 KOSIS 전체 표(28만7천여 개)에서 조회 중...")
-    try:
-        query_vecs = embed_sentences_batch(sentences)
-        vdb_results_list = batch_query_vdb(query_vecs)
-        print("[배치 VDB 조회] 완료")
-    except VdbUnavailableError as e:
-        print(f"[배치 VDB 조회] 건너뜀 — {e}")
-        vdb_results_list = [[] for _ in sentences]
-
-    for item, emb_results, vdb_results in zip(pending_items, emb_results_list, vdb_results_list):
-        merged = _merge_candidates(item["keyword_candidates"], emb_results, vdb_results)
+    for item, emb_results in zip(pending_items, emb_results_list):
+        merged = _merge_candidates(item["keyword_candidates"], emb_results, None)
         item["merged_candidates"] = [
             {
                 "table_id": c.table_id,
@@ -244,8 +232,8 @@ def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> N
         encoding="utf-8",
     )
     print(f"\n[export] 리랭킹 대기 claim {len(serializable_items)}건 + 카탈로그 {len(catalog_export)}개 표를 "
-          f"{PENDING_PATH}에 저장했습니다. (merged_candidates에 keyword+embedding+VDB 후보 다 포함됨)")
-    print("다음: 이 파일을 코랩(notebooks/reranker_colab.ipynb)에 업로드해서 리랭킹을 실행하세요.")
+          f"{PENDING_PATH}에 저장했습니다. (merged_candidates에 keyword+embedding 후보만 포함됨, VDB는 코랩에서 추가)")
+    print("다음: 이 파일을 코랩(notebooks/reranker_colab.ipynb)에 업로드하면 VDB 조회+리랭킹까지 실행됩니다.")
 
 
 def _parse_int_flag(argv: list[str], flag: str, default: int) -> int:
