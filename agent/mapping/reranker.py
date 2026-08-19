@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 
 # embedding_search.py와 동일한 이유(OpenMP 런타임 중복 로드로 인한 세그폴트, 2026-08-03 확인) —
 # 이 모듈만 단독 import될 때도 안전하도록 여기에도 동일하게 설정한다.
@@ -151,106 +152,100 @@ def rerank_scores(query: str, documents: list[str]) -> Optional[list[float]]:
         return None
 
 
+def _tag_source_rank(cand: TableCandidate, key: str, rank: int) -> TableCandidate:
+    """cand.source_meta에 "{key}={rank}" 태그를 덧붙인 복사본을 반환한다 (원본은 불변)."""
+    tag = f"{key}={rank}"
+    meta = f"{cand.source_meta} | {tag}" if cand.source_meta else tag
+    return replace(cand, source_meta=meta)
+
+
 def _merge_candidates(
     keyword_candidates: list[TableCandidate],
     embedding_candidates: list[TableCandidate],
     vdb_candidates: Optional[list[TableCandidate]] = None,
 ) -> list[TableCandidate]:
-    """keyword_search와 embedding_search 후보를 table_id 기준으로 합친다.
-
-    실제 리랭커/임베딩 API가 붙기 전까지 embedding_search의 코사인 유사도는
-    의미 신호가 아니라 노이즈에 가까웠다 (embed_texts의 해시 기반 폴백 참고).
-    그래서 두 score를 크기로 직접 비교하지 않는다:
-      - keyword_search가 찾은 표는 그 score를 그대로 신뢰 가능한 신호로 쓴다.
-      - embedding_search가 추가로 찾은 표(keyword가 못 찾은 것)는 recall 보충용으로만
-        살려두고 "unverified"로 표시해서, rerank_scores()가 실제로 점수를 매겨 재평가하게 한다.
+    """keyword_search/embedding_search/VDB 후보를 table_id 기준으로 합치면서, 각 소스
+    안에서의 순위(1부터, 입력 리스트가 이미 점수 내림차순 정렬돼 있다고 가정)를
+    source_meta에 "keyword_rank=N"/"embedding_rank=N"/"vdb_rank=N"으로 남긴다 —
+    이후 _rrf_fuse()가 점수 크기가 아니라 이 순위만으로 최종 신뢰도를 계산한다.
     입력으로 받은 candidate 객체는 변형하지 않고 dataclasses.replace로 복사본만 만든다.
+
+    2026-08-18: "keyword=신뢰 / embedding·vdb=unverified" 이분법(그리고 그로 인한
+    _promote_verified_within_top_ranks 승격 로직)을 RRF(Reciprocal Rank Fusion)로
+    대체한다. 실측(울릉군 기사)에서 VDB 단독으로 찾은 표가 keyword_search가 아예 못 찾은
+    진짜 정답이었던 사례가 확인됐는데("고용률(시/군/구)" claim), 기존 이분법은 이런
+    경우를 소스 종류만 보고 무조건 "검증 안 됨"으로 버렸다. RRF는 각 소스에서의 순위를
+    그대로 합산하므로, 여러 소스에서 상위권으로 뽑힌 표는 자연스럽게 점수가 올라가고
+    한 소스에서만 낮은 순위로 잡힌 표는 낮게 남는다 — 소스별 점수 스케일 차이(코사인
+    유사도 vs 키워드 매칭 점수)에 영향받지 않는 게 장점이다.
     """
     merged: dict[str, TableCandidate] = {}
 
-    for cand in keyword_candidates:
-        merged[cand.table_id] = cand
+    def _add(cands: list[TableCandidate], key: str) -> None:
+        for i, cand in enumerate(cands):
+            existing = merged.get(cand.table_id)
+            if existing is None:
+                merged[cand.table_id] = _tag_source_rank(cand, key, i + 1)
+            else:
+                merged[cand.table_id] = replace(
+                    existing, source_meta=f"{existing.source_meta} | {key}={i + 1}"
+                )
 
-    for cand in embedding_candidates:
-        existing = merged.get(cand.table_id)
-        if existing is None:
-            merged[cand.table_id] = replace(
-                cand, source_meta=f"{cand.source_meta} (embedding-only, unverified)"
-            )
-        else:
-            merged[cand.table_id] = replace(
-                existing, source_meta=f"{existing.source_meta} | {cand.source_meta}"
-            )
-
-    # 2026-08-15: KOSIS 표 전체(28만7천여 개) VDB 후보 — 64개 수동 카탈로그가 못 찾을 때만
-    # 의미를 갖는 보조 소스. 검증(table_params.json 파라미터 확인) 안 된 표라서 keyword든
-    # embedding-64든 이미 후보가 있으면 그쪽을 신뢰하고 VDB 쪽은 참고 메모만 덧붙인다 —
-    # 64개 카탈로그의 embedding-only와 동급으로 "unverified" 취급한다.
-    for cand in vdb_candidates or []:
-        existing = merged.get(cand.table_id)
-        if existing is None:
-            merged[cand.table_id] = replace(
-                cand, source_meta=f"{cand.source_meta} (vdb-only, unverified)"
-            )
-        else:
-            merged[cand.table_id] = replace(
-                existing, source_meta=f"{existing.source_meta} | {cand.source_meta}"
-            )
+    _add(keyword_candidates, "keyword_rank")
+    _add(embedding_candidates, "embedding_rank")
+    _add(vdb_candidates or [], "vdb_rank")
     return list(merged.values())
 
 
-def _is_verified(candidate: TableCandidate) -> bool:
-    # 2026-08-15: VDB(vdb-only) 후보 추가하면서 "unverified"로 통일 체크 — 예전엔
-    # "(embedding-only, unverified)" 문자열만 정확히 찾아서, "(vdb-only, unverified)"
-    # 태그가 붙은 후보는 이 검사를 통과 못 해 잘못 verified로 취급될 뻔했다.
-    return "unverified" not in (candidate.source_meta or "")
+_RANK_TAG_RE = re.compile(r"\b(keyword_rank|embedding_rank|vdb_rank|reranker_rank)=(\d+)")
+
+
+def _parse_rrf_ranks(source_meta: Optional[str]) -> dict[str, int]:
+    """source_meta 문자열에서 "{key}=N" 형태의 순위 태그를 전부 뽑아 dict로 돌려준다."""
+    return {key: int(val) for key, val in _RANK_TAG_RE.findall(source_meta or "")}
+
+
+RRF_K = 60  # RRF 원 논문(Cormack et al., 2009)의 관례값. 작을수록 상위 순위 후보에 더 민감해진다.
+
+
+def is_rrf_trusted(source_meta: Optional[str]) -> bool:
+    """이 후보를 최종 판정(judge)까지 진행시켜도 될 만큼 신뢰하는지 판단한다.
+
+    2026-08-18: 기존 "unverified면 무조건 매칭없음" 게이트를 대체한다. keyword_search가
+    찾았거나(전통적으로 신뢰해온 신호), 크로스 인코더 리랭커가 전체 후보 풀 중에서
+    독자적으로 1위로 평가했으면(reranker_rank=1 — 코사인 유사도가 아니라 실제 문장을
+    읽고 내린 판단이라 노이즈에 더 강함) 신뢰한다. 둘 다 아니면(=keyword도 못 찾고
+    리랭커도 1위로 보지 않았으면) embedding/VDB 단독 저순위 후보일 가능성이 높아
+    신뢰하지 않는다.
+    """
+    ranks = _parse_rrf_ranks(source_meta)
+    return "keyword_rank" in ranks or ranks.get("reranker_rank") == 1
 
 
 def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
-# 2026-08-14: 예전엔 keyword_search가 검증한 후보에 고정 상수(+0.05)를 점수에 더하는
-# 방식이었다(2026-08-05 원화환율 DT_731Y001 실측 — score=1.0으로 정확히 찾은 표를
-# embedding-only(unverified) 후보가 근거 없이 밀어내는 문제를 막으려고 도입). 근데 이
-# 리랭커의 raw score는 거의 항상 0 근처라(claim이 표와 강하게 관련될 때조차 절대값이
-# 작음) 시그모이드를 통과하면 후보들 점수가 전부 0.50 근처로 몰리고 스프레드가 0.003
-# 정도밖에 안 된다 — 이 상태에서 +0.05는 꼴찌 후보도 1등으로 만들 수 있을 만큼 크다.
-# 실제로 "유가"(keyword_search 오탐, 무관한 표)가 리랭커 raw score 최하위(0.0001)였는데도
-# +0.05 보너스로, 리랭커가 이미 훨씬 높게(0.0118) 평가해둔 진짜 정답(임베딩만 찾음,
-# unverified라 보너스 없음)을 이기고 1등이 됐던 사례가 확인됐다.
-#
-# 그래서 점수에 더하는 대신 "순위 기반 승격"으로 바꾼다(하이브리드 검색에서 서로 다른
-# 스케일의 점수를 합칠 때 흔히 쓰는 RRF의 사상과 같음 — 점수 크기가 아니라 순위로 판단).
-# verified 후보가 순수 리랭킹 순위 상위 _VERIFIED_PROMOTION_RANK 안에 들면(=리랭커도
-# 어느 정도 그럴듯하다고 봤다는 뜻) 1등으로 승격시키고, 그보다 한참 밀리면(=리랭커가
-# 명확히 아니라고 판단했다는 뜻) 승격시키지 않는다 — 원래 이 보너스가 막으려던 문제
-# (리랭커가 딱히 확신 없을 때 검증 안 된 임베딩 노이즈에 밀리는 것)는 그대로 막으면서,
-# keyword_search 오탐이 리랭커의 확실한 판단까지 뒤집는 건 막는다.
-#
-# 2026-08-16: 3 -> 5로 넓힘. 실제 배치(28건) 재현 검토에서, 죽은표/판단불가 21건 중 8건
-# (38%)이 "정확히 맞는 keyword 검증 표"를 4~5등에 갖고 있었는데도 top-3 기준에 걸려 승격을
-# 못 받고 있었다(예: "65세 이상 실업률" claim이 4등의 정답 표 DT_1DA7102S(성/연령별
-# 실업률) 대신, 1~3등의 무관한 VDB 후보들(노인 일자리 참여 의향 등)로 판단불가 처리됨).
-# 코랩이 애초에 candidates를 top-5까지만 유지하므로(reranked[:5]), 5는 "우리가 아예
-# 안 갖고 있는 후보"가 아니라 "이미 갖고 있는데 못 쓴 후보"를 마저 살리는 자연스러운
-# 상한이다 — 이보다 더 넓히려면 애초에 5보다 많은 후보를 유지하도록 다른 곳부터
-# 바꿔야 한다.
-_VERIFIED_PROMOTION_RANK = 5
+def _rrf_fuse(reranker_ranked: list[TableCandidate], *, k: int = RRF_K) -> list[TableCandidate]:
+    """리랭커 점수로 이미 정렬된 후보 리스트에 그 순위(reranker_rank)까지 얹어서
+    RRF_score(D) = sum(1 / (k + rank_L(D)))를 계산하고(D가 등장하는 소스 리스트 L마다
+    합산) 그 점수로 다시 정렬한다. 후보의 리랭커 시그모이드 점수는 버리고 RRF 점수로
+    덮어쓴다 — 최종 정렬 기준을 하나로 통일하기 위함.
 
-
-def _promote_verified_within_top_ranks(
-    ranked: list[TableCandidate],
-) -> list[TableCandidate]:
-    """순수 리랭킹 순서(점수 내림차순 정렬됨)에서, 1등이 unverified인데 verified 후보가
-    상위 _VERIFIED_PROMOTION_RANK 안에 있으면 그 후보를 1등으로 승격한다. 그 밖에 있으면
-    (=리랭커가 확실히 밀어냈다는 뜻) 순서를 그대로 둔다."""
-    if not ranked or _is_verified(ranked[0]):
-        return ranked
-    for i, cand in enumerate(ranked[:_VERIFIED_PROMOTION_RANK]):
-        if _is_verified(cand):
-            return [cand] + ranked[:i] + ranked[i + 1 :]
-    return ranked
+    2026-08-14/16에 있었던 "verified 후보 점수 보너스(+0.05)"와 "순위 기반 top-5 승격"
+    시행착오(하단 git 이력 참고)를 RRF 하나로 대체한다 — 특정 소스 하나를 특별 취급하는
+    대신 keyword/embedding/vdb/reranker 네 순위를 대칭적으로 합산하므로, 임베딩·VDB
+    단독으로만 찾았어도 리랭커 순위까지 좋으면 자연스럽게 상위로 올라온다.
+    """
+    fused: list[TableCandidate] = []
+    for i, cand in enumerate(reranker_ranked):
+        ranks = _parse_rrf_ranks(cand.source_meta)
+        ranks["reranker_rank"] = i + 1
+        rrf_score = sum(1.0 / (k + r) for r in ranks.values())
+        meta = f"{cand.source_meta} | reranker_rank={i + 1} rrf_score={rrf_score:.4f}"
+        fused.append(replace(cand, score=rrf_score, source_meta=meta))
+    fused.sort(key=lambda c: c.score, reverse=True)
+    return fused
 
 
 def rerank(
@@ -260,7 +255,7 @@ def rerank(
     top_k: int = 5,
     document_texts: Optional[dict[str, str]] = None,
 ) -> list[TableCandidate]:
-    """후보 TableCandidate 리스트를 리랭커로 재정렬한다.
+    """후보 TableCandidate 리스트를 리랭커로 재정렬한 뒤 RRF로 최종 융합한다.
 
     document_texts: table_id -> 임베딩/설명 텍스트. 넘기지 않으면 table_name으로 대체.
     """
@@ -274,11 +269,10 @@ def rerank(
 
     if scores is None:
         # 리랭커 모델을 못 쓰는 상황(의존성 미설치 등) — 항등 폴백.
-        # embedding-only(unverified) 후보는 코사인 유사도가 노이즈에 가까울 수 있어서
-        # score 크기만으로 정렬하면 keyword_search가 검증한 후보를 밀어낸다.
-        # 검증된 후보를 항상 먼저 두고, 그 안에서만 score 내림차순으로 정렬한다.
+        # keyword_search도 못 찾고 리랭커 판단도 없는 후보(embedding/VDB 단독 저순위)는
+        # score 크기만으로 정렬하면 노이즈가 앞설 수 있어 뒤로 민다.
         def _sort_key(c: TableCandidate) -> tuple[bool, float]:
-            return (not _is_verified(c), -c.score)
+            return (not is_rrf_trusted(c.source_meta), -c.score)
 
         return sorted(candidates, key=_sort_key)[:top_k]
 
@@ -290,13 +284,13 @@ def rerank(
                 table_name=cand.table_name,
                 score=_sigmoid(score),
                 required_slots=cand.required_slots,
-                source_meta=f"{cand.source_meta} | reranked(raw={score:.3f})",
+                source_meta=f"{cand.source_meta} | rerank_raw={score:.3f}",
             )
         )
 
     reranked.sort(key=lambda c: c.score, reverse=True)
-    reranked = _promote_verified_within_top_ranks(reranked)
-    return reranked[:top_k]
+    fused = _rrf_fuse(reranked)
+    return fused[:top_k]
 
 
 def search_and_rerank(
@@ -304,18 +298,21 @@ def search_and_rerank(
     *,
     keyword_fn,
     embedding_fn,
+    vdb_fn=None,
     top_k: int = 5,
     document_texts: Optional[dict[str, str]] = None,
 ) -> list[TableCandidate]:
-    """3단계 전체 흐름: keyword_search + embedding_search 결과를 합쳐 rerank까지 수행.
+    """3단계 전체 흐름: keyword_search + embedding_search(+ VDB) 결과를 합쳐 rerank까지 수행.
 
     keyword_fn, embedding_fn: 각각 keyword_search(claim), embedding_search(claim) 함수를 주입.
+    vdb_fn: (선택) VDB 조회 함수 — 넘기면 KOSIS 표 전체(28만7천여 개)도 후보에 포함시킨다.
     document_texts: table_id -> 임베딩/설명 텍스트. rerank()로 그대로 전달된다(생략 시
     table_name으로 대체되는데, 리랭커가 짧은 제목만 보고 판단하게 되어 성능이 떨어진다).
     """
     kw_results = keyword_fn(claim)
     emb_results = embedding_fn(claim)
-    merged = _merge_candidates(kw_results, emb_results)
+    vdb_results = vdb_fn(claim) if vdb_fn else []
+    merged = _merge_candidates(kw_results, emb_results, vdb_results)
     return rerank(claim, merged, top_k=top_k, document_texts=document_texts)
 
 

@@ -47,6 +47,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 from agent.interfaces import CalcType, Claim
+from agent.mapping.keyword_search import _kiwi
 from agent.shared.extreme_value_patterns import ALL_TIME_RE, N_YEARS_SINCE_RE, SINCE_EVENT_RE
 
 _MAX_DIRECTION_RE = re.compile(r"최고|최대|최다")
@@ -68,10 +69,26 @@ _FOREIGN_COUNTRY_KEYWORDS = {
 
 
 def _mentions_foreign_country(*texts: Optional[str]) -> bool:
+    """텍스트에 해외 국가명이 실제로 국가를 가리키는 의미로 등장하는지 확인한다.
+
+    2026-08-18: 예전엔 국가명을 단순 부분 문자열로 찾았는데, "인도"(나라 India / 보행로)와
+    "호주"(나라 Australia / 옛 법률용어 "호주제·호주 승계")처럼 국가명과 형태가 완전히
+    같은 일반명사가 있어서, "노인 인도 통행 사고", "호주제 폐지" 같은 순수 국내 기사도
+    해외 국가 언급으로 오탐할 위험이 실측 확인됐다(같은 세션에서 "달"/"월"이 "달러"/
+    "월드컵"의 일부로 오탐되던 문제와 같은 부류). kiwi로 형태소를 분석해보면 국가
+    의미일 땐 고유명사(NNP)로, 그 외 뜻일 땐 일반명사(NNG)로 서로 다르게 태깅되는 걸
+    확인해서(_infer_desired_granularity의 독립 토큰 확인과 같은 원리), 국가명이 실제로
+    고유명사로 태깅됐을 때만 해외 국가로 판정한다.
+    """
     for text in texts:
         if not text:
             continue
-        if any(country in text for country in _FOREIGN_COUNTRY_KEYWORDS):
+        if _kiwi is not None:
+            proper_nouns = {tok.form for tok in _kiwi.tokenize(text) if tok.tag == "NNP"}
+            if proper_nouns & _FOREIGN_COUNTRY_KEYWORDS:
+                return True
+        elif any(country in text for country in _FOREIGN_COUNTRY_KEYWORDS):
+            # kiwipiepy 미설치 시에만 예전 방식(단순 부분 문자열)으로 폴백.
             return True
     return False
 

@@ -11,6 +11,9 @@ __pycache__/
 venv/
 .venv-wsl/
 .env
+# Supabase 연결 문자열(비밀번호 포함) 담은 파일 — 코랩에 드라이브로 올릴 때만 쓰고
+# git엔 절대 안 올림 (notebooks/reranker_colab.ipynb 3-1 셀 참고)
+supabase_config.json
 
 # KOSIS VDB 빌드 산출물 — 재생성 가능(크롤링→코랩 임베딩→Chroma 적재 순서, 팀원 인수인계
 # PDF 참고), GitHub 100MB 파일 한도를 넘는 것도 있어서(vdb_embeddings.npy 1.1GB,

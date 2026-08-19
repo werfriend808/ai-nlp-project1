@@ -26,7 +26,7 @@ import re
 
 from agent.mapping.embedding_search import build_table_embedding_cache, embedding_search
 from agent.mapping.keyword_search import keyword_search
-from agent.mapping.reranker import search_and_rerank
+from agent.mapping.reranker import search_and_rerank, is_rrf_trusted
 from agent.kosis.api_client import KosisApiClient
 from agent.kosis.calculator import KosisCalculator
 from agent.preprocessing.classifier import classify
@@ -76,8 +76,8 @@ def _run_claim_through_stage_8(article: dict, claim) -> list[dict]:
     if not candidates:
         return []
     top = candidates[0]
-    if top.source_meta and "unverified" in top.source_meta:
-        return []  # batch_runner.py와 동일하게 검증 안 된 매칭은 판정 자체를 스킵
+    if top.source_meta and not is_rrf_trusted(top.source_meta):
+        return []  # batch_runner.py와 동일하게(RRF 기준 신뢰도 낮은 매칭은) 판정 자체를 스킵
 
     slots = run_stage_4(claim.sentence, article.get("clarify_reply"), article["published_date"])
     if slots is None:
