@@ -21,6 +21,7 @@ agent/preprocessing/hcx_client.py — CLOVA Studio Chat Completions 호출 공�
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from typing import Optional
 
@@ -49,6 +50,14 @@ NO_MAX_TOKENS_MODELS = {"HCX-007"}
 # temperature=0.0을 그대로 받아들여서 v1 모델에만 해당하는 문제다. 0에 아주 가까운 값으로
 # 살짝 올려서, 재현성은 사실상 유지하면서 API 거부는 피한다.
 _MIN_TEMPERATURE_FOR_V1 = 0.01
+
+# 2026-08-19: export_for_rerank.py로 기사 30건을 연달아 돌리면 CLOVA Studio가 429(Too Many
+# Requests)를 반복해서 대부분의 classify/claim_extractor 호출이 그냥 스킵되는 문제가 실측됨
+# (30개 기사 중 claim 6건만 생존). 429는 일시적 과다호출 신호일 뿐이라 재시도하면 대개
+# 통과하므로, Retry-After 헤더(있으면 그 값을, 없으면 지수 백오프)를 보고 잠깐 기다렸다가
+# 재시도한다.
+_MAX_429_RETRIES = 5
+_BACKOFF_BASE_SECONDS = 2.0
 
 
 class HcxApiError(RuntimeError):
@@ -108,6 +117,14 @@ def call_hcx(
     url = f"{CLOVASTUDIO_HOST}/{api_version}/chat-completions/{model}"
 
     response = requests.post(url, headers=headers, json=body, timeout=timeout)
+    for attempt in range(_MAX_429_RETRIES):
+        if response.status_code != 429:
+            break
+        retry_after = response.headers.get("Retry-After")
+        wait_seconds = float(retry_after) if retry_after else _BACKOFF_BASE_SECONDS * (2**attempt)
+        time.sleep(wait_seconds)
+        response = requests.post(url, headers=headers, json=body, timeout=timeout)
+
     response.raise_for_status()
     data = response.json()
 
