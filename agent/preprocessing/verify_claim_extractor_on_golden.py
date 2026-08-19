@@ -55,7 +55,7 @@ from pathlib import Path
 import pandas as pd
 
 from agent.pipeline.batch_runner import _clean_scraped_article_text
-from agent.preprocessing.claim_extractor import ClaimExtractorError, extract_claims
+from agent.preprocessing.claim_extractor import ClaimExtractorError, extract_claims, recover_missed_claims
 
 NOTEBOOKS_DIR = Path(__file__).parent.parent.parent / "notebooks"
 CLAIMS_XLSX = NOTEBOOKS_DIR / "추출 골든셋 단위 분리.xlsx"
@@ -91,7 +91,7 @@ KNOWN_BAD_ARTICLE_IDS = {"A001"}
 
 MAX_RETRIES = 4
 RETRY_WAIT_SECONDS = (5, 10, 15, 20)
-DELAY_BETWEEN_CALLS = 1.2
+DELAY_BETWEEN_CALLS = 2.5  # 2026-08-18: 1.2초로는 429(Too Many Requests)가 잦아서 늘림
 
 
 def _normalize_url(url: object) -> str:
@@ -124,10 +124,16 @@ def build_article_gold_claims() -> pd.DataFrame:
 
 
 def _extract_with_retry(body: str):
+    """export_for_rerank.py(프로덕션)와 동일하게 extract_claims() + recover_missed_claims()
+    2단계를 모두 거친다. 2026-08-18: 이 함수가 예전엔 extract_claims()만 호출해서, 오늘
+    세션에서 고친 recover_missed_claims()의 salvage 복구 효과가 이 검증 스크립트엔 전혀
+    반영되지 않고 있었다(실측: 62.9%로 이전 측정치(80.8%)보다 낮게 나와서 원인 추적 중
+    발견) — 실제 배치가 보는 recall과 이 스크립트가 재는 recall이 갈라져 있었다."""
     last_err = None
     for attempt in range(MAX_RETRIES):
         try:
-            return extract_claims(body)
+            claims = extract_claims(body)
+            return recover_missed_claims(body, claims)
         except (ClaimExtractorError, Exception) as e:  # noqa: BLE001 - 점검 스크립트, 계속 진행해야 함
             last_err = e
             if attempt < MAX_RETRIES - 1:
@@ -286,4 +292,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     main()

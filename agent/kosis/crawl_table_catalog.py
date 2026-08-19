@@ -51,9 +51,21 @@ LIST_URL = "https://kosis.kr/openapi/statisticsList.do"
 # 광복이전통계 + 대한민국통계연감 + 작성중지 + 영문KOSIS — kosis_list 도구 설명에 나열된 12개
 # 전체. 이 중 일부는 서로 겹치는 표를 가리킬 수 있어(같은 표가 여러 분류 체계에 동시에
 # 속함) 최종적으로 TBL_ID 기준 중복 제거가 필요하다(아래 _write_leaf에서 처리).
+#
+# 2026-08-18: 순서가 실제로 중요하다는 게 실측 확인됐다 — VDB 골든셋 평가에서 Recall@5가
+# 0%로 나와서 파보니, 정답 표의 67%가 한글이 아니라 영문(MT_ETITLE)으로 저장돼 있었다.
+# 아래 main()의 큐는 스택처럼 queue.pop()(리스트 맨 뒤부터 소비)으로 도는데, 예전엔
+# "MT_ETITLE"이 리스트 맨 끝에 있어서 실제로는 가장 먼저 크롤링됐다. _write_leaves의
+# seen_tbl_ids 중복 제거 때문에, 영문 버전이 먼저 기록된 표는 나중에 MT_OTITLE(한글) 쪽
+# 트리에서 같은 표를 다시 만나도 "이미 있음"으로 버려져서 한글 이름이 tables.jsonl에
+# 아예 도달하지 못했다. 그래서 지금은 "MT_ETITLE"을 리스트 맨 앞(=가장 나중에 크롤링)으로,
+# "MT_OTITLE"(한글 원제, 표 26만2천여 개로 가장 큰 기본 소스)을 리스트 맨 끝(=가장 먼저
+# 크롤링)으로 옮겨서, 한글 이름이 항상 영문보다 먼저 seen_tbl_ids를 차지하게 한다.
+# (이미 완료된 크롤링 결과의 영문 오염분은 patch_english_table_names.py로 별도 패치했다 —
+# 전체 재크롤링은 "수 시간~며칠" 걸려서 이 순서 수정만으로는 소급 적용 안 됨.)
 ROOT_VW_CODES = [
+    "MT_ETITLE",  # 영문KOSIS — 맨 앞(가장 나중에 크롤링)
     "MT_ZTITLE",  # 국내통계(주제별)
-    "MT_OTITLE",  # 국내통계(기관별)
     "MT_GTITLE01",  # e-지방지표(주제별)
     "MT_GTITLE02",  # e-지방지표(지역별)
     "MT_RTITLE",  # 국제통계(국제통계연감·OECD·세계)
@@ -63,7 +75,7 @@ ROOT_VW_CODES = [
     "MT_CHOSUN_TITLE",  # 광복이전통계
     "MT_HANKUK_TITLE",  # 대한민국통계연감
     "MT_STOP_TITLE",  # 작성중지
-    "MT_ETITLE",  # 영문KOSIS
+    "MT_OTITLE",  # 국내통계(기관별), 한글 원제 — 맨 끝(가장 먼저 크롤링)
 ]
 
 OUT_DIR = Path(__file__).parent / "crawl_output"

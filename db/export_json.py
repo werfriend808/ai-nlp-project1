@@ -28,6 +28,7 @@ DEFAULT_DATES_OUT_PATH = Path(__file__).parent.parent / "data" / "article_dates_
 DEFAULT_ORG_IDS_OUT_PATH = Path(__file__).parent.parent / "data" / "table_org_ids_export.json"
 DATA_CSV_PATH = Path(__file__).parent.parent / "data" / "data_set.csv"
 TABLE_CATALOG_PATH = Path(__file__).parent.parent / "agent" / "mapping" / "table_catalog.json"
+VDB_METADATA_PATH = Path(__file__).parent.parent / "data" / "vdb_metadata.jsonl"
 
 
 def export_to_json(out_path: Path = DEFAULT_OUT_PATH, db_path: Path = DB_PATH) -> int:
@@ -122,21 +123,42 @@ def export_table_org_ids(
     out_path: Path = DEFAULT_ORG_IDS_OUT_PATH,
     db_path: Path = DB_PATH,
     catalog_path: Path = TABLE_CATALOG_PATH,
+    vdb_metadata_path: Path = VDB_METADATA_PATH,
 ) -> int:
     """verifications.db에서 실제로 매칭된 kosis_table_id들에 대해서만 orgId를 골라
     {tblId: orgId} JSON으로 내보낸다. db/store.py 스키마엔 orgId가 없어서(kosis_table_id/
     kosis_table만 저장), KOSIS 표 상세 페이지로 바로 연결되는 딥링크
-    (statHtml.do?orgId=...&tblId=...)를 만들려면 agent/mapping/table_catalog.json에서
-    orgId를 따로 가져와야 한다."""
+    (statHtml.do?orgId=...&tblId=...)를 만들려면 orgId를 따로 가져와야 한다.
+
+    2026-08-18: agent/mapping/table_catalog.json(64개 수동 카탈로그)에서만 찾다 보니,
+    VDB(Supabase, KOSIS 표 28만7천여 개)로 매칭된 표는 orgId를 못 찾아서 프론트엔드
+    딥링크가 정확한 표 페이지 대신 KOSIS 통합검색 결과로 빠지는 문제가 실측 확인됐다
+    (예: "고용률(시/군/구)" INH_1ES3A02S_03). data/vdb_metadata.jsonl에 표마다
+    org_id가 이미 들어있어서(vdb_embedding_colab.ipynb가 만듦), 64개 카탈로그에서 못
+    찾은 것만 이 파일에서 마저 찾는다."""
     rows = fetch_all(db_path)
     tbl_ids_needed = {r["kosis_table_id"] for r in rows if r.get("kosis_table_id")}
 
-    if not catalog_path.exists():
-        org_ids: dict[str, str] = {}
-    else:
+    org_ids: dict[str, str] = {}
+    if catalog_path.exists():
         catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
         org_id_by_tbl = {t["tblId"]: t["orgId"] for t in catalog.get("tables", [])}
         org_ids = {tbl_id: org_id_by_tbl[tbl_id] for tbl_id in tbl_ids_needed if tbl_id in org_id_by_tbl}
+
+    still_needed = tbl_ids_needed - org_ids.keys()
+    if still_needed and vdb_metadata_path.exists():
+        with vdb_metadata_path.open(encoding="utf-8") as f:
+            for line in f:
+                if not still_needed:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                tbl_id = row.get("tbl_id")
+                if tbl_id in still_needed and row.get("org_id"):
+                    org_ids[tbl_id] = row["org_id"]
+                    still_needed.discard(tbl_id)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(org_ids, ensure_ascii=False, indent=2), encoding="utf-8")

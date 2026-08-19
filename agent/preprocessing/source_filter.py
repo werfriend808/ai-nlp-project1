@@ -46,6 +46,25 @@ def _normalize_whitespace(text: str) -> str:
     classifier의 reason 텍스트엔 "국가 데이터처"처럼 띄어써서 나오는 경우가 실제로 확인됨."""
     return re.sub(r"\s+", "", text)
 
+
+def _org_appears_standalone(org: str, normalized_text: str) -> bool:
+    """org(부처 약칭 등)가 normalized_text에 실제로 그 기관을 가리키며 등장하는지 확인한다.
+
+    2026-08-18: "복지부"/"산업부"/"고용부"/"국토부"처럼 "부"로 끝나는 부처 약칭이
+    "복지부문"/"산업부문"/"고용부문"/"국토부문"(예산 "부문"·"분야" 뜻, 해당 부처와 무관)의
+    앞부분과 우연히 겹쳐서, 국내 예산 통계 기사가 엉뚱하게 그 부처 발표로 오인되는 위험이
+    실측 확인됐다("달"이 "달러"의 일부로 오탐되던 문제와 같은 부류).
+    처음엔 kiwi 형태소 분석으로 "org가 독립 토큰인지"를 확인하려 했으나, "중기부"/
+    "과기정통부"처럼 kiwi 사전에 없어 진짜 부처를 가리킬 때도 "중기"+"부"/"과기"+"정통부"로
+    쪼개지는 경우가 실측 확인돼서(kiwi 의존 시 오히려 정상 매칭까지 깨짐), 대신
+    _is_false_friend_only와 같은 원리(알려진 오탐 패턴만 지우고 남는지 확인)를 "OO부문"
+    형태에 일반화해서 적용한다 — org가 "부"로 끝날 때만 "org+문" 등장을 지운 뒤에도 org가
+    남는지 본다. kiwi 사전 등재 여부와 무관하게 항상 정확하게 동작한다."""
+    if not org.endswith("부"):
+        return org in normalized_text
+    remaining = normalized_text.replace(org + "문", "")
+    return org in remaining
+
 try:
     from agent.interfaces import Claim
 except ImportError:
@@ -109,7 +128,7 @@ def classify_source(source_org: Optional[str]) -> str:
         return "not_kosis"
 
     for org in KOSIS_VERIFIED_ORGS:
-        if _normalize_whitespace(org) in normalized:
+        if _org_appears_standalone(_normalize_whitespace(org), normalized):
             return "kosis_verified"
     for org in KNOWN_NOT_KOSIS:
         if _normalize_whitespace(org) in normalized:
@@ -143,7 +162,7 @@ def infer_org_from_reason(reason: Optional[str]) -> Optional[str]:
         return None
     normalized = _normalize_whitespace(reason)
     for org in sorted(KOSIS_VERIFIED_ORGS, key=len, reverse=True):
-        if _normalize_whitespace(org) in normalized:
+        if _org_appears_standalone(_normalize_whitespace(org), normalized):
             return org
     return None
 

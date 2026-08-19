@@ -6,12 +6,15 @@ agent/kosis/query_vdb.py — KOSIS 표 28만7천여 개 VDB(Supabase/pgvector)�
 접근 가능해서, 이전엔 로컬 Chroma 서버에 못 붙어 VDB를 건너뛰어야 했던 배치 경로에서도
 이제 VDB를 정상적으로 쓸 수 있다. .env의 SUPABASE_DB_URL로 접속한다.
 
-이 모듈은 임베딩 모델을 직접 불러오지 않는다 — 쿼리 벡터는 이미 다른 곳(예:
-embedding_search.embed_sentences_batch, 64개 카탈로그 매칭과 같은 모델의 배치 호출)에서
-만들어 온 것을 받기만 한다. 그래야 임베딩 모델 로딩/호출이 한 곳(배치)으로만 몰려서
-반복 호출로 인한 세그폴트 위험을 피한다. 쿼리 벡터 쪽 모델(KOSIS_EMBEDDING_MODEL,
-.env)과 VDB에 적재된 벡터의 모델(vdb_embedding_colab.ipynb)이 반드시 같아야 한다 —
-다르면 벡터 공간이 안 맞아서 유사도 값 자체가 무의미해진다.
+이 모듈은 임베딩 모델을 직접 불러오지 않는다 — 쿼리 벡터는 이미 다른 곳에서 만들어 온
+것을 받기만 한다. 쿼리 벡터의 모델과 VDB에 적재된 벡터의 모델(vdb_embedding_colab.ipynb)이
+반드시 같아야 한다 — 다르면 벡터 공간이 안 맞아서 유사도 값 자체가 무의미해진다.
+
+⚠️ 2026-08-19: VDB를 Qwen3-Embedding-4B(truncate_dim=1024)로 바꾸면서, 쿼리 벡터도
+더 이상 embedding_search.embed_sentences_batch()(로컬, e5 계열 — 64개 카탈로그 매칭
+전용으로 남음)로 만들면 안 된다. Qwen3-Embedding-4B는 로컬(RAM 7.4GB)에서 못 돌아가서,
+claim 쿼리도 코랩에서 같은 모델·같은 truncate_dim으로 임베딩해야 한다 — 이 부분은
+아직 export_for_rerank.py/reranker_colab.ipynb 쪽에 반영 전이다(진행 중인 작업).
 """
 
 from __future__ import annotations
@@ -53,7 +56,10 @@ VDB_TOP_K = 10
 # 보고 후보에서 제외한다 — top-k 개수 제한만으로는 못 거르는 노이즈를 추가로 막는다.
 VDB_MIN_SIMILARITY = 0.75
 
-_SOURCE_MODEL = os.environ.get("KOSIS_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+# 2026-08-19: VDB 전용 임베딩 모델은 64개 카탈로그용(KOSIS_EMBEDDING_MODEL, e5 계열)과
+# 별개다 — VDB만 Qwen3-Embedding-4B(truncate_dim=1024)로 바꿨다. 용도가 완전히 분리돼
+# 있어서(서로 비교되는 벡터쌍이 아님) 같은 환경변수를 재사용하면 안 된다.
+_SOURCE_MODEL = os.environ.get("KOSIS_VDB_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
 
 _conn = None  # 커넥션은 프로세스당 한 번만 만들어 재사용
 
