@@ -120,20 +120,31 @@ def _get_reranker():
     """리랭커(cross-encoder)를 lazy하게 로딩해서 프로세스 전체에서 재사용한다."""
     global _reranker_singleton
     if _reranker_singleton is None:
-        from sentence_transformers import CrossEncoder
+        # 2026-08-19: sentence-transformers(6.0.0)/transformers(5.x) 조합에서 CrossEncoder.predict()가
+        # "AttributeError" (input_ids.ne 호출 시 BatchEncoding에 ne가 없음)로 항상 실패하는 걸
+        # AWS GPU 서버에서 실측 확인 — CrossEncoder가 토크나이저 출력(BatchEncoding)을 텐서로
+        # 안 풀고 그대로 model.forward()에 넘기는 버그로 보임(sentence-transformers/transformers
+        # 여러 버전 조합에서 재현됨, 순정 transformers로는 정상 동작 확인). 그래서 CrossEncoder
+        # 래퍼를 안 쓰고 AutoTokenizer/AutoModelForSequenceClassification을 직접 호출한다.
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-        _reranker_singleton = CrossEncoder(RERANKER_MODEL, trust_remote_code=True)
-        if _reranker_singleton.model.device.type == "cuda":
+        tokenizer = AutoTokenizer.from_pretrained(RERANKER_MODEL)
+        model = AutoModelForSequenceClassification.from_pretrained(RERANKER_MODEL, trust_remote_code=True)
+        model.eval()
+        if torch.cuda.is_available():
+            model = model.to("cuda")
             # 일부 모델(trust_remote_code 커스텀 구현)이 config 기본값으로 bfloat16을 쓰는데,
             # Turing급 GPU(T4 등)는 cuBLAS에서 bf16 GEMM을 지원하지 않아
             # "CUBLAS_STATUS_NOT_SUPPORTED"로 죽는다. fp16으로 강제 변환해서 회피한다.
-            _reranker_singleton.model = _reranker_singleton.model.half()
+            model = model.half()
+        _reranker_singleton = (tokenizer, model)
     return _reranker_singleton
 
 
 # ---------------------------------------------------------------------------
 # 실제 리랭커 모델 연동 지점. bge-reranker-v2-m3(cross-encoder)를 로컬에서 호출한다.
-# sentence-transformers가 없거나 모델 로딩·추론에 실패하면 None을 반환해서
+# transformers가 없거나 모델 로딩·추론에 실패하면 None을 반환해서
 # rerank()가 후보의 기존 score(키워드 매칭 점수 or 임베딩 유사도)를
 # 그대로 정렬 기준으로 쓰는 항등(identity) 폴백으로 넘어가게 한다.
 # ---------------------------------------------------------------------------
@@ -144,9 +155,16 @@ def rerank_scores(query: str, documents: list[str]) -> Optional[list[float]]:
         return None
 
     try:
-        model = _get_reranker()
-        scores = model.predict([(query, doc) for doc in documents])
-        return [float(s) for s in scores]
+        import torch
+
+        tokenizer, model = _get_reranker()
+        device = next(model.parameters()).device
+        inputs = tokenizer(
+            [query] * len(documents), documents, padding=True, truncation=True, return_tensors="pt"
+        ).to(device)
+        with torch.no_grad():
+            logits = model(**inputs).logits.view(-1).float()
+        return logits.tolist()
     except Exception as exc:  # noqa: BLE001 - 로딩/추론 실패는 전부 항등 폴백 대상
         print(f"[reranker] {RERANKER_MODEL} 사용 불가({exc!r}) - 항등(identity) 정렬로 폴백합니다.")
         return None
