@@ -350,11 +350,20 @@ def select_itm_id(table_id: str, claim, table_params: dict) -> Optional[str]:
     표매칭(keyword_search)과 같은 원리로 규칙 기반이면 충분하다고 판단. 매칭 로직 자체는
     _match_by_name() 참고 — population을 statistic_expression보다 먼저 본다(성별/가구유형
     같은 "누구/어떤 대상" 신호는 대개 population에 실리는데, statistic_expression 쪽의
-    범용 표현이 그걸 밀어내는 오판을 막기 위함)."""
+    범용 표현이 그걸 밀어내는 오판을 막기 위함).
+
+    2026-08-20 버그 수정: table_params.json의 items는 itmId -> 항목명(예: {"T30": "취업자"})으로
+    저장돼 있는데, _match_by_name()은 반대 방향(이름 -> 코드)을 기대한다(dimensions의
+    code_map과 동일한 계약). 뒤집지 않고 그대로 넘기면 claim 문장을 "T30" 같은 itmId
+    문자열과 대조하게 돼서 절대 매칭이 안 되고 항상 None(표의 itmId_fixed 기본값 폴백)만
+    반환한다 — 이 함수가 원래 고치려던 "표 안 여러 항목 중 잘못된 게 고정 조회되는" 문제가
+    이 함수 자체의 버그로 인해 여전히 재현됨(실측: "취업자 수" claim이 DT_1DA7001S의
+    기본값인 실업률(T80)로 조회됨). 여기서 이름 -> 코드로 뒤집어서 넘긴다."""
     items = table_params.get(table_id, {}).get("items")
     if not items:
         return None
-    return _match_by_name(items, (claim.population, claim.statistic_expression))
+    name_to_code = {name: code for code, name in items.items()}
+    return _match_by_name(name_to_code, (claim.population, claim.statistic_expression))
 
 
 def select_dimension_values(table_id: str, claim, table_params: dict, existing_slots: dict) -> dict:
@@ -859,7 +868,7 @@ def _fetch_value(
         label, codes = decade
         responses = client.fetch_by_codes(table_id, slots, "age", codes)
         summed = calculator.compute_sum(responses)
-        print(f"[나이대 합산] '{label}' → {len(responses)}개 5세단위 코드 합산 = {summed.raw_value}{summed.unit}")
+        print(f"[나이대 합산] '{label}' → {len(responses)}개 5세단위 코드 합산 = {summed.raw_value} {summed.unit}")
         first = responses[0]
         return KosisApiResponse(
             raw_value=summed.raw_value, unit=summed.unit, period=summed.period,
@@ -958,10 +967,28 @@ def run_stage_5_6(
                 # 없어서 그쪽 기준은 못 쓴다.
                 start_year = 1960
 
-            historical = client.fetch_series(table_id, kosis_slots, str(start_year), str(article_year))
+            # 2026-08-20 버그 수정: 여기서 항상 4자리 연도("1960"/"2024")만 만들어 넘기고
+            # 있었는데, fetch_series -> _validate_period_format은 표의 prd_se가 M/Q면 6자리
+            # (YYYYMM 또는 YYYY+분기 2자리)를 요구한다 — 표가 월/분기 단위 전용(예: 부동산
+            # 매매가격지수, GDP)이면 이 분기가 100% KosisApiError로 실패했다(2026-08-04
+            # 통합 테스트 로그에 "fetch_series 월단위 gap"으로 기록된 채 미해결로 남아있던
+            # 문제). kosis_slots["period"]는 이미 run_stage_4가 표의 실제 주기에 맞춰
+            # 정규화해둔 값(예: "202506")이라 그대로 종료 시점으로 재사용하고, 시작 시점은
+            # 해당 연도의 첫 주기("YYYY01" — 월의 1월이든 분기의 1분기든 같은 "01" 표기)로
+            # 만든다. Y(연간) 표는 기존처럼 4자리 연도 그대로 둔다(하위 호환, 회귀 없음).
+            prd_se = kosis_slots.get("prd_se")
+            target_period = kosis_slots.get("period")
+            if prd_se in ("M", "Q") and target_period and len(str(target_period)) == 6:
+                start_period = f"{start_year}01"
+                end_period = str(target_period)
+            else:
+                start_period = str(start_year)
+                end_period = str(article_year)
+
+            historical = client.fetch_series(table_id, kosis_slots, start_period, end_period)
             current_resp = client(table_id, kosis_slots)
             print(f"[5단계 api_client] current    = {current_resp}")
-            print(f"[5단계 api_client] historical({start_year}~{article_year}) = {len(historical)}건")
+            print(f"[5단계 api_client] historical({start_period}~{end_period}) = {len(historical)}건")
 
             check_fn = calculator.compute_max_check if calc_type == "최댓값검증" else calculator.compute_min_check
             result = check_fn(current_resp, historical)

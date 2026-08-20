@@ -105,15 +105,41 @@ def scan_numeric_candidates(article_text: str) -> list[str]:
     return [s for s in split_sentences(article_text) if _INCLUDE_PATTERN.search(s)]
 
 
+_EXTREME_VALUE_RE = re.compile(r"역대\s*최(?:고|대|저)치?")
+
+# _count_numeric_expressions 전용 — _INCLUDE_PATTERN에서 "역대 최고/최저" 갈래만 뺀 것.
+# "20.1%로 역대 최고치를 기록했다"처럼 극값 수식어가 바로 옆 수치를 꾸미기만 하는 문장은
+# 실제로는 claim이 1개인데, _INCLUDE_PATTERN을 그대로 세면 "20.1%"와 "역대 최고치"가
+# 서로 다른 두 통계인 것처럼 2개로 잡혀서(2026-08-20 실측: "65세 이상 고령 인구 비율..."
+# 문장이 claim 1개로 이미 다 뽑혔는데도 covered_count(1) < expected_count(2)로 계속
+# missed 취급되어 매 복구 라운드마다 같은 claim이 중복 추출됨) find_missed_candidates가
+# 이미 다 커버된 문장을 계속 놓친 것으로 오판한다. "역대 최고치"만 있고 곁에 셀 수 있는
+# 값이 아예 없는 문장(예: "인구가 역대 최고치를 기록했다")까지 0으로 세면 그 자체가 진짜
+# 놓친 claim이어도 영영 missed로 안 잡히므로, 그 경우엔 아래에서 1로 보정한다.
+_COUNT_PATTERN = re.compile(
+    rf"{_COMPOUND_NUMBER}\s*(?:{_CURRENCY_UNITS}|{_COUNT_UNITS})"
+    rf"|{_NUMBER}\s*(?:{_PERCENT_UNITS})"
+    rf"|[0-9]+\s*(?:년째|개월째|주째)"
+    rf"|[0-9]+\s*(?:년|개월)\s*연속"
+    rf"|[0-9]+\s*위\b"
+    rf"|{_MULTIPLIER_RE}"
+    rf"|{_FRACTION_RE}"
+    rf"|{_INDEX_VALUE_RE}"
+)
+
+
 def _count_numeric_expressions(sentence: str) -> int:
-    """문장 안에 있는 개별 수치 표현 개수를 센다(_INCLUDE_PATTERN 매치 수) — 이 문장에서
-    claim이 최소 몇 개 나와야 하는지 추정하는 용도.
+    """문장 안에 있는 개별 수치 표현 개수를 센다 — 이 문장에서 claim이 최소 몇 개 나와야
+    하는지 추정하는 용도.
 
     완벽한 값은 아니다 — "58.2%에서 90.4%로 상승" 같은 비교(comparison) claim은 숫자가
     2개(58.2%, 90.4%)지만 실제로는 claim 1개가 맞다. 그래도 "부분 추출"을 잡아내는
     보수적인 하한값으로는 충분하고, 이 스캐너 자체가 recall 우선·precision은 다음
     단계(사람/LLM 재확인)에서 흡수하는 설계라 이런 과탐지는 허용 범위로 본다."""
-    return len(_INCLUDE_PATTERN.findall(sentence))
+    count = len(_COUNT_PATTERN.findall(sentence))
+    if count == 0 and _EXTREME_VALUE_RE.search(sentence):
+        return 1
+    return count
 
 
 def find_missed_candidates(article_text: str, extracted_sentences: list[str]) -> list[str]:

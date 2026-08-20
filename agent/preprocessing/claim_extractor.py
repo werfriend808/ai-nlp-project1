@@ -95,13 +95,17 @@ _RECOVERY_PROMPT_TEMPLATE = """아래 문장들은 규칙 기반 스캐너가 �
 입력 문장: "90세 이상 고령층 사망자가 6만1200명으로 전년 대비 3800명 늘었고, 50대 사망자도
 2만5800명으로 600명 늘었다."
 출력: [{"sentence": "90세 이상 고령층 사망자가 6만1200명으로 전년 대비 3800명 늘었고, 50대
-사망자도 2만5800명으로 600명 늘었다.", "claim_type": "증감률", "period": null, "unit": "명",
+사망자도 2만5800명으로 600명 늘었다.", "claim_type": "규모", "period": null, "unit": "명",
 "population": "90세 이상 고령층", "statistic_expression": "전년 대비 3800명 증가",
 "value": 61200, "value_type": "수준값", "comparison_operator": "증가",
-"comparison_target": "전년", "comparison_value": null, "region": null, "source_org": null,
+"comparison_target": "전년", "comparison_value": 3800, "region": null, "source_org": null,
 "source_report": null}]
 (뒤에 나오는 "50대 사망자" 수치는 population/statistic_expression에 다 담지 못하더라도,
 sentence 자체는 원문 전체를 유지해서 문장이 통째로 유실되지 않게 합니다.)
+(claim_type은 "규모"입니다 — value가 특정 시점의 총량(61200)이고 그 변화분(3800)은
+comparison_value에 따로 담기 때문입니다. "전년 대비 늘었다"는 비교 표현이 있다고
+claim_type을 "증감률"로 바꾸지 마세요 — 퍼센트(%) 변화율이 실제로 주장된 문장에만
+"증감률"을 쓰고, 이 예시처럼 절대량(명)의 변화는 "규모"+comparison_value로 표현합니다.)
 
 ## 검토할 문장들
 {candidate_sentences}

@@ -115,7 +115,7 @@ def _format_period_label(period: Optional[str], prd_se: Optional[str] = None) ->
 def _build_calc_summary(computed: ComputedResult, prd_se: Optional[str] = None) -> str:
     """계산 과정 요약 (예: "2023~2024 기준 증감률 -3.2%"). Explanation.calc_summary에 그대로 씀."""
     period_label = _format_period_label(computed.period, prd_se)
-    return f"{period_label} 기준 {computed.calc_type} {computed.raw_value}{computed.unit}"
+    return f"{period_label} 기준 {computed.calc_type} {computed.raw_value} {computed.unit}"
 
 
 def explain(

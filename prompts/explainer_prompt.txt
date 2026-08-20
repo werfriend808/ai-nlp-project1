@@ -57,5 +57,5 @@
 ## 판정할 내용
 기사 주장: "{claim_sentence}"
 근거 통계표: {table_name} ({source_meta})
-계산 과정: {computed_calc_type} {computed_value}{computed_unit} ({computed_period} 기준)
+계산 과정: {computed_calc_type} {computed_value} {computed_unit} ({computed_period} 기준)
 판정: {verdict} (사유: {verdict_reason}, gap_type: {gap_type})

@@ -22,3 +22,11 @@ trafilatura>=2.2.0
 # agent/kosis/build_vdb_index.py, query_vdb.py — VDB를 Chroma에서 Supabase(pgvector)로
 # 옮기면서 Postgres 연결용으로 추가 (2026-08-18).
 psycopg2-binary>=2.9.9
+# 형태소 분석기 — keyword_search.py의 _kiwi, calc_type_router.py의 해외국가 오탐 방지,
+# batch_runner.py의 "달/월" 오탐 방지 등 여러 정확도 안전장치가 이걸 전제로 만들어졌는데
+# 여태 이 파일에 빠져 있었다(2026-08-20 발견) — 이것 없이 pip install -r requirements.txt만
+# 하면 각 모듈이 조용히 단순 부분 문자열 매칭 폴백으로 저하된다(에러 없이 동작은 하지만
+# 정확도가 떨어짐). 각 모듈의 try/except 폴백 자체는 kiwipiepy가 정말 없는 환경(예: 아직
+# 지원 안 되는 파이썬 버전)에서 완전히 죽지 않기 위한 안전장치로 그대로 남겨두고, 정상
+# 환경에서는 항상 설치되게 여기 추가한다.
+kiwipiepy>=0.20.0
