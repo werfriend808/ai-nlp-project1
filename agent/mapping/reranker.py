@@ -226,6 +226,17 @@ def _parse_rrf_ranks(source_meta: Optional[str]) -> dict[str, int]:
 RRF_K = 60  # RRF 원 논문(Cormack et al., 2009)의 관례값. 작을수록 상위 순위 후보에 더 민감해진다.
 
 
+_RERANK_RAW_RE = re.compile(r"rerank_raw=(-?\d+\.\d+)")
+
+# 리랭커가 1위로 뽑았어도 그 확신도(시그모이드 확률)가 이 값 미만이면 신뢰하지 않는다.
+# 2026-08-20 실측: 후보 풀 전체가 무관한 표들뿐이어도(예: 금융사기 적발건수 claim에
+# "국제수지"만 후보로 들어온 경우) 리랭커가 그중 "그나마 나은" 하나를 1위로 뽑아버리면
+# 순위만 보던 기존 게이트가 그대로 통과시켜서, "건수 vs 백만달러"처럼 단위 자체가 다른
+# 비교를 "불일치"라고 확신에 차서 틀리게 답하는 사례가 나왔다(id 18/19/21/25).
+# 순위(1등이냐)만이 아니라 점수 크기(정말 관련있다고 볼 만큼 확신했냐)도 같이 봐야 한다.
+MIN_RERANKER_CONFIDENCE = 0.5
+
+
 def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     """이 후보를 최종 판정(judge)까지 진행시켜도 될 만큼 신뢰하는지 판단한다.
 
@@ -235,9 +246,20 @@ def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     읽고 내린 판단이라 노이즈에 더 강함) 신뢰한다. 둘 다 아니면(=keyword도 못 찾고
     리랭커도 1위로 보지 않았으면) embedding/VDB 단독 저순위 후보일 가능성이 높아
     신뢰하지 않는다.
+
+    2026-08-20: reranker_rank==1이어도 그 판단의 확신도(rerank_raw를 시그모이드한 값)가
+    MIN_RERANKER_CONFIDENCE 미만이면 신뢰하지 않는다 — "후보 풀 전부가 나빴는데 그중
+    제일 덜 나쁜 걸 1등 시켰을 뿐"인 경우를 걸러내기 위함(위 실측 사례 참고).
     """
     ranks = _parse_rrf_ranks(source_meta)
-    return "keyword_rank" in ranks or ranks.get("reranker_rank") == 1
+    if "keyword_rank" in ranks:
+        return True
+    if ranks.get("reranker_rank") != 1:
+        return False
+    raw_match = _RERANK_RAW_RE.search(source_meta or "")
+    if not raw_match:
+        return False
+    return _sigmoid(float(raw_match.group(1))) >= MIN_RERANKER_CONFIDENCE
 
 
 def _sigmoid(x: float) -> float:
