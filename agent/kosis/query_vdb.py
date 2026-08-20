@@ -54,7 +54,10 @@ TABLE_NAME = "kosis_vdb_tables"
 VDB_TOP_K = 10
 # 절대 유사도 하한선. "28만개 중 그나마 제일 비슷한 것"이어도 이 밑이면 사실상 무관하다고
 # 보고 후보에서 제외한다 — top-k 개수 제한만으로는 못 거르는 노이즈를 추가로 막는다.
-VDB_MIN_SIMILARITY = 0.75
+# 2026-08-19: 0.75는 e5-small 기준 값이었다 — Qwen3-Embedding-4B로 바뀐 뒤 실측 기준
+# reranker_colab.ipynb에서 0.5로 재조정됐는데 이 모듈엔 반영이 안 돼 있었다(로컬 경로와
+# 코랩 경로의 판정 기준이 갈라지면 안 되므로 동일하게 맞춘다).
+VDB_MIN_SIMILARITY = 0.5
 
 # 2026-08-19: VDB 전용 임베딩 모델은 64개 카탈로그용(KOSIS_EMBEDDING_MODEL, e5 계열)과
 # 별개다 — VDB만 Qwen3-Embedding-4B(truncate_dim=1024)로 바꿨다. 용도가 완전히 분리돼

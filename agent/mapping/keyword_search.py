@@ -94,9 +94,12 @@ def _load_catalog(path: Path = CATALOG_PATH) -> list[dict]:
 
 
 def _normalize(text: str) -> str:
-    """공백 제거 비교용 정규화. 기사 본문은 "혼인 건수"처럼 카탈로그 키워드
-    "혼인건수"와 띄어쓰기가 달라지는 경우가 흔해서, 공백을 무시하고 비교한다."""
-    return re.sub(r"\s+", "", text)
+    """공백/가운뎃점 제거 비교용 정규화. 기사 본문은 "혼인 건수"처럼 카탈로그 키워드
+    "혼인건수"와 띄어쓰기가 달라지는 경우가 흔해서, 공백을 무시하고 비교한다.
+    2026-08-20: "도·소매업"처럼 가운뎃점(·)으로 단어를 잇는 표기도 흔해서(제조·서비스업 등),
+    이것도 같이 지운다 — 안 지우면 "도소매업"(카탈로그 키워드)이 "도·소매업"(기사 원문)과
+    가운뎃점 하나 때문에 부분 문자열로도 안 걸려서 매칭이 통째로 실패한다."""
+    return re.sub(r"[\s·]+", "", text)
 
 
 # SYNONYMS의 raw_term(취업자/이사/주가 등)은 전부 내부 공백이 없는 단일 단어라서, 원래
@@ -301,9 +304,22 @@ def _is_false_friend_only(kw_norm: str, sentence: str) -> bool:
     return kw_norm not in remaining
 
 
+# SYNONYMS 경유 매칭(_expand_query_terms)에 주는 가중치. 카탈로그 키워드 원문이 문장에
+# 직접(또는 형태소/어간으로) 등장한 매칭은 1.0을 그대로 주지만, SYNONYMS 매칭은 "고용"→
+# "고용률"/"고용동향"처럼 문장에 없는 단어로 확장한 간접 신호라 오매칭 위험이 더 크다.
+# 2026-08-20 실측: "청년 취업자 비율이 높은 제조업(-11만2000명)과 건설업(-18만5000명),
+# 도·소매업(-2만6000명)... 고용이 줄었다"가, "취업자"/"고용" 같은 범용 단어가 SYNONYMS로
+# 걸려 만점(3/3)을 받은 "성별 경제활동인구총괄"(총괄표, 틀림)에 밀려서, "제조업 취업자"/
+# "건설업 취업자"처럼 구체적으로 2개나 매칭된 "산업별 취업자"(진짜 정답, 형제 claim이
+# 실제로 찾아낸 표)가 오히려 점수에서 졌다. 매칭 "개수"만 세지 말고 "얼마나 구체적인
+# 매칭인지"를 반영해야 이런 역전이 안 생긴다.
+_SYNONYM_MATCH_WEIGHT = 0.5
+
+
 def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[float, list[str]]:
     """표 하나에 대해 (매칭 점수, 매칭된 키워드 목록)을 계산한다."""
     matched: list[str] = []
+    weight_sum = 0.0
     keywords = table.get("keywords", [])
     normalized_sentence = _normalize(sentence)
 
@@ -311,25 +327,31 @@ def _score_table(sentence: str, expanded_terms: set[str], table: dict) -> tuple[
         kw_norm = _normalize(kw)
         if kw_norm in normalized_sentence and not _is_false_friend_only(kw_norm, sentence):
             matched.append(kw)
+            weight_sum += 1.0
         elif kw in expanded_terms:
             matched.append(kw)
+            weight_sum += _SYNONYM_MATCH_WEIGHT
         elif _kiwi is not None:
             if _morph_match(kw, normalized_sentence):
                 matched.append(kw)
+                weight_sum += 1.0
         elif _stem_prefix_match(kw_norm, normalized_sentence) and not _is_false_friend_only(
             kw_norm, normalized_sentence
         ):
             matched.append(kw)
+            weight_sum += 1.0
 
     if table.get("title", "") and re.search(re.escape(table["title"][:6]), sentence):
         # 표 제목 앞부분이 문장에 그대로 등장하면 강한 신호로 취급
         matched.append(f"[title]{table['title']}")
+        weight_sum += 1.0
 
     if not matched:
         return 0.0, []
 
-    # 매칭 개수를 0~1 사이로 정규화 (키워드 3개 이상 매칭되면 만점 취급)
-    score = min(1.0, len(matched) / 3)
+    # 가중치 합을 0~1 사이로 정규화 (직접매칭 기준 3개 이상이면 만점 취급 — 기존과 동일한
+    # 스케일 유지, SYNONYMS 매칭만 절반 가중치라 같은 개수여도 점수가 더 낮게 나옴)
+    score = min(1.0, weight_sum / 3)
     return score, matched
 
 
