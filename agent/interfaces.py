@@ -31,7 +31,8 @@ class ClassificationResult:
 
 # ---------------------------------------------------------------------------
 # 2단계 — claim_extractor.py (수치 주장 문장 추출)
-# 담당: A  |  모델: HCX-003
+# 담당: A  |  모델: HCX-DASH-002 (2026-07-24 HCX-003에서 교체 — 긴 기사 컨텍스트 초과
+#   문제 대응, agent/preprocessing/eval_claim_extractor_model.py 실측 근거)
 # 입력: 기사 본문(str)  (※ 1단계 결과 자체가 아니라 원본 기사 본문을 다시 받음)
 # 출력: Claim의 리스트 (문장 하나하나 따로 호출 X, 기사 전체 넣고 리스트로 한 번에)
 # ---------------------------------------------------------------------------
@@ -175,7 +176,13 @@ class Explanation:
 # 기사 본문(str)
 #   -> [1] classifier          -> ClassificationResult
 #   -> [2] claim_extractor     -> list[Claim]
-#   -> [3] table matching      -> list[TableCandidate]  (Claim별)
+#   -> [2.5] calc_type_router (agent/orchestrator/calc_type_router.py) -> CalcType | None
+#            claim_type/sentence/population/region만 보고 즉시 판단 가능한 것만 먼저
+#            거른다(3~4단계를 안 기다림). 해외 국가 언급·전망(claim_type="전망")·스키마 밖
+#            값이면 여기서 바로 None -> 호출부가 3~8단계를 건너뛰고 즉시 판단불가 처리.
+#            공식 8단계 다이어그램엔 없지만 실제 파이프라인엔 존재하는 라우팅 단계라 여기
+#            명시해둠(2026-08-21 추가, 문서 누락 발견).
+#   -> [3] table matching      -> list[TableCandidate]  (calc_type_router를 통과한 Claim만)
 #   -> [4] slot_filler/clarify -> ClarifyResult (slots 완성될 때까지 반복)
 #   -> [5] api_client          -> KosisApiResponse
 #   -> [6] calculator          -> ComputedResult
