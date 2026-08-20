@@ -622,6 +622,56 @@ def _wants_prior_immediate_period(comparison_target: Optional[str]) -> bool:
     return bool(_BARE_MONTH_OR_QUARTER_RE.match(stripped))
 
 
+# 2026-08-20 실측 발견: "올해 들어 104% 급등", "지난해 말부터 20일까지 25개사 증가",
+# "올해 들어 시총 1조 클럽에 31개 추가" 같은 claim은 comparison_target이 대부분 비어있어서
+# (LLM이 이걸 "전달/작년" 같은 단순 비교 기준으로 못 뽑음 — claim.period/원문 문장에만
+# "올해"/"지난해 말"로 남아있음) _wants_prior_immediate_period가 False로 떨어지고,
+# 결국 _prior_year_same_period(YoY, 그냥 1년 전 같은 달)로 계산돼버린다. YoY는 "1년 전 이
+# 시점 대비"라 "연초부터 지금까지"라는 claim의 실제 의도(YTD)랑 전혀 다른 기준이라, 판정
+# 단계에서 매번 "시점 기준이 안 맞는다"며 판단불가로 빠진다. claim_sentence 원문에서 이
+# 패턴을 직접 찾아서, YoY보다 먼저 우선 적용한다.
+_YEAR_START_ANCHOR_RE = re.compile(r"올해\s*들어|올\s*들어")
+# "지난해 말부터"뿐 아니라 "지난해 말(200개)보다"처럼 "부터" 없이 비교 기준으로만
+# 쓰이는 경우도 실제로 더 흔하다("부터"로 한정하면 놓침, 2026-08-20 실측) — "말"만 있으면
+# 걸리게 완화한다.
+_LAST_YEAR_END_ANCHOR_RE = re.compile(r"(지난해|작년)\s*말")
+_MONTHS_STREAK_RE = re.compile(r"(\d+)\s*개월\s*(?:연속|째)")
+_HALF_YEAR_RE = re.compile(r"(상반기|하반기)")
+
+
+def _range_anchor_base_period(claim_sentence: str, target_period: str, prd_se: Optional[str]) -> Optional[str]:
+    """claim 원문에서 "올해 들어"/"지난해 말부터"/"N개월째"/"상반기·하반기" 같은 기간 앵커
+    표현을 찾아, target_period(현재 조회 시점) 기준으로 그 앵커가 가리키는 시작 시점을
+    계산한다. 못 찾으면 None(호출부가 기존 MoM/YoY 분기로 폴백).
+
+    target_period가 6자리(YYYYMM 등)가 아니거나 prd_se가 M/Q가 아니면(예: 연간 표) "연초부터"
+    같은 개념 자체가 무의미하므로 None을 반환해 기존 로직에 맡긴다."""
+    if len(target_period) != 6 or prd_se not in ("M", "Q"):
+        return None
+    year, suffix = int(target_period[:4]), int(target_period[4:])
+
+    if _YEAR_START_ANCHOR_RE.search(claim_sentence):
+        return f"{year:04d}{1:02d}"  # 연초(1월/1분기)부터 target까지 — YTD
+
+    if _LAST_YEAR_END_ANCHOR_RE.search(claim_sentence):
+        last_suffix = 12 if prd_se == "M" else 4
+        return f"{year - 1:04d}{last_suffix:02d}"  # 전년 12월/4분기부터
+
+    m = _MONTHS_STREAK_RE.search(claim_sentence)
+    if m and prd_se == "M":
+        n = int(m.group(1))
+        total = year * 12 + (suffix - 1) - n
+        base_year, base_month = divmod(total, 12)
+        return f"{base_year:04d}{base_month + 1:02d}"
+
+    m2 = _HALF_YEAR_RE.search(claim_sentence)
+    if m2 and prd_se == "M":
+        start_month = 1 if m2.group(1) == "상반기" else 7
+        return f"{year:04d}{start_month:02d}"
+
+    return None
+
+
 def _prior_immediate_period(period: str, prd_se: Optional[str]) -> str:
     """"전달/전분기 대비"(MoM/QoQ) 기준값(base)의 시점을 계산한다 — target 시점에서
     월/분기를 1만큼 줄이고, 연초(1월/1분기)를 넘어가면 연도를 1 줄인다.
@@ -934,7 +984,12 @@ def run_stage_5_6(
     decade = _resolve_decade_age(table_id, table_params, claim_sentence)
     try:
         if calc_type in ("증감", "증감률") and kosis_slots.get("period"):
-            if _wants_prior_immediate_period(comparison_target):
+            range_base = _range_anchor_base_period(
+                claim_sentence or "", kosis_slots["period"], generic_slots.get("prd_se")
+            )
+            if range_base is not None:
+                base_period = range_base
+            elif _wants_prior_immediate_period(comparison_target):
                 base_period = _prior_immediate_period(kosis_slots["period"], generic_slots.get("prd_se"))
             else:
                 base_period = _prior_year_same_period(kosis_slots["period"])
