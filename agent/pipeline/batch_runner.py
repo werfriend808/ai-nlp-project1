@@ -140,6 +140,16 @@ _BYLINE_RE = re.compile(
     r"\s*\d+\s*"
 )
 
+# 2026-08-21 추가: 기사 본문이 max_len(3000자)보다 짧으면, 남는 자리에 스크랩된 페이지의
+# "관련기사"/"많이 본 뉴스"/추천 위젯 텍스트가 그대로 딸려 들어온다 — 실측 확인(골든셋
+# 라벨링 중 발견): '소상공인 365' 서비스 소개 기사에서 완전히 무관한 '포스코 인도 제철소
+# 합작' claim이 뽑힌 사례, 재현해보니 그 기사 본문 뒤에 다른 기사 헤드라인 조각들이
+# 이어붙어 있었다. claim_extractor는 이걸 진짜 본문인 줄 알고 성실하게 엉뚱한 claim을
+# 추출해버린다. 확실한(오탐 위험이 낮은) 마커만 좁게 잡는다 — 마커를 넓히면 진짜 본문이
+# 우연히 비슷한 단어를 포함할 때(예: AI 추천 시스템을 다루는 기사) 잘못 잘려나갈 위험이
+# 있어 일부러 보수적으로 유지한다.
+_JUNK_SECTION_RE = re.compile(r"By\s*Taboola|많이\s*본\s*뉴스|오늘의\s*멤버십|AI\s*추천")
+
 
 def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) -> str:
     """실제 스크랩 기사(CSV의 '기사 본문 전체')는 신문사 내비게이션 메뉴가 본문 앞에
@@ -152,6 +162,10 @@ def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) 
 
     제목 뒤에도 기자명/입력·업데이트 시각/댓글수 배지가 실제 본문 시작 전에 끼어드므로
     (_BYLINE_RE 참고), 찾아지면 그 블록까지 건너뛰고 진짜 첫 문장부터 시작한다.
+
+    그리고 (_JUNK_SECTION_RE 참고) 본문 뒤에 "관련기사"류 잡음 섹션이 시작되는 지점을
+    찾으면 그 지점 이후는 잘라낸다 — 짧은 기사에서 남는 자리가 무관한 다른 기사 내용으로
+    채워지는 걸 막기 위함.
     """
     anchor = title[:12].strip()
     idx = raw_text.find(anchor) if anchor else -1
@@ -161,6 +175,10 @@ def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) 
     m = _BYLINE_RE.search(trimmed[: len(title) + 100])
     if m:
         trimmed = trimmed[: m.start()] + trimmed[m.end() :]
+
+    junk_match = _JUNK_SECTION_RE.search(trimmed)
+    if junk_match:
+        trimmed = trimmed[: junk_match.start()]
 
     return trimmed
 
