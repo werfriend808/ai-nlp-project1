@@ -32,6 +32,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
+import time
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -199,8 +200,15 @@ def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> N
 
     articles = load_articles_from_csv(n=csv_n, seed=csv_seed) if use_csv_sample else ARTICLES
 
+    # 2026-08-19: HCX-DASH-002가 짧은 시간에 몰린 요청으로 429(Too Many Requests)를
+    # 연속으로 낸 것 실측 확인 — 기사마다 최소 1회(분류) + claim 있으면 1회(추출) 호출되니,
+    # article 사이에 간격을 둬서 순간 호출량을 낮춘다. 첫 기사는 대기 없이 바로 진행.
+    _HCX_CALL_DELAY_SEC = 3
+
     pending_items: list[dict] = []
-    for article in articles:
+    for i, article in enumerate(articles):
+        if i > 0:
+            time.sleep(_HCX_CALL_DELAY_SEC)
         export_article(article, catalog_by_id, pending_items)
 
     _merge_all_candidates(pending_items)
