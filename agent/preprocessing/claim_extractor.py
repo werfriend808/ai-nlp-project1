@@ -180,12 +180,24 @@ def _normalize_claim_type(raw: object) -> Optional[str]:
 # Q3-6/7 참고).
 _COMPARISON_OPERATOR_SYNONYMS = {"하락": "감소"}
 
+# 위 100건 표본 검토 후에도 "1위"/"악화"처럼 방향 동의어도 아니고 팀이 검토한 적도 없는
+# 값이 그대로 저장되는 사례가 실측 확인됨(2026-08-20, verifications_export.json) — "악화"는
+# 이미 허용된 "약화"와 다른 단어라 혼동 주의. claim_type과 달리 이 필드는 여태 스키마
+# 검증이 아예 없어서 LLM이 뭘 주든 그대로 통과시켰다. 이제 "5종 스키마 값" 또는 "팀이
+# 이미 검토해서 원문 유지하기로 정한 애매한 동의어" 둘 중 하나가 아니면 None으로 떨어뜨린다
+# — _AMBIGUOUS_BUT_ACCEPTED는 위 주석의 기존 팀 결정을 그대로 옮긴 것이라, 이 결정 자체는
+# 안 건드리고 "1위" 같은 완전히 다른 종류의 오류만 추가로 걸러낸다.
+_AMBIGUOUS_BUT_ACCEPTED = {"혼합", "완화", "약화", "회복", "2년 연속"}
+_KNOWN_COMPARISON_OPERATORS = {"증가", "감소", "동일", "초과", "미만"}
+
 
 def _normalize_comparison_operator(raw: object) -> Optional[str]:
     if raw is None:
         return None
-    text = str(raw)
-    return _COMPARISON_OPERATOR_SYNONYMS.get(text, text)
+    text = _COMPARISON_OPERATOR_SYNONYMS.get(str(raw), str(raw))
+    if text in _KNOWN_COMPARISON_OPERATORS or text in _AMBIGUOUS_BUT_ACCEPTED:
+        return text
+    return None
 
 
 # interfaces.py의 ValueType(2종: 수준값/증감폭, 2026-08-16 추가). claim_type과 달리 이 필드가

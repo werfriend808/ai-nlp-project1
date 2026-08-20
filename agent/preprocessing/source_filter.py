@@ -201,9 +201,64 @@ def _has_hallucinated_value(claim: Claim) -> bool:
     return not any(ch.isdigit() for ch in claim.sentence)
 
 
+def _to_korean_scale(n: int) -> str:
+    """정수를 기사에서 흔히 쓰는 조/억/만 복합 표기로 변환한다. 예: 415600000000 -> "4156억",
+    183000 -> "18만3000". "천"은 일부러 안 넣는다 — "3000"이 "3천"인지 그냥 "3000"인지
+    애매해서 넣으면 오탐(허위 불일치)만 늘어난다."""
+    if n == 0:
+        return "0"
+    parts: list[str] = []
+    remainder = n
+    for unit_value, unit_name in ((10**12, "조"), (10**8, "억"), (10**4, "만")):
+        if remainder >= unit_value:
+            count = remainder // unit_value
+            parts.append(f"{count}{unit_name}")
+            remainder %= unit_value
+    if remainder > 0 or not parts:
+        parts.append(str(remainder if parts else n))
+    return "".join(parts)
+
+
+def _korean_number_variants(value: float) -> set[str]:
+    """value가 원문 문장에 어떤 형태로 적혀 있을 수 있는지 후보 문자열들을 만든다.
+
+    2026-08-13 골든셋 QA 스크립트(verify_all_fields.py)에서 int(round(60.8))처럼 소수점을
+    반올림해서 "61"로 만들어버리는 바람에, 정상 값(60.8)을 오탐으로 잘못 걸러낸 버그가
+    있었다 — 그 교훈으로 여기서는 소수점을 절대 반올림하지 않는다."""
+    is_int = float(value).is_integer()
+    variants: set[str] = set()
+    if is_int:
+        int_value = int(value)
+        variants.add(str(int_value))
+        variants.add(f"{int_value:,}")
+        variants.add(_to_korean_scale(int_value))
+    else:
+        variants.add(str(value))
+    return variants
+
+
+def _value_mismatches_sentence(value: Optional[float], sentence: str) -> bool:
+    """value가 채워져 있는데, 그 값에 해당하는 숫자가 문장 어디에도 없으면 True.
+
+    _has_hallucinated_value("문장에 숫자가 아예 없음")보다 넓은 개념 — "문장에 숫자는
+    있지만 이 value랑은 다른 숫자"인 경우까지 잡는다. 실측(2026-08-20,
+    verifications_export.json) 사례: "울릉군은 2014년 상반기부터 10년간... 왕좌를
+    차지했다"라는 문장에 value=83.5가 붙어있었는데, 이 83.5는 같은 기사의 다른 문장
+    (고용률 83.5%)에서 온 값이 잘못 옮겨붙은 것이었다 — 문장 자체엔 2014/10/2023만
+    있고 83.5는 없었음.
+
+    완벽한 탐지는 아니다(한글 숫자 표기 경우의 수가 다양해서 놓치는 패턴이 있을 수 있음) —
+    그래서 filter_verifiable_claims에서 정상 claim까지 잘못 거를 위험을 감안해 보수적으로
+    쓴다(의심스러우면 제외하되, 애매한 표기 패턴 자체를 넓게 인정)."""
+    if value is None:
+        return False
+    variants = _korean_number_variants(value)
+    return not any(v in sentence for v in variants)
+
+
 def filter_verifiable_claims(claims: list[Claim]) -> list[Claim]:
-    """claim 리스트에서 source_org가 "kosis_verified"이고, value 환각이 의심되지 않는
-    것만 남긴다.
+    """claim 리스트에서 source_org가 "kosis_verified"이고, value 환각/오귀속이 의심되지
+    않는 것만 남긴다.
 
     "uncertain"(source_org 없음/휴리스틱에 없는 기관)과 "not_kosis"는 전부 제외한다 —
     분류기(1단계)와 같은 원칙: 확실하지 않으면 3단계(표매칭)로 넘기지 않는다. source_org가
@@ -214,7 +269,10 @@ def filter_verifiable_claims(claims: list[Claim]) -> list[Claim]:
     return [
         c
         for c in claims
-        if classify_source(c.source_org) == "kosis_verified" and not _has_hallucinated_value(c)
+        if classify_source(c.source_org) == "kosis_verified"
+        and not _has_hallucinated_value(c)
+        and not _value_mismatches_sentence(getattr(c, "value", None), c.sentence)
+        and not _value_mismatches_sentence(getattr(c, "comparison_value", None), c.sentence)
     ]
 
 
@@ -344,6 +402,40 @@ if __name__ == "__main__":
     print(
         "[수정 확인] 숫자 환각 claim(부안 어선 화재, value=11.0)은 걸러지고, "
         "정상 claim(1인가구 800만)은 그대로 통과됨"
+    )
+
+    # 2026-08-20 회귀 테스트: _value_mismatches_sentence — 문장에 숫자는 있지만 value랑
+    # 다른 숫자인 "오귀속" claim을 걸러내는지 확인. 실제 재현 사례(울릉군 고용률 기사):
+    # value=83.5가 "10년간 왕좌를 차지했다"는 문장에 잘못 붙어있었음(진짜 83.5%는 다른
+    # 문장에서 나온 값).
+    misattributed_claim = Claim(
+        sentence=(
+            "울릉군은 2014년 상반기부터 10년간 단 한 차례(2023년 상반기) 경북 청송군에 "
+            "밀렸던 것을 제외하고 꾸준히 왕좌를 차지했다."
+        ),
+        claim_type="규모",
+        source_org="통계청",
+        value=83.5,
+    )
+    # 정상 claim들 — 한글 만/억 복합 표기, 천단위 콤마, 소수점 값이 전부 안 걸리는지 확인
+    # (소수점을 반올림해서 오탐 냈던 예전 QA 스크립트 버그 재발 방지 포함).
+    korean_scale_claim = Claim(
+        sentence="작년 12월 말 우리나라 외환 보유액은 4156억달러로 집계됐다.",
+        claim_type="규모", source_org="한국은행", value=415600000000.0,
+    )
+    decimal_claim = Claim(
+        sentence="한국경영자총협회의 올해 초 조사에 따르면, 신규 채용 계획이 있다고 응답한 기업은 60.8%였다.",
+        claim_type="규모", source_org="통계청", value=60.8,
+    )
+    mismatch_filtered = filter_verifiable_claims(
+        [misattributed_claim, korean_scale_claim, decimal_claim]
+    )
+    assert misattributed_claim not in mismatch_filtered, "❌ 값 오귀속 claim이 안 걸러짐"
+    assert korean_scale_claim in mismatch_filtered, "❌ 한글 억 단위 표기 정상 claim이 잘못 걸러짐"
+    assert decimal_claim in mismatch_filtered, "❌ 소수점 정상 claim이 잘못 걸러짐(반올림 버그 재발?)"
+    print(
+        "[수정 확인] 값 오귀속 claim(울릉군, value=83.5가 다른 문장 것)은 걸러지고, "
+        "한글 억 단위·소수점 정상 claim은 그대로 통과됨"
     )
 
     print("\n최종 통과:", [c.source_org for c in filter_verifiable_claims(backfill_source_org(samples))])
