@@ -43,7 +43,7 @@ def main() -> None:
             resp = client(table_id, {})
             print(
                 f"[{i}/{len(table_ids)}] [OK] {table_id} {name} "
-                f"-> {resp.raw_value}{resp.unit} ({resp.period})"
+                f"-> {resp.raw_value} {resp.unit} ({resp.period})"
             )
             ok.append(table_id)
         except (KosisApiError, KeyError) as e:

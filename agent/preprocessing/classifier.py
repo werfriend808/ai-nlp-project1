@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 from .hcx_client import call_hcx
+from .claim_candidate_scanner import scan_numeric_candidates
 
 try:
     from interfaces import ClassificationResult
@@ -66,6 +67,25 @@ def _looks_like_real_statistic(reason: str) -> bool:
     return bool(_STATISTICAL_REASON_RE.search(reason))
 
 
+# 2026-08-20 실측: 위 안전장치가 reason 문자열에 "통계"/"수치" 같은 단어가 있는지만
+# 보는데, 모델이 실제로는 통계가 아닌 기사(예: "한전이 정전 복구를 마쳤다고 밝혔다" — 숫자
+# 전혀 없음)를 두고도 "공식 통계나 조사 결과에 준하는 수치 기반 사실이다"처럼 그 단어
+# 자체를 근거 설명에 끌어써버리면 안전장치를 그대로 통과해버린다(자체 점검 중 재현,
+# score=0.9로 오탐). "부안 어선 화재" 사례와 달리 이번엔 reason 자체가 통계 어휘를
+# 포함하고 있어서 키워드 매칭만으로는 못 잡는다.
+#
+# 진짜로 검증 가치 있는 수치 주장 기사라면 원문(article_text)에 통계로 볼 만한 수치
+# 표현이 최소 하나는 있어야 한다는 게 훨씬 강한 신호다 — reason은 모델이 사후에 지어낼
+# 수 있지만, 원문 자체는 그렇지 않다. 다만 "원문에 숫자가 있는가"를 단순히 아무 자릿수
+# 문자(\d) 존재 여부로만 보면 안 된다 — 뉴스 기사는 "2일 부산 ~에서 사고가 발생해"처럼
+# 거의 항상 날짜로 시작해서, 순수 날짜/시각 표기만 있어도 "숫자 있음"으로 잘못 통과된다
+# (직접 확인: 정전 사고 기사도 "2일"이라는 숫자 자체는 있음). claim_candidate_scanner.py의
+# scan_numeric_candidates()는 정확히 이 구분(날짜/시각 등은 제외, 통화/수량/퍼센트/순위/
+# 극값 표현 등만 인정)을 위해 이미 만들어져 있으므로 새로 만들지 않고 그대로 재사용한다.
+def _article_has_real_statistic_candidate(article_text: str) -> bool:
+    return bool(scan_numeric_candidates(article_text))
+
+
 def _load_prompt_template(path: Path = PROMPT_PATH) -> str:
     if not path.exists():
         raise FileNotFoundError(f"{path} 가 없습니다. A가 few-shot 프롬프트를 먼저 작성해야 합니다.")
@@ -108,6 +128,14 @@ def classify(article_text: str, *, model: str = MODEL, temperature: float = 0.0)
         )
         label = False
         score = min(score, 0.15)
+    elif label and not _article_has_real_statistic_candidate(article_text):
+        reason = (
+            f"{reason} [안전장치: label=True인데 원문에 통계로 볼 만한 수치 표현이 "
+            "전혀 없어(reason이 통계 어휘를 언급해도) 검증 가능한 수치 주장이 있을 수 "
+            "없다고 보고 False로 정정함]"
+        )
+        label = False
+        score = min(score, 0.15)
 
     return ClassificationResult(label=label, score=score, reason=reason)
 
@@ -141,6 +169,36 @@ if __name__ == "__main__":
     print("[수정 확인] '부안 어선 화재' 실제 오탐 사례의 reason은 안전장치에 정상적으로 걸림")
 
     print("\n[전체 통과] _looks_like_real_statistic 회귀 테스트 모두 통과")
+
+    # 2026-08-20 회귀 테스트: _article_has_real_statistic_candidate() — 자체 점검 중
+    # 재현된 오탐(원문에 순수 날짜 숫자("2일")밖에 없는 "정전 사고 복구" 기사인데, reason이
+    # "통계"/"수치" 단어를 스스로 끌어써서 위 _looks_like_real_statistic 안전장치를 그대로
+    # 통과해버린 사례).
+    no_stat_article = (
+        "2일 부산 해운대구 한 아파트 단지에서 정전 사고가 발생해 주민들이 불편을 겪었다. "
+        "한국전력은 복구 작업을 마쳤다고 밝혔다."
+    )
+    sneaky_reason = (
+        "한국전력이라는 공공기관이 정전 사고 복구 작업 완료 사실을 밝히고 있으므로, "
+        "이는 공식 통계나 조사 결과에 준하는 수치 기반 사실이다."
+    )
+    assert _looks_like_real_statistic(sneaky_reason), (
+        "이 테스트의 전제(reason이 통계 어휘를 포함해서 기존 안전장치를 통과함)가 깨짐"
+    )
+    assert not _article_has_real_statistic_candidate(no_stat_article), (
+        f"❌ 테스트 전제 오류: {no_stat_article!r}"
+    )
+    print(
+        "[회귀 확인] 원문에 통계로 볼 만한 수치 표현이 없으면(날짜 숫자만 있어도), "
+        "reason이 통계 어휘를 포함해도 기존 안전장치를 우회함(수정 전 재현)"
+    )
+
+    # 정상 케이스 회귀 확인: 실제 통계 수치가 있는 원문은 이 안전장치에 걸리면 안 됨.
+    stat_article = "5일 통계청이 발표한 소비자물가동향에 따르면 지난달 소비자물가가 전년 동월 대비 2.2% 올랐다."
+    assert _article_has_real_statistic_candidate(stat_article), (
+        f"❌ 정상 원문이 통계 수치 없음으로 잘못 판정됨: {stat_article!r}"
+    )
+    print("[회귀 확인] 통계 수치가 있는 정상 원문은 안전장치에 안 걸림(회귀 방지)")
 
     #   python -m agent.preprocessing.classifier
     sample = (
