@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# 2026-08-21: VITE_API_KEY(실시간 검증 API 키)와 서버 IP가 들어있어서 git에 안 올림
+.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

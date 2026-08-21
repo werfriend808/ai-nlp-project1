@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Header } from "./components/layout/Header";
 import { SummaryCard } from "./components/dashboard/SummaryCard";
 import { ArticleListPanel } from "./components/articles/ArticleListPanel";
 import { ArticleDetail } from "./components/articles/ArticleDetail";
+import { VerifyNewArticleButton } from "./components/verify/VerifyNewArticleButton";
 import { MOCK_VERIFICATIONS } from "./data/mockVerifications";
 import { MOCK_ARTICLE_TEXTS } from "./data/mockArticleTexts";
 import { MOCK_ARTICLE_DATES } from "./data/mockArticleDates";
@@ -17,6 +18,12 @@ const EXPORT_JSON_PATH = "/data/verifications.json";
 const ARTICLES_JSON_PATH = "/data/articles.json";
 const ARTICLE_DATES_JSON_PATH = "/data/articleDates.json";
 const TABLE_ORG_IDS_JSON_PATH = "/data/tableOrgIds.json";
+
+// 2026-08-21: 실시간 검증(VerifyNewArticleButton)이 끝난 직후에는 로컬 정적 파일이 아니라
+// agent/api/server.py(AWS 서버)가 방금 갱신한 JSON을 직접 읽어야 한다 — 로컬 프론트와
+// AWS 서버는 서로 다른 컴퓨터라 서버가 자기 디스크에 쓴 파일이 로컬로 자동으로 오지
+// 않기 때문(server.py가 /data를 정적 서빙하도록 추가해둠).
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   // Vite dev 서버는 없는 경로도 SPA 폴백으로 index.html(200 text/html)을 돌려주기 때문에
@@ -43,30 +50,38 @@ function App() {
   // 하고, 필요할 때만 사용자가 직접 기간을 좁히게 한다.
   const [dateRange, setDateRange] = useState<DateRangeOption>("전체");
 
-  useEffect(() => {
-    let cancelled = false;
-
-    // db/export_json.py가 만든 실데이터가 frontend/public/data/에 있으면 그걸 쓰고,
-    // 아직 export 전이거나 배치를 한 번도 안 돌린 상태라면 MOCK_*로 남아있는다 — 빈 화면
-    // 대신 항상 뭔가는 보이게 하기 위함.
-    Promise.all([
-      fetchJson<VerificationRecord[]>(EXPORT_JSON_PATH),
-      fetchJson<Record<string, string>>(ARTICLES_JSON_PATH),
-      fetchJson<Record<string, string>>(ARTICLE_DATES_JSON_PATH),
-      fetchJson<Record<string, string>>(TABLE_ORG_IDS_JSON_PATH),
+  // db/export_json.py가 만든 실데이터가 frontend/public/data/에 있으면 그걸 쓰고, 아직
+  // export 전이거나 배치를 한 번도 안 돌린 상태라면 MOCK_*로 남아있는다 — 빈 화면 대신
+  // 항상 뭔가는 보이게 하기 위함. 2026-08-21: "새로운 뉴스 기사 검증하기"가 끝난 뒤에도
+  // 같은 로직으로 다시 불러와야 해서 함수로 뽑았다(마운트 시 1회 + 검증 완료 시 재호출).
+  //
+  // fetch 시 매번 새 URL(캐시 버스팅 쿼리)을 붙인다 — 브라우저가 이전 GET 응답을 캐싱해서
+  // 검증 완료 후 재조회해도 갱신 전 데이터가 그대로 보이는 문제를 막기 위함.
+  //
+  // baseUrl: 마운트 시 최초 로드는 로컬 정적 파일(""), 실시간 검증 완료 후 재호출은
+  // API 서버(AWS)를 baseUrl로 넘겨서 방금 그 서버가 갱신한 최신 데이터를 직접 받는다.
+  const loadData = useCallback((baseUrl = "") => {
+    const bust = `?t=${Date.now()}`;
+    return Promise.all([
+      fetchJson<VerificationRecord[]>(baseUrl + EXPORT_JSON_PATH + bust),
+      fetchJson<Record<string, string>>(baseUrl + ARTICLES_JSON_PATH + bust),
+      fetchJson<Record<string, string>>(baseUrl + ARTICLE_DATES_JSON_PATH + bust),
+      fetchJson<Record<string, string>>(baseUrl + TABLE_ORG_IDS_JSON_PATH + bust),
     ]).then(([verifications, articles, dates, orgIds]) => {
-      if (cancelled || !verifications || verifications.length === 0) return;
+      if (!verifications || verifications.length === 0) return;
       setRecords(verifications);
       setArticleTexts(articles ?? {});
       setArticleDates(dates ?? {});
       setTableOrgIds(orgIds ?? {});
       setUsingMockData(false);
     });
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleVerificationDone = useCallback(() => loadData(API_BASE_URL), [loadData]);
 
   // 목록↔상세 전환을 브라우저 히스토리(History API)와 연동한다. 이게 없으면 뒤로가기가
   // 앱 상태를 모르고 그냥 브라우저를 완전히 벗어나버린다 — 기사 클릭 시 pushState로
@@ -176,6 +191,7 @@ function App() {
           </>
         )}
       </main>
+      <VerifyNewArticleButton onVerificationDone={handleVerificationDone} />
     </div>
   );
 }

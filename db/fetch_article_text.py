@@ -20,7 +20,10 @@ from __future__ import annotations
 import html
 import json
 import re
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+
+_KST = timezone(timedelta(hours=9))
 
 # content_elements의 텍스트 안에 <b>/<a> 같은 인라인 HTML 태그가 그대로 남아있는 경우가
 # 실측 확인됨(CMS가 강조/링크 표시용으로 심어둔 것으로 추정). 프론트가 이 문자열을 HTML로
@@ -94,6 +97,108 @@ def _extract_from_fusion_json(page_html: str) -> Optional[str]:
         if el.get("type") == "text" and el.get("content")
     ]
     return "\n\n".join(paragraphs) if paragraphs else None
+
+
+def _extract_fusion_publish_date(page_html: str) -> Optional[date]:
+    """Fusion(Arc XP) CMS 전용: 본문 추출에도 쓰는 같은 Fusion.globalContent JSON 안에
+    display_date/first_publish_date/created_date(ISO8601, UTC)가 이미 들어있다 — 화면에
+    렌더링되는 "기사 등록일"(article-dateline의 dateBox)은 브라우저가 JS로 채우는 값이라
+    trafilatura(정적 HTML만 가져옴)로는 못 읽는데, 이 JSON 필드가 사실상 그 값의 원본
+    소스다(2026-08-21 조선비즈 기사로 실측: display_date=2024-08-13T23:00:00Z, URL
+    경로의 2024/08/14와 KST 변환 후 날짜 일치 확인). UTC라서 KST(+9h)로 변환 후 날짜만
+    취한다 — 안 그러면 자정 근처 발행 기사가 하루 밀려서 "이번달"/"작년" 같은 상대 시점
+    판정이 틀어질 수 있다."""
+    idx = page_html.find(FUSION_MARKER)
+    if idx == -1:
+        return None
+
+    raw_json = _extract_json_object(page_html, idx + len(FUSION_MARKER))
+    if raw_json is None:
+        return None
+
+    try:
+        data = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return None
+
+    for key in ("display_date", "first_publish_date", "created_date"):
+        value = data.get(key)
+        if not value:
+            continue
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        return dt.astimezone(_KST).date()
+    return None
+
+
+def fetch_article_for_verification(url: str) -> Optional[dict]:
+    """URL 하나에서 실시간 검증 파이프라인(agent/api/server.py)이 필요로 하는 필드를
+    전부 채워서 반환한다: {title, text, published_date, url}.
+
+    2026-08-21 추가 — 이 프로젝트는 지금까지 data_set.csv(회사 제공, 제목/본문/작성일이
+    이미 컬럼으로 분리돼 있음)로만 파이프라인을 돌렸는데, "URL 입력하면 바로 검증"
+    기능은 그 컬럼들이 없어서 URL 하나에서 셋 다 직접 뽑아야 한다. 본문은 기존
+    fetch_clean_article_text()의 CMS별 전용 추출(Fusion JSON 등)을 그대로 재사용하고,
+    제목/날짜는 trafilatura의 범용 메타데이터 추출(사이트 CMS와 무관하게 OpenGraph/
+    JSON-LD 등 표준 메타 태그를 읽음)로 따로 뽑는다 — 본문 추출 방식과 메타데이터
+    추출 방식을 분리해야 Fusion XP가 아닌 다른 CMS 기사도 제목/날짜는 뽑을 수 있다.
+
+    실패하면(본문을 못 가져오면) None을 반환한다 — 제목/날짜만 없는 건 기본값으로
+    보완하지만(런타임 최신 날짜로 대체), 본문 자체가 없으면 검증할 게 없으므로 실패
+    처리한다."""
+    if trafilatura is None:
+        return None
+
+    try:
+        page_html = trafilatura.fetch_url(url)
+    except Exception:
+        return None
+    if not page_html:
+        return None
+
+    text = _extract_from_fusion_json(page_html) or trafilatura.extract(page_html)
+    if not text:
+        return None
+    # agent/pipeline/batch_runner.py의 _clean_scraped_article_text와 같은 이유(HCX
+    # "40003 Context length exceeded" 실측) — 여기서 뽑은 텍스트는 이미 깨끗하지만
+    # (내비게이션 잡음 없음) 그래도 너무 긴 기사 대비 안전하게 길이를 제한한다.
+    text = text[:3000]
+
+    title = None
+    # Fusion(Arc XP) CMS 사이트는 본문에 쓴 것과 같은 JSON에서 실제 발행 시각을 정확히
+    # 뽑을 수 있으니 이걸 우선 시도하고, 아니면 trafilatura의 범용 메타데이터 날짜로
+    # 폴백한다(Fusion이 아닌 CMS 사이트 대비).
+    published_date = _extract_fusion_publish_date(page_html)
+    try:
+        meta = trafilatura.extract_metadata(page_html, default_url=url)
+        if meta is not None:
+            title = getattr(meta, "title", None)
+            if published_date is None:
+                date_str = getattr(meta, "date", None)
+                if date_str:
+                    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y%m%d"):
+                        try:
+                            published_date = datetime.strptime(date_str[:10], fmt).date()
+                            break
+                        except ValueError:
+                            continue
+    except Exception:
+        pass
+
+    if published_date is None:
+        # 날짜를 못 뽑으면(메타데이터 없는 사이트 등) 오늘 날짜로 대체한다 — "지난달"/
+        # "올해초" 같은 상대 시점 표현의 기준점이 부정확해질 수 있다는 한계가 있지만,
+        # 아예 처리를 중단시키는 것보다 최선의 추정치로 계속 진행하는 게 낫다고 판단.
+        published_date = date.today()
+
+    return {
+        "title": title or url,
+        "text": text,
+        "published_date": published_date,
+        "url": url,
+    }
 
 
 def fetch_clean_article_text(url: str) -> Optional[str]:

@@ -142,6 +142,19 @@ def _count_numeric_expressions(sentence: str) -> int:
     return count
 
 
+# 2026-08-21 실측 확인(DB 실데이터, id=11 vs id=13 — 같은 문장 "'그냥 쉬었다'는 청년도
+# 1분기(1~3월) 46만명을 넘으며..."가 완전 중복으로 두 번 저장돼 있었다): 원문(article_text)
+# 에서 스캔한 candidate는 기사 원문 그대로의 따옴표(예: 곧은따옴표 ''')를 쓰는데,
+# HCX가 1차로 뽑은 extracted_sentences는 둥근따옴표('‘'/'’')로 바꿔 반환하는
+# 경우가 실측 확인됐다 — 아래 covered_count 계산이 순수 `in`(대소문자·문자 그대로 비교)
+# 이라 따옴표 문자가 다르면 "이미 커버됨"을 못 알아채고 이미 뽑힌 문장을 "놓친 후보"로
+# 오판, recover_missed_claims가 그걸 다시 뽑아 완전 중복 claim이 생겼다. 비교 전에
+# 따옴표만 정규화한다(frontend/src/lib/segments.ts의 normalizeQuotes와 동일한 접근 —
+# 화면과 데이터 양쪽에서 같은 문제가 있었다).
+def _normalize_quotes(text: str) -> str:
+    return text.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
+
+
 def find_missed_candidates(article_text: str, extracted_sentences: list[str]) -> list[str]:
     """스캐너 후보 중 claim_extractor가 "충분히" 뽑지 않은 것만 골라낸다.
 
@@ -160,7 +173,10 @@ def find_missed_candidates(article_text: str, extracted_sentences: list[str]) ->
     """
     missed: list[str] = []
     for candidate in scan_numeric_candidates(article_text):
-        covered_count = sum(1 for extracted in extracted_sentences if candidate in extracted)
+        normalized_candidate = _normalize_quotes(candidate)
+        covered_count = sum(
+            1 for extracted in extracted_sentences if normalized_candidate in _normalize_quotes(extracted)
+        )
         expected_count = _count_numeric_expressions(candidate)
         if covered_count >= expected_count:
             continue
