@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from .hcx_client import call_hcx
-from .claim_candidate_scanner import find_missed_candidates
+from .claim_candidate_scanner import dedupe_repeated_sentences, find_missed_candidates
 
 try:
     from interfaces import Claim
@@ -106,6 +106,34 @@ sentence 자체는 원문 전체를 유지해서 문장이 통째로 유실되�
 comparison_value에 따로 담기 때문입니다. "전년 대비 늘었다"는 비교 표현이 있다고
 claim_type을 "증감률"로 바꾸지 마세요 — 퍼센트(%) 변화율이 실제로 주장된 문장에만
 "증감률"을 쓰고, 이 예시처럼 절대량(명)의 변화는 "규모"+comparison_value로 표현합니다.)
+
+## 예시 (한 문장에 절대값+비중(%)이 같이 있는 경우)
+입력 문장: "AI 관련 R&D 예산은 1조2000억원으로 정부 R&D의 약 4% 수준이다."
+출력: [
+  {"sentence": "AI 관련 R&D 예산은 1조2000억원으로 정부 R&D의 약 4% 수준이다.", "claim_type": "규모", "period": null, "unit": "원", "population": null, "statistic_expression": "AI 관련 R&D 예산", "value": 1200000000000, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "AI 관련 R&D 예산은 1조2000억원으로 정부 R&D의 약 4% 수준이다.", "claim_type": "비교", "period": null, "unit": "%", "population": null, "statistic_expression": "AI 관련 R&D 예산이 정부 R&D 예산에서 차지하는 비중", "value": 4.0, "value_type": null, "comparison_operator": null, "comparison_target": "정부 R&D 예산", "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+(절대값(1조2000억원)만 뽑고 비중(4%)을 버리거나, 반대로 비중만 뽑고 절대값을 버리지
+마세요 — 두 claim 모두 원문 문장 전체를 sentence로 그대로 씁니다.)
+
+## 예시 ("~등"으로 예시 항목이 덧붙는 경우)
+입력 문장: "외식 물가는 지난 2월(3%)에 이어 지난달에도 3% 상승했는데, 생선회(5.4%)와
+치킨(5.3%) 등 소비자들이 자주 찾는 외식 품목들의 가격이 크게 오르며 체감 물가상승률을
+높였다."
+출력: [
+  {"sentence": "외식 물가는 지난 2월(3%)에 이어 지난달에도 3% 상승했는데, 생선회(5.4%)와 치킨(5.3%) 등 소비자들이 자주 찾는 외식 품목들의 가격이 크게 오르며 체감 물가상승률을 높였다.", "claim_type": "증감률", "period": "지난달", "unit": "%", "population": "외식", "statistic_expression": "외식 물가 상승률", "value": 3.0, "value_type": null, "comparison_operator": null, "comparison_target": "2월", "comparison_value": 3.0, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "외식 물가는 지난 2월(3%)에 이어 지난달에도 3% 상승했는데, 생선회(5.4%)와 치킨(5.3%) 등 소비자들이 자주 찾는 외식 품목들의 가격이 크게 오르며 체감 물가상승률을 높였다.", "claim_type": "증감률", "period": "지난달", "unit": "%", "population": "생선회", "statistic_expression": "생선회 가격 상승률", "value": 5.4, "value_type": null, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "외식 물가는 지난 2월(3%)에 이어 지난달에도 3% 상승했는데, 생선회(5.4%)와 치킨(5.3%) 등 소비자들이 자주 찾는 외식 품목들의 가격이 크게 오르며 체감 물가상승률을 높였다.", "claim_type": "증감률", "period": "지난달", "unit": "%", "population": "치킨", "statistic_expression": "치킨 가격 상승률", "value": 5.3, "value_type": null, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+("등"으로 끝나 목록이 안 닫혀 보여도 "예시일 뿐"이라며 건너뛰지 마세요 — 헤드라인 수치
+claim 1개 + "등" 앞에 언급된 개별 품목 claim들을 모두 뽑습니다.)
+
+## 예시 (한 시점이 아니라 여러 해에 걸친 최저·최고 하한선 주장)
+입력 문장: "한국산업기술기획평가원에 따르면, 2017~2022년 우리나라의 국가 주도 R&D 과제
+성공률은 97% 밑으로 내려간 적이 한 번도 없다."
+출력: [{"sentence": "한국산업기술기획평가원에 따르면, 2017~2022년 우리나라의 국가 주도 R&D 과제 성공률은 97% 밑으로 내려간 적이 한 번도 없다.", "claim_type": "규모", "period": "2017~2022년", "unit": "%", "population": "국가 주도 R&D 과제", "statistic_expression": "R&D 과제 성공률(최저치)", "value": 97.0, "value_type": "수준값", "comparison_operator": "초과", "comparison_target": null, "comparison_value": null, "region": null, "source_org": "한국산업기술기획평가원", "source_report": null}]
+(특정 연도 하나를 못 찍는다고 애매하다며 버리지 마세요 — value에 하한선 숫자를,
+comparison_operator에 "초과"를, period에 전체 구간을 그대로 담습니다.)
 
 ## 검토할 문장들
 {candidate_sentences}
@@ -370,12 +398,16 @@ def extract_claims(
     합친다. temperature=0으로도 recall이 28.8%에 그쳐서(few-shot 예시 보강도 무효과),
     원인이 비결정성이 아니라 "모델이 긴 입력을 한 번에 훑을 때 일부만 뽑고 마는" 커버리지
     문제로 판단했고, 각 청크를 few-shot 예시와 비슷한 짧은 크기로 줄여서 정면 대응한다.
-    청크 사이에 겹침은 없어서(위 _split_into_chunks 참고) 중복 제거 로직은 불필요.
+    청크 사이에 겹침은 없어서(위 _split_into_chunks 참고) 청크 분할 자체는 중복 제거 로직이
+    불필요하다 — 다만 아래 dedupe_repeated_sentences()는 이거랑 무관하게, 원본 기사 본문
+    자체에 이미 들어있는 중복(크롤링 시 관련기사/광고 위젯이 같이 긁혀 리드 문단이 본문 안에
+    통째로 재등장하는 경우, data_set.csv 실측 76.5%)을 없애는 별도 전처리다.
 
     실패 처리(청크별로 독립 적용): 한 청크가 ClaimExtractorError로 실패해도 나머지 청크는
     계속 처리한다 — 기사 전체를 버리는 것보다, 실패한 청크분만 놓치는 게 낫다.
     모든 청크가 실패하면 ClaimExtractorError를 그대로 올린다.
     """
+    article_text = dedupe_repeated_sentences(article_text)
     chunks = _split_into_chunks(article_text)
 
     all_claims: list[Claim] = []
@@ -424,7 +456,12 @@ def recover_missed_claims(
 
     실패 시(HCX 호출 오류, JSON 파싱 실패 등) 그때까지 모은 claims를 그대로 반환한다 —
     복구는 best-effort이고, 실패해도 이전 라운드까지의 결과는 지켜야 배치가 안 죽는다.
+
+    extract_claims()와 별개로 호출될 수 있어서(배치 파이프라인이 article_text를 각자
+    들고 있다가 두 함수를 따로 부름) 여기서도 dedupe_repeated_sentences()를 다시 건다 —
+    이미 정리된 텍스트가 들어와도 그대로 반환되는 멱등 연산이라 중복 호출 비용은 없다.
     """
+    article_text = dedupe_repeated_sentences(article_text)
     claims = extracted_claims
     for _ in range(_MAX_RECOVERY_ROUNDS):
         before = len(claims)
@@ -436,22 +473,24 @@ def recover_missed_claims(
     return claims
 
 
-def _recover_missed_claims_once(
-    article_text: str,
-    extracted_claims: list[Claim],
-    *,
-    model: str,
-    max_tokens: int,
-    temperature: float,
-) -> list[Claim]:
-    """recover_missed_claims()의 한 회차 분량 — 스캔 1번 + (필요하면) 복구 호출 1번."""
-    already_sentences = [c.sentence for c in extracted_claims]
-    missed = find_missed_candidates(article_text, already_sentences)
-    if not missed:
-        return extracted_claims
+# 2026-08-22 실측(batch_size_experiment, 밀집 문단 기사 2건 대상): 놓친 후보를 한 번에 다
+# 몰아서 보내면(all-in-one) 완주율이 17~29%에 그치는데, 이렇게 작게 쪼개서 보내면 48~91%까지
+# 오름 — extract_claims()가 긴 기사를 한 번에 훑을 때 일부만 뽑고 마는 것과 같은 coverage
+# 문제가 recovery 배치 안에서도 그대로 재현되는 것으로 확인됨. 그래서 recovery도 같은 원리로
+# 작게 쪼갠다(위 CHUNK_SIZE 설명 참고).
+_RECOVERY_BATCH_SIZE = 3
 
+
+def _chunked(items: list[str], size: int) -> list[list[str]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _call_recovery_batch(
+    missed_batch: list[str], *, model: str, max_tokens: int, temperature: float
+) -> list[Claim]:
+    """놓친 후보 중 한 배치(_RECOVERY_BATCH_SIZE개)만 HCX에 물어봐서 구조화한다."""
     prompt = _RECOVERY_PROMPT_TEMPLATE.replace(
-        "{candidate_sentences}", "\n".join(f"- {s}" for s in missed)
+        "{candidate_sentences}", "\n".join(f"- {s}" for s in missed_batch)
     )
     reply = ""
     try:
@@ -462,17 +501,41 @@ def _recover_missed_claims_once(
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        recovered = _parse_claims(reply)
+        return _parse_claims(reply)
     except (ClaimExtractorError, KeyError, ValueError, TypeError, json.JSONDecodeError) as e:
         # maxTokens에 걸려 배열 마지막 객체가 중간에 끊기면 _parse_claims가 통째로
-        # 실패한다 — 후보 문장이 많을 때(사망자 나이대별 여러 그룹처럼 한 회차에 건질 게
-        # 많은 경우) 실측 재현됨. 앞쪽에서 이미 완결된 객체들은 _salvage_claims로 건져서
-        # 그 회차를 통째로 날리지 않는다.
+        # 실패한다 — 앞쪽에서 이미 완결된 객체들은 _salvage_claims로 건져서 이 배치를
+        # 통째로 날리지 않는다. 배치 단위라 한 배치가 실패해도 다른 배치는 영향 없다.
         salvaged = _salvage_claims(reply) if reply else []
         if not salvaged:
-            print(f"[claim_extractor] 놓친 claim 복구 실패 ({type(e).__name__}: {e}) → 이번 회차는 원래 결과만 사용")
-            return extracted_claims
-        recovered = salvaged
+            print(f"[claim_extractor] 놓친 claim 복구 실패 ({type(e).__name__}: {e}) → 이 배치는 스킵")
+        return salvaged
+
+
+def _recover_missed_claims_once(
+    article_text: str,
+    extracted_claims: list[Claim],
+    *,
+    model: str,
+    max_tokens: int,
+    temperature: float,
+) -> list[Claim]:
+    """recover_missed_claims()의 한 회차 분량 — 스캔 1번 + 배치별 복구 호출 여러 번.
+
+    놓친 후보 전부를 한 호출에 몰아넣지 않고 _RECOVERY_BATCH_SIZE개씩 나눠서 여러 번
+    호출한다(위 실측 근거 참고) — 후보가 적은(대부분의) 기사는 배치가 1개뿐이라 호출 수가
+    그대로고, 후보가 많은 소수 기사만 호출이 늘어난다.
+    """
+    already_sentences = [c.sentence for c in extracted_claims]
+    missed = find_missed_candidates(article_text, already_sentences)
+    if not missed:
+        return extracted_claims
+
+    recovered: list[Claim] = []
+    for batch in _chunked(missed, _RECOVERY_BATCH_SIZE):
+        recovered.extend(
+            _call_recovery_batch(batch, model=model, max_tokens=max_tokens, temperature=temperature)
+        )
 
     return extracted_claims + recovered
 

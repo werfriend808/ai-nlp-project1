@@ -256,6 +256,28 @@ def _value_mismatches_sentence(value: Optional[float], sentence: str) -> bool:
     return not any(v in sentence for v in variants)
 
 
+_VALUE_REQUIRED_CLAIM_TYPES = ("규모", "증감률")
+
+
+def _missing_value_for_magnitude_claim(claim: Claim) -> bool:
+    """claim_type이 "규모"/"증감률"인데 value가 None이면 True.
+
+    2026-08-20 실측(오늘 배치 47건 중 5건, verifications.db): "KDDX 개념설계는 2012년...
+    기본설계는 2020년... 수주했다"처럼 문장에 연도 등 숫자는 있어도 정작 비교할 통계값
+    자체는 없는 경우, "경기 침체로 음식점·유원지 손님 '뚝'..."처럼 기사 제목이 그대로
+    claim으로 뽑힌 경우, "...지정돼 혜택을 받을 것으로 보인다"처럼 미래 전망 문장인데
+    claim_type이 '전망'이 아니라 '규모'로 잘못 분류된 경우가 모두 이 패턴이었다.
+    claim_type='규모'라는 라벨 자체가 "이 문장은 수치 규모를 주장한다"는 뜻인데 value가
+    없으면 그 라벨과 내용이 모순이라, 3단계(표매칭)로 보낼 근거가 없다고 본다.
+
+    _has_hallucinated_value/_value_mismatches_sentence는 반대로 "value가 있는데 문장과
+    안 맞는" 경우만 잡아서, "value 자체가 없는" 이 경우는 못 잡았다(둘 다 value is None이면
+    바로 False를 반환하고 넘어감) — 이 함수가 그 빈틈을 메운다."""
+    if claim.claim_type not in _VALUE_REQUIRED_CLAIM_TYPES:
+        return False
+    return getattr(claim, "value", None) is None
+
+
 def filter_verifiable_claims(claims: list[Claim]) -> list[Claim]:
     """claim 리스트에서 source_org가 "kosis_verified"이고, value 환각/오귀속이 의심되지
     않는 것만 남긴다.
@@ -273,6 +295,7 @@ def filter_verifiable_claims(claims: list[Claim]) -> list[Claim]:
         and not _has_hallucinated_value(c)
         and not _value_mismatches_sentence(getattr(c, "value", None), c.sentence)
         and not _value_mismatches_sentence(getattr(c, "comparison_value", None), c.sentence)
+        and not _missing_value_for_magnitude_claim(c)
     ]
 
 
@@ -436,6 +459,39 @@ if __name__ == "__main__":
     print(
         "[수정 확인] 값 오귀속 claim(울릉군, value=83.5가 다른 문장 것)은 걸러지고, "
         "한글 억 단위·소수점 정상 claim은 그대로 통과됨"
+    )
+
+    # 2026-08-20 회귀 테스트: _missing_value_for_magnitude_claim — claim_type='규모'인데
+    # value가 None인 claim을 걸러내는지 확인. 실제 재현 사례(오늘 배치 47건 중 5건):
+    # 연도만 있고 진짜 통계값이 없는 문장, 기사 제목이 그대로 뽑힌 경우, 미래 전망 문장이
+    # '전망' 대신 '규모'로 잘못 분류된 경우가 전부 이 패턴이었음(agent/kosis/verify_api_client.py
+    # 아님, verifications.db 2026-08-20 실행분 직접 확인).
+    no_value_claim = Claim(
+        sentence="KDDX 개념설계는 2012년 대우조선해양(현 한화오션), 기본설계는 2020년 HD현대중공업이 수주했다.",
+        claim_type="규모", source_org="산업통상자원부", value=None,
+    )
+    title_only_claim = Claim(
+        sentence="경기 침체로 음식점·유원지 손님 '뚝'... 매출 급감",
+        claim_type="규모", source_org="통계청", value=None,
+    )
+    real_value_claim = Claim(
+        sentence="지난해 국내 1인 가구가 800만 가구를 넘어서 역대 최대 규모를 기록했다.",
+        claim_type="규모", source_org="통계청", value=8000000.0,
+    )
+    forecast_claim = Claim(
+        sentence="내년에는 물가가 더 오를 것으로 전망된다.",
+        claim_type="전망", source_org="통계청", value=None,
+    )
+    missing_value_filtered = filter_verifiable_claims(
+        [no_value_claim, title_only_claim, real_value_claim, forecast_claim]
+    )
+    assert no_value_claim not in missing_value_filtered, "❌ 값 없는 '규모' claim(KDDX)이 안 걸러짐"
+    assert title_only_claim not in missing_value_filtered, "❌ 값 없는 '규모' claim(제목)이 안 걸러짐"
+    assert real_value_claim in missing_value_filtered, "❌ 값 있는 정상 '규모' claim이 잘못 걸러짐"
+    assert forecast_claim in missing_value_filtered, "❌ claim_type='전망'은 이 필터 대상 밖이라 안 걸려야 하는데 잘못 걸러짐"
+    print(
+        "[수정 확인] claim_type='규모'인데 value=None인 claim(KDDX, 기사제목)은 걸러지고, "
+        "값 있는 정상 claim은 그대로 통과됨 (전망 claim_type은 이 필터 범위 밖이라 별개로 정상 제외)"
     )
 
     print("\n최종 통과:", [c.source_org for c in filter_verifiable_claims(backfill_source_org(samples))])

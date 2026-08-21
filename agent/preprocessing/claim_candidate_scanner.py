@@ -96,6 +96,37 @@ def split_sentences(article_text: str) -> list[str]:
     return [s.strip() for s in _SENTENCE_BOUNDARY.split(article_text) if s.strip()]
 
 
+_DEDUPE_MIN_LEN = 30
+
+
+def dedupe_repeated_sentences(article_text: str) -> str:
+    """크롤링 과정에서 관련기사 티저/광고 위젯이 본문 중간에 섞여 들어와, 기사 본문 자체가
+    (주로 도입부가) 통째로 두세 번 재등장하는 경우를 제거한다.
+
+    2026-08-22 실측(data_set.csv 2706개 기사 전수 스캔): 30자 이상인 문장이 같은 기사 본문
+    안에서 한 번 더 나오는 사례가 76.5%에 달함 — "관련기사 더보기"/"많이 본 뉴스" 위젯이
+    본문과 같이 크롤링되면서 기사 리드 문단이 그대로 재등장하는 패턴으로 확인됨(예: 기사
+    "끝이 안 보이는 내수 부진..."에서 "3일 통계청이 발표한..."으로 시작하는 리드 문장이
+    330자 지점과 6284자 지점에 토씨 하나 안 틀리고 두 번 나옴). 이게 claim_candidate_scanner
+    가 같은 claim을 두 번 후보로 잡고, 결과적으로 같은 claim이 최종 결과에 중복 저장되는
+    현상의 실제 원인으로 보임(recover_missed_claims 배치 크기 실험 중 발견).
+
+    30자 미만 문장은 우연히 겹치는 짧은 문구("~라고 밝혔다" 등)가 많아 dedup 대상에서
+    제외한다 — 실제 뉴스 기사가 30자 넘는 문장을 자기 복제하는 경우는 사실상 없어서, 이
+    길이 기준이면 진짜 본문을 잘못 지울 위험 없이 광고/중복 위젯만 골라낼 수 있다.
+    """
+    seen: set[str] = set()
+    kept: list[str] = []
+    for sentence in split_sentences(article_text):
+        norm = re.sub(r"\s+", "", sentence)
+        if len(norm) >= _DEDUPE_MIN_LEN:
+            if norm in seen:
+                continue
+            seen.add(norm)
+        kept.append(sentence)
+    return " ".join(kept)
+
+
 def scan_numeric_candidates(article_text: str) -> list[str]:
     """기사 본문에서 검증 가치 있을 수 있는 숫자 포함 문장을 전부 후보로 뽑는다.
 
@@ -228,4 +259,33 @@ if __name__ == "__main__":
     )
     print("[케이스7] claim 2개 다 정상적으로 뽑힌 경우엔 missed로 안 잡히는지 확인(회귀 방지)")
 
-    print("\n[전체 통과] 규칙 기반 후보 스캐너 회귀 테스트 7건 모두 통과")
+    # 케이스 8 — dedupe_repeated_sentences: 실제 재현 사례(기사 "끝이 안 보이는 내수 부진...")
+    # 관련기사 위젯이 본문 중간에 끼면서 리드 문장이 통째로 두 번 등장하는 경우 제거되는지.
+    # 광고/관련기사 티저 문장도 "~다."로 끝나는 실제 사례를 그대로 써야 한다 — split_sentences가
+    # "다./요."로 끝나는 지점만 문장 경계로 보기 때문에, 끼어든 문장이 이 패턴으로 안 끝나면
+    # 뒤 문장과 한 덩어리로 붙어버려서 뒤에 있는 두 번째 중복이 안 갈라진다(실제로 처음 짠
+    # 합성 테스트에서 이 문제로 실패해 재현 문구를 다듬음).
+    lead = "3일 통계청이 발표한 ‘2024년 12월 및 연간 산업활동 동향’에 따르면, 작년 연간 소매판매액은 전년보다 2.2% 감소했다."
+    dup_body = (
+        lead
+        + " 신용카드 대란 관련 내용이다. "
+        + "#반도체 더보기 관련기사 티저 문구다. "
+        + lead
+        + " 마지막 문단이다."
+    )
+    cleaned = dedupe_repeated_sentences(dup_body)
+    assert cleaned.count("작년 연간 소매판매액은 전년보다 2.2% 감소했다") == 1, (
+        f"❌ 중복된 리드 문장이 제거되지 않음: {cleaned}"
+    )
+    assert "마지막 문단이다" in cleaned, "❌ dedup 과정에서 진짜 본문 뒷부분까지 날아감"
+    print("[케이스8] 본문 안에서 통째로 재등장하는 리드 문장(광고/관련기사 위젯 섞임) 제거 확인")
+
+    # 케이스 9 — dedupe_repeated_sentences: 30자 미만 짧은 문장은 우연히 겹쳐도 지우면 안 됨
+    short_repeat = "그는 그렇게 말했다. 정말 그럴까? 그는 그렇게 말했다."
+    cleaned_short = dedupe_repeated_sentences(short_repeat)
+    assert cleaned_short.count("그는 그렇게 말했다") == 2, (
+        f"❌ 30자 미만 짧은 문장까지 중복 제거로 날아감(과잉 삭제): {cleaned_short}"
+    )
+    print("[케이스9] 30자 미만 짧은 문장은 우연히 겹쳐도 그대로 유지되는지 확인(과잉 삭제 방지)")
+
+    print("\n[전체 통과] 규칙 기반 후보 스캐너 회귀 테스트 9건 모두 통과")
