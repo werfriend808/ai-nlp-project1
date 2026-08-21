@@ -41,6 +41,52 @@ function HighlightedClaim({ content, record, number, onClick }: HighlightedClaim
   );
 }
 
+interface UnmatchedClaimListProps {
+  title: string;
+  records: VerificationRecord[];
+  claimNumbers: Map<string, number>;
+  expandedId: string | null;
+  setExpandedId: (id: string | null) => void;
+}
+
+// notFound(원문에서 못 찾음)와 overlapSkipped(다른 주장과 자리가 겹침)를 각각 다른
+// 안내 문구로 보여주기 위한 공용 목록 렌더러 — 원인이 다른데 하나로 뭉뚱그리면 "표기
+// 차이"라는 설명이 겹침 케이스엔 안 맞아서 나뉘었다(2026-08-21).
+function UnmatchedClaimList({ title, records, claimNumbers, expandedId, setExpandedId }: UnmatchedClaimListProps) {
+  return (
+    <div className="rounded-lg border border-dashed border-gray-300 p-4 text-sm dark:border-gray-600">
+      <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{title}</p>
+      <ul className="flex flex-col gap-2">
+        {records.map((record) => {
+          const isExpanded = expandedId === record.result_id;
+          const detailText = record.evidence ?? record.ambiguity_reason;
+          return (
+            <li key={record.result_id}>
+              <HighlightedClaim
+                content={record.claim_sentence}
+                record={record}
+                number={claimNumbers.get(record.result_id)}
+                onClick={() => detailText && setExpandedId(isExpanded ? null : record.result_id)}
+              />
+              {isExpanded && detailText && (
+                <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+                  <VerdictBadge verdict={record.verification_result} />
+                  <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">{detailText}</p>
+                  {record.kosis_table && (
+                    <p className="mt-2 border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                      KOSIS 참조: {record.kosis_table}
+                    </p>
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // 기사 원문 전체를 그대로 보여주고, 그 안에서 실제로 검증한 수치 주장 부분만 판정 색으로
 // 밑줄/하이라이트한다. 클릭하면 그 자리에서 바로 아래에 판정 근거 카드가 펼쳐진다.
 // 이렇게 원문 전체를 보여주는 이유: 2단계(claim_extractor)가 기사 속 수치 주장을 빠짐없이
@@ -52,7 +98,7 @@ export function ArticleTextViewer({ articleText, claims, articleDate }: ArticleT
   // claimNumbers: 원문에 실제로 등장하는 순서(위→아래)대로 매긴 번호 — buildArticleSegments가
   // 이미 위치순으로 정렬해둔 걸 그대로 재사용한다(원문 하이라이트, 매칭 안 된 목록 둘 다 같은
   // 번호 체계를 공유).
-  const { segments, unmatched, claimNumbers } = useMemo(
+  const { segments, notFound, overlapSkipped, claimNumbers } = useMemo(
     () => buildArticleSegments(cleanedText, claims),
     [cleanedText, claims],
   );
@@ -114,40 +160,23 @@ export function ArticleTextViewer({ articleText, claims, articleDate }: ArticleT
         </div>
       </div>
 
-      {unmatched.length > 0 && (
-        <div className="rounded-lg border border-dashed border-gray-300 p-4 text-sm dark:border-gray-600">
-          <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            원문에서 정확히 위치를 못 찾은 주장 {unmatched.length}건 (표기 차이로 추정, 원문 안에는
-            표시 못 해서 여기 따로 모음):
-          </p>
-          <ul className="flex flex-col gap-2">
-            {unmatched.map((record) => {
-              const isExpanded = expandedId === record.result_id;
-              const detailText = record.evidence ?? record.ambiguity_reason;
-              return (
-                <li key={record.result_id}>
-                  <HighlightedClaim
-                    content={record.claim_sentence}
-                    record={record}
-                    number={claimNumbers.get(record.result_id)}
-                    onClick={() => detailText && setExpandedId(isExpanded ? null : record.result_id)}
-                  />
-                  {isExpanded && detailText && (
-                    <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
-                      <VerdictBadge verdict={record.verification_result} />
-                      <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">{detailText}</p>
-                      {record.kosis_table && (
-                        <p className="mt-2 border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                          KOSIS 참조: {record.kosis_table}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+      {notFound.length > 0 && (
+        <UnmatchedClaimList
+          title={`원문에서 정확히 위치를 못 찾은 주장 ${notFound.length}건 (표기 차이로 추정, 원문 안에는 표시 못 해서 여기 따로 모음):`}
+          records={notFound}
+          claimNumbers={claimNumbers}
+          expandedId={expandedId}
+          setExpandedId={setExpandedId}
+        />
+      )}
+      {overlapSkipped.length > 0 && (
+        <UnmatchedClaimList
+          title={`다른 주장과 같은 자리에서 문장이 겹쳐 원문에 함께 표시하지 못한 주장 ${overlapSkipped.length}건:`}
+          records={overlapSkipped}
+          claimNumbers={claimNumbers}
+          expandedId={expandedId}
+          setExpandedId={setExpandedId}
+        />
       )}
     </div>
   );

@@ -30,3 +30,7 @@ psycopg2-binary>=2.9.9
 # 지원 안 되는 파이썬 버전)에서 완전히 죽지 않기 위한 안전장치로 그대로 남겨두고, 정상
 # 환경에서는 항상 설치되게 여기 추가한다.
 kiwipiepy>=0.20.0
+# agent/api/server.py — "새로운 뉴스 기사 검증하기" 실시간 검증 API (2026-08-21 추가).
+# GPU(Qwen3-Embedding-4B, bge-reranker-v2-m3)가 필요해서 AWS GPU 서버에서만 실행한다.
+fastapi>=0.115.0
+uvicorn>=0.32.0

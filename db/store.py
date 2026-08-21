@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS verifications (
     classifier_score REAL,
     reviewer_agrees INTEGER,
     reviewer_corrected_verdict TEXT,
-    created_at TEXT
+    created_at TEXT,
+    published_date TEXT
 )
 """
 
@@ -75,6 +76,10 @@ _COLUMNS = [
     "verification_possible", "ambiguity_reason", "verification_result",
     "mismatch_reason", "evidence", "classifier_score",
     "reviewer_agrees", "reviewer_corrected_verdict", "created_at",
+    # 2026-08-21 추가: 기사 실제 발행일(YYYY-MM-DD). 예전엔 이 컬럼이 없어서 실시간 URL
+    # 검증(agent/api/server.py) 기사는 정확한 날짜를 뽑고도 저장할 곳이 없어 프론트가
+    # "검증 실행 시각"으로 잘못 폴백했다 — db/export_json.py의 export_article_dates() 참고.
+    "published_date",
 ]
 
 
@@ -94,6 +99,16 @@ def init_db(path: Path = DB_PATH) -> None:
     conn = sqlite3.connect(path)
     try:
         conn.execute(_SCHEMA)
+        # CREATE TABLE IF NOT EXISTS는 이미 만들어진 기존 테이블엔 새 컬럼을 추가해주지
+        # 않는다 — published_date 컬럼 도입(2026-08-21) 전에 이미 존재하던 verifications.db
+        # 파일들을 위해 없으면 추가한다. 여러 프로세스가 동시에 init_db()를 부를 수 있어서
+        # (예: 배치 실행 중 API 서버도 기동) "이미 있음" 에러는 조용히 무시한다.
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(verifications)")}
+        if "published_date" not in existing_cols:
+            try:
+                conn.execute("ALTER TABLE verifications ADD COLUMN published_date TEXT")
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
     finally:
         conn.close()

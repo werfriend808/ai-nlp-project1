@@ -41,17 +41,42 @@ function normalizeQuotes(text: string): string {
 // 실제로 인라인에 그려지는 순서 그대로 번호를 매기면 하이라이트 순서와 번호가 항상
 // 일치한다. 인라인에 못 그리는(못 찾음 + 겹침) 주장은 위치가 없으니, 매칭된 것들 뒤에
 // 이어서(원래 배열 순서대로) 번호를 붙인다.
+// 2026-08-21 실측 확인: claim_extractor에 넘어가는 article_text가 일부 기사에서 제목과
+// 본문이 구분자 없이 붙어있어서, claim_sentence 앞에 article_title이 그대로 접두어로
+// 붙는 경우가 있었다(예: "3월 청년 실업률 7.5%… 4년 만에 최대치 기록 청년 실업률이
+// 지난달 7.5%까지 치솟으며..." — 앞부분이 article_title과 완전히 동일). 원문(표시용
+// articleText)엔 제목이 안 보이니 그대로는 못 찾는다 — article_title이 있고 claim이
+// 그걸로 시작하면 그 접두어를 떼고 다시 찾아본다(백엔드를 안 고쳐도 화면에선 정상
+// 노출되게 하는 방어적 처리).
+function stripTitlePrefix(sentence: string, articleTitle: string | undefined): string {
+  if (!articleTitle) return sentence;
+  const normalizedTitle = normalizeQuotes(articleTitle).trim();
+  const normalizedSentence = normalizeQuotes(sentence);
+  if (normalizedTitle && normalizedSentence.startsWith(normalizedTitle)) {
+    return sentence.slice(articleTitle.length).trimStart();
+  }
+  return sentence;
+}
+
 export function buildArticleSegments(
   articleText: string,
   claims: VerificationRecord[],
-): { segments: ArticleSegment[]; unmatched: VerificationRecord[]; claimNumbers: Map<string, number> } {
+): {
+  segments: ArticleSegment[];
+  unmatched: VerificationRecord[];
+  notFound: VerificationRecord[];
+  overlapSkipped: VerificationRecord[];
+  claimNumbers: Map<string, number>;
+} {
   const normalizedArticle = normalizeQuotes(articleText);
+  const articleTitle = claims[0]?.article_title;
 
   const located = claims
-    .map((record) => ({
-      record,
-      index: normalizedArticle.indexOf(normalizeQuotes(record.claim_sentence)),
-    }))
+    .map((record) => {
+      const stripped = stripTitlePrefix(record.claim_sentence, articleTitle);
+      const index = normalizedArticle.indexOf(normalizeQuotes(stripped));
+      return { record, index, matchedText: index === -1 ? record.claim_sentence : stripped };
+    })
     .filter((m) => m.index !== -1)
     .sort((a, b) => a.index - b.index);
 
@@ -60,19 +85,29 @@ export function buildArticleSegments(
   const segments: ArticleSegment[] = [];
   const overlapSkipped: VerificationRecord[] = [];
   const rendered: VerificationRecord[] = [];
+  // 인라인에 그려진 각 구간의 시작 위치 -> 판정. 나중에 겹치는 주장이 나왔을 때, 시작
+  // 위치가 완전히 같고 판정도 같으면 "표기 차이"가 아니라 순수 중복 추출(같은 문장이
+  // claim_extractor에서 두 번 뽑힘)이라 화면에 또 보여줄 필요가 없다 — 조용히 버린다.
+  // 시작 위치는 같은데 판정이 다르면(진짜 의견 차이) 계속 보여준다.
+  const renderedByIndex = new Map<number, VerificationRecord["verification_result"]>(); // index -> verification_result
   let cursor = 0;
-  for (const { record, index } of located) {
+  for (const { record, index, matchedText } of located) {
     if (index < cursor) {
-      overlapSkipped.push(record); // 다른 주장과 겹치는 구간 — 인라인 대신 목록으로
+      const sameSpotVerdict = renderedByIndex.get(index);
+      if (sameSpotVerdict !== undefined && sameSpotVerdict === record.verification_result) {
+        continue; // 순수 중복 추출 — 조용히 스킵(목록에도 안 보여줌)
+      }
+      overlapSkipped.push(record); // 다른 주장과 진짜로 겹치는 구간 — 인라인 대신 목록으로
       continue;
     }
     if (index > cursor) {
       segments.push({ type: "text", content: articleText.slice(cursor, index) });
     }
-    const end = index + record.claim_sentence.length;
+    const end = index + matchedText.length;
     segments.push({ type: "claim", content: articleText.slice(index, end), record });
     cursor = end;
     rendered.push(record);
+    renderedByIndex.set(index, record.verification_result);
   }
   if (cursor < articleText.length) {
     segments.push({ type: "text", content: articleText.slice(cursor) });
@@ -84,7 +119,10 @@ export function buildArticleSegments(
   rendered.forEach((record, i) => claimNumbers.set(record.result_id, i + 1));
   unmatched.forEach((record, i) => claimNumbers.set(record.result_id, rendered.length + i + 1));
 
-  return { segments, unmatched, claimNumbers };
+  // notFound(원문에서 문장 자체를 못 찾음)와 overlapSkipped(위치는 찾았지만 다른 주장과
+  // 겹쳐서 인라인엔 못 그림)는 원인이 달라서 화면에서 다른 문구로 안내해야 한다 —
+  // 둘 다 "표기 차이로 추정"이라고 뭉뚱그리면 겹침 케이스엔 안 맞는 설명이 된다.
+  return { segments, unmatched, notFound, overlapSkipped, claimNumbers };
 }
 
 // 세그먼트 배열을 빈 줄(\n\n 이상) 기준으로 문단 단위 배열로 재구성한다. claim 세그먼트는

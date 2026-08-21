@@ -215,7 +215,7 @@ def _merge_candidates(
     return list(merged.values())
 
 
-_RANK_TAG_RE = re.compile(r"\b(keyword_rank|embedding_rank|vdb_rank|reranker_rank)=(\d+)")
+_RANK_TAG_RE = re.compile(r"\b(keyword_rank|embedding_rank|vdb_rank|reranker_rank|population_rank)=(\d+)")
 
 
 def _parse_rrf_ranks(source_meta: Optional[str]) -> dict[str, int]:
@@ -250,9 +250,15 @@ def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     2026-08-20: reranker_rank==1이어도 그 판단의 확신도(rerank_raw를 시그모이드한 값)가
     MIN_RERANKER_CONFIDENCE 미만이면 신뢰하지 않는다 — "후보 풀 전부가 나빴는데 그중
     제일 덜 나쁜 걸 1등 시켰을 뿐"인 경우를 걸러내기 위함(위 실측 사례 참고).
+
+    2026-08-21: population_rank(아래 _apply_population_signal 참고)도 keyword_rank와
+    동급으로 신뢰한다 — claim 문장에서 직접 뽑은 명시적 규칙 기반 신호라 임베딩/리랭커의
+    노이즈 있는 유사도 판단보다 신뢰도가 높다고 보기 때문.
     """
     ranks = _parse_rrf_ranks(source_meta)
     if "keyword_rank" in ranks:
+        return True
+    if "population_rank" in ranks:
         return True
     if ranks.get("reranker_rank") != 1:
         return False
@@ -333,6 +339,44 @@ def rerank(
     return fused[:top_k]
 
 
+# 표 카탈로그에 실제로 등장하는 인구집단 용어만 담았다(2026-08-21, table_catalog.json
+# 전수 스캔 결과: 청년 2건, 고령 3건, 유아 1건, 어린이 1건, 외국인 2건 — 나머지 후보군
+# 예: 청소년/노인/여성/남성/장애인 등)은 이 카탈로그엔 아예 없어서 넣어봐야 항상 매칭
+# 실패라 의미가 없다. 새 표가 추가되면 이 리스트도 같이 늘려야 한다.
+_POPULATION_TERMS = ["청년", "고령", "유아", "어린이", "외국인"]
+
+
+def _apply_population_signal(
+    claim: Claim, candidates: list[TableCandidate], document_texts: Optional[dict[str, str]]
+) -> list[TableCandidate]:
+    """claim 문장(+ population 필드)에 인구집단 용어가 있으면, 그 용어를 표 설명에
+    명시적으로 포함하는 후보에 population_rank=1을 붙인다(keyword_rank와 동급으로
+    is_rrf_trusted가 신뢰함).
+
+    2026-08-21: "청년층 고용률"/"청년 취업자" 같은 claim이 청년 전용 표(DT_1DA7102S)
+    대신 성별 경제활동인구총괄(DT_1DA7001S, 둘 다 고용률·실업률을 담고 있어 임베딩·
+    리랭커 모두 구분 못 함)로 잘못 매칭되는 걸 golden set으로 실측 확인(A040-02/03,
+    reranker on/off 둘 다 오답 — notebooks 골든셋 비교 로그 참고). keyword_search가
+    이미 "청년"을 SYNONYMS로 다루고 있을 수도 있지만, 후보 풀에 두 "형제 표"가 같이
+    들어왔을 때 어느 쪽이 이기는지까지는 못 가려서 이 단계가 별도로 필요하다.
+
+    새 후보를 발굴하지 않는다(발견은 keyword/embedding/vdb 몫) — 이미 merge된 후보
+    중에서 이 명시적 신호로 형제 표만 가려낸다."""
+    text_source = f"{claim.population or ''} {claim.sentence}"
+    matched_terms = [t for t in _POPULATION_TERMS if t in text_source]
+    if not matched_terms:
+        return candidates
+
+    tagged = []
+    for c in candidates:
+        doc = (document_texts or {}).get(c.table_id, c.table_name)
+        if any(t in doc for t in matched_terms):
+            tagged.append(_tag_source_rank(c, "population_rank", 1))
+        else:
+            tagged.append(c)
+    return tagged
+
+
 def search_and_rerank(
     claim: Claim,
     *,
@@ -353,6 +397,7 @@ def search_and_rerank(
     emb_results = embedding_fn(claim)
     vdb_results = vdb_fn(claim) if vdb_fn else []
     merged = _merge_candidates(kw_results, emb_results, vdb_results)
+    merged = _apply_population_signal(claim, merged, document_texts)
     return rerank(claim, merged, top_k=top_k, document_texts=document_texts)
 
 

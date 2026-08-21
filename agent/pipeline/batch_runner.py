@@ -51,12 +51,13 @@ import json
 import random
 import re
 import sys
+import time
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
 from agent.preprocessing.classifier import classify
-from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims
+from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims, strip_title_prefix_from_claims
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
@@ -166,11 +167,21 @@ def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) 
     그리고 (_JUNK_SECTION_RE 참고) 본문 뒤에 "관련기사"류 잡음 섹션이 시작되는 지점을
     찾으면 그 지점 이후는 잘라낸다 — 짧은 기사에서 남는 자리가 무관한 다른 기사 내용으로
     채워지는 걸 막기 위함.
+
+    2026-08-20: 제목 뒤에 줄바꿈이 없어서(스크랩 원본이 제목+본문을 그대로 이어붙임),
+    claim_extractor가 "제목+첫 문장"을 하나의 claim으로 착각해 합쳐버리는 문제가 실측
+    확인됐다(예: "3월 청년 실업률 7.5%… 4년 만에 최대치 기록 청년 실업률이 지난달
+    7.5%까지 치솟으며..."가 통째로 한 claim.sentence가 됨 — 프론트엔드에서 원문 위치를
+    못 찾는 형태로 나타남). 제목 자체는 맥락으로 남기되(LLM이 봐도 됨), 제목이 실제로
+    trimmed 맨 앞에서 발견되면 그 뒤에 줄바꿈을 넣어 본문과 명확히 분리한다.
     """
     anchor = title[:12].strip()
     idx = raw_text.find(anchor) if anchor else -1
     start = idx if idx >= 0 else 0
     trimmed = raw_text[start : start + max_len]
+
+    if idx >= 0 and title and trimmed.startswith(title):
+        trimmed = title + "\n" + trimmed[len(title) :]
 
     m = _BYLINE_RE.search(trimmed[: len(title) + 100])
     if m:
@@ -1153,11 +1164,19 @@ def _build_verification_record(
 
     calc_type = (generic_slots or {}).get("calc_type")
     article_title = article.get("article_title") or article["label"]
+    published_date = article.get("published_date")
 
     return {
         "result_id": make_result_id(article_title, claim.sentence),
         "article_title": article_title,
         "article_url": article.get("article_url"),
+        # 2026-08-21 실측: 실시간 URL 검증(agent/api/server.py)으로 들어온 기사는 정확한
+        # published_date를 fetch_article_for_verification()이 뽑아주는데도(예: 2024-08-14),
+        # db/store.py 스키마에 이 컬럼이 아예 없어서 저장도 export도 안 되고 있었다 —
+        # 그래서 프론트가 이 값을 못 받고 "검증 실행 시각"(latestCreatedAt)으로 폴백해
+        # 기사 날짜가 항상 "오늘"로 잘못 표시됐다. isoformat 문자열로 저장한다(date 객체는
+        # sqlite3가 그대로 못 담음).
+        "published_date": published_date.isoformat() if published_date else None,
         "claim_sentence": claim.sentence,
         "claim_type": claim.claim_type,
         "statistic_expression": claim.statistic_expression,
@@ -1189,6 +1208,47 @@ def _build_verification_record(
     }
 
 
+def _call_with_retry(fn, attempts: int = 3, delay_seconds: float = 5.0):
+    """HCX 호출이 가끔 몇 분씩 안 오거나 타임아웃/일시적 오류를 내는 문제(2026-08-21 실시간
+    API 서버 운영 중 실측)를 완화하려고 1·2단계(classify/extract_claims) 호출부에서만
+    쓰는 재시도 래퍼. 마지막 시도까지 실패하면 원래 예외를 그대로 올린다."""
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_error = e
+            if attempt < attempts:
+                print(f"  [재시도 {attempt}/{attempts - 1}] {type(e).__name__}: {e} — {delay_seconds}초 후 재시도")
+                time.sleep(delay_seconds)
+    raise last_error
+
+
+def _normalize_quotes_for_dedup(text: str) -> str:
+    return text.replace("'", "'").replace("'", "'").replace(""", '"').replace(""", '"')
+
+
+def _dedup_claims_by_sentence(claims: list) -> list:
+    """extract_claims()+recover_missed_claims() 결과에 완전 중복 claim이 섞이는 문제를
+    막는다. 2026-08-21 실측(DB id=11/13): 같은 문장("'그냥 쉬었다'는 청년도 1분기...")이
+    두 번 추출됐는데, 원인은 recover_missed_claims()가 내부적으로 쓰는
+    claim_candidate_scanner.find_missed_candidates()가 따옴표 문자 차이(원문의 곧은
+    따옴표 vs HCX가 반환한 둥근따옴표) 때문에 "이미 뽑힌 문장"을 못 알아보고 다시
+    "놓친 후보"로 오판해 재추출했기 때문이다(claim_candidate_scanner.py의 정규화로 근본
+    원인은 고쳤지만, 다른 경로로 중복이 또 생길 가능성에 대비해 최종 방어선을 하나
+    더 둔다). 정규화한 문장이 같으면 먼저 나온 것만 남긴다 — 3~8단계가 같은 사실을
+    두 번 처리하며 KOSIS/HCX 호출을 낭비하는 것도 같이 막는다."""
+    seen: set[str] = set()
+    deduped = []
+    for claim in claims:
+        key = _normalize_quotes_for_dedup(claim.sentence.strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(claim)
+    return deduped
+
+
 def run_article(
     article: dict,
     client: KosisApiClient,
@@ -1196,9 +1256,27 @@ def run_article(
     table_params: dict,
     embedding_cache: dict,
     catalog_by_id: dict,
+    *,
+    vdb_fn=None,
+    raise_on_stage12_error: bool = False,
 ) -> list[dict]:
     """기사 하나를 1~8단계까지 돌리고, 16:30~17:00 결과 검수용 레코드 리스트를 반환한다.
-    각 레코드: {article, claim_sentence, table_name, verdict, gap_type, classifier_score}."""
+    각 레코드: {article, claim_sentence, table_name, verdict, gap_type, classifier_score}.
+
+    vdb_fn: (선택) claim -> TableCandidate 리스트를 반환하는 함수. 2026-08-21 추가 —
+    이 함수는 애초에 VDB(Qwen3-Embedding-4B, GPU 필요) 도입 이전에 만들어져서 keyword+
+    64개 카탈로그 임베딩만 쓰고 있었다. GPU가 있는 곳(웹 API 서버 등)에서 호출할 때는
+    vdb_fn을 넘겨서 VDB까지 포함해 매칭하게 할 수 있다 — 안 넘기면(기본값 None) 기존과
+    완전히 동일하게 동작(하위 호환).
+
+    raise_on_stage12_error: (선택, 기본 False) 1·2단계(classify/extract_claims)에서
+    HCX 호출이 예외를 던지면 기본은 로그만 남기고 빈 리스트를 반환한다(오프라인 배치가
+    기사 여러 건을 돌릴 때 하나 실패했다고 전체가 멈추면 안 되므로). 근데 agent/api/server.py
+    (실시간 검증 API)에서는 이 스킵이 "일시적 HCX 오류"와 "기사가 진짜로 통계와 무관"을
+    구분 못 해서, 프론트에 둘 다 똑같이 "주장 0건 처리됨(성공)"으로 떴다(2026-08-21 실제
+    확인). True로 넘기면 이 두 단계 실패 시 예외를 그대로 다시 던져서, 호출부가 job을
+    "failed"로 표시하고 실제 에러를 보여줄 수 있게 한다 — cls_result.label=False(진짜
+    무관한 기사)는 예외가 아니라 정상 반환이라 이 옵션과 무관하게 그대로 빈 리스트."""
     results: list[dict] = []
 
     print(f"\n{'=' * 60}")
@@ -1207,10 +1285,12 @@ def run_article(
     print(f"{'-' * 60}")
 
     try:
-        cls_result = classify(article["article_text"])
+        cls_result = _call_with_retry(lambda: classify(article["article_text"]))
         print(f"[1단계 classifier] {cls_result}")
     except Exception as e:
         print(f"[1단계 classifier] 실패 ({type(e).__name__}: {e}) → 이 기사 스킵")
+        if raise_on_stage12_error:
+            raise
         return results
 
     if not cls_result.label:
@@ -1218,11 +1298,18 @@ def run_article(
         return results
 
     try:
-        claims = extract_claims(article["article_text"])
+        claims = _call_with_retry(lambda: extract_claims(article["article_text"]))
         claims = recover_missed_claims(article["article_text"], claims)
+        claims = strip_title_prefix_from_claims(claims, article.get("article_title"))
+        before_dedup = len(claims)
+        claims = _dedup_claims_by_sentence(claims)
+        if before_dedup != len(claims):
+            print(f"[2단계 중복 제거] {before_dedup}개 중 {before_dedup - len(claims)}개 완전 중복 제거")
         print(f"[2단계 claim_extractor] {len(claims)}개 주장 추출")
     except Exception as e:
         print(f"[2단계 claim_extractor] 실패 ({type(e).__name__}: {e}) → 이 기사 스킵")
+        if raise_on_stage12_error:
+            raise
         return results
 
     # source_filter(2단계 이후 출처 검증 필터) — 실제로 KOSIS 국가승인통계를 생산하는
@@ -1311,6 +1398,7 @@ def run_article(
                 claim,
                 keyword_fn=keyword_search,
                 embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
+                vdb_fn=vdb_fn,
                 document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
             )
         except Exception as e:

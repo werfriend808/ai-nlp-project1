@@ -106,13 +106,27 @@ def export_article_dates(
     db_path: Path = DB_PATH,
     csv_path: Path = DATA_CSV_PATH,
 ) -> int:
-    """verifications.db에 있는 article_title들에 대해서만 작성일을 골라 {제목: "YYYY-MM-DD"}
-    JSON으로 내보낸다."""
-    rows = fetch_all(db_path)
-    titles_needed = {r["article_title"] for r in rows}
+    """verifications.db에 있는 article_title들에 대해 작성일을 골라 {제목: "YYYY-MM-DD"}
+    JSON으로 내보낸다.
 
-    all_dates = _load_csv_article_dates(csv_path)
-    dates = {title: all_dates[title] for title in titles_needed if title in all_dates}
+    2026-08-21: db.published_date 컬럼(신규 추가)을 우선 쓴다 — CSV 기반이든 실시간 URL
+    검증(agent/api/server.py)이든 새로 저장되는 기사는 전부 이 컬럼에 정확한 발행일이
+    채워진다. 이 컬럼이 비어있는 행(컬럼 추가 전에 저장된 옛 CSV 기반 기사)만 예전
+    방식대로 CSV에서 제목으로 찾아 보완한다 — CSV엔 애초에 실시간 URL 기사가 없으니
+    이쪽만으로는 URL 검증 기사의 날짜를 영영 못 찾았던 게 원래 버그였다."""
+    rows = fetch_all(db_path)
+    all_csv_dates = _load_csv_article_dates(csv_path)
+
+    dates: dict[str, str] = {}
+    for row in rows:
+        title = row["article_title"]
+        if title in dates:
+            continue
+        db_date = row.get("published_date")
+        if db_date:
+            dates[title] = db_date
+        elif title in all_csv_dates:
+            dates[title] = all_csv_dates[title]
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(dates, ensure_ascii=False, indent=2), encoding="utf-8")
