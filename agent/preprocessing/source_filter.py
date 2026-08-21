@@ -278,9 +278,36 @@ def _missing_value_for_magnitude_claim(claim: Claim) -> bool:
     return getattr(claim, "value", None) is None
 
 
+# 통계 발표가 아니라 단속/제재/평가 등 1회성 행정조치 결과를 나타내는 표현. 발행 기관이
+# KOSIS_VERIFIED_ORGS에 있어도(그 기관이 진짜 KOSIS 통계도 내는 곳이어도) 이 claim 자체가
+# 그 통계가 아니라 이번 건 개별 발표/조치 결과일 가능성이 높다는 신호다 — 기관 단위
+# 화이트리스트만으로는 이 구분이 안 된다.
+#
+# 2026-08-20 실측 확인된 2개 사례: (1) 기획재정부(진짜 KOSIS 통계도 냄)의 "공공기관 경영
+# 평가에서 13곳이 성과급을 받지 못하는 낙제점을 받았다" — 평가결과지 통계가 아님. (2)
+# 금융감독원(진짜 KOSIS 통계도 냄)의 "금융투자 사이트 1428건을 적발해... 차단을 의뢰했다"/
+# "60건에 대해 경찰청에 수사를 의뢰했다" — 단속실적이지 통계가 아님. 둘 다 표매칭 단계까지
+# 넘어가서 무관한 표(예산현황/국제수지)에 억지로 매칭되거나 "애매"로 낭비됐다.
+#
+# 한계: 이 방식은 블랙리스트라 완전할 수 없다(행정조치를 나타내는 한국어 표현은 사실상
+# 무한함) — 알려진 패턴만 값싸게 걸러내는 보조 장치일 뿐, 진짜 안전망은 하류의 RRF 신뢰
+# 게이트(agent/mapping/reranker.py의 is_rrf_trusted, 확신도 낮으면 애매 처리)다.
+_ENFORCEMENT_OR_EVALUATION_KEYWORDS = (
+    "적발", "단속", "낙제점", "성과급", "경영평가", "감사결과", "행정처분",
+    "과태료", "과징금", "제재", "의뢰",
+)
+
+
+def _looks_like_enforcement_or_evaluation(sentence: str) -> bool:
+    """통계 발표가 아니라 단속/제재/평가 등 1회성 행정조치 결과 문장인지 확인한다."""
+    normalized = _normalize_whitespace(sentence)
+    return any(kw in normalized for kw in _ENFORCEMENT_OR_EVALUATION_KEYWORDS)
+
+
 def filter_verifiable_claims(claims: list[Claim]) -> list[Claim]:
     """claim 리스트에서 source_org가 "kosis_verified"이고, value 환각/오귀속이 의심되지
-    않는 것만 남긴다.
+    않고, claim_type="규모"/"증감률"인데 value가 비어있지 않고, 단속/제재/평가 등 통계가
+    아닌 행정조치 결과로 보이지 않는 것만 남긴다.
 
     "uncertain"(source_org 없음/휴리스틱에 없는 기관)과 "not_kosis"는 전부 제외한다 —
     분류기(1단계)와 같은 원칙: 확실하지 않으면 3단계(표매칭)로 넘기지 않는다. source_org가
@@ -296,6 +323,7 @@ def filter_verifiable_claims(claims: list[Claim]) -> list[Claim]:
         and not _value_mismatches_sentence(getattr(c, "value", None), c.sentence)
         and not _value_mismatches_sentence(getattr(c, "comparison_value", None), c.sentence)
         and not _missing_value_for_magnitude_claim(c)
+        and not _looks_like_enforcement_or_evaluation(c.sentence)
     ]
 
 

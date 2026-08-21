@@ -540,6 +540,32 @@ def _recover_missed_claims_once(
     return extracted_claims + recovered
 
 
+# 2026-08-21 실측(DB 실데이터, id=17): claim.sentence 맨 앞에 기사 제목이 그대로 붙어
+# 나오는 경우가 있었다("3월 청년 실업률 7.5%… 4년 만에 최대치 기록 청년 실업률이
+# 지난달 7.5%까지 치솟으며..." — 앞부분이 article_title과 완전히 동일). 원인은
+# batch_runner._clean_scraped_article_text()가 스크랩 원본에서 제목과 본문 사이에
+# 줄바꿈을 넣어 구분해주더라도, HCX가 그 경계를 항상 지키진 않고 "제목+첫 문장"을
+# 하나의 claim으로 묶어버리는 경우가 있기 때문 — 입력단 정리만으로는 100% 못 막는다.
+# 그래서 출력단(claim_extractor가 반환하는 sentence)에서 한 번 더 방어적으로 제목
+# 접두어를 잘라낸다. article_title을 안 넘기면(호출부가 모르는 경우) 아무것도 안 한다.
+def strip_title_prefix(sentence: str, article_title: Optional[str]) -> str:
+    """claim.sentence가 article_title로 시작하면 그 접두어를 떼고 반환한다."""
+    if not article_title:
+        return sentence
+    title = article_title.strip()
+    if title and sentence.startswith(title):
+        return sentence[len(title):].lstrip()
+    return sentence
+
+
+def strip_title_prefix_from_claims(claims: list[Claim], article_title: Optional[str]) -> list[Claim]:
+    """extract_claims()/recover_missed_claims()가 반환한 claim 리스트 전체에
+    strip_title_prefix()를 적용한다 — run_article()에서 두 호출 직후 한 번만 부르면 됨."""
+    for claim in claims:
+        claim.sentence = strip_title_prefix(claim.sentence, article_title)
+    return claims
+
+
 if __name__ == "__main__":
     #   python -m agent.preprocessing.claim_extractor
     sample = (

@@ -20,6 +20,7 @@ agent/preprocessing/hcx_client.py — CLOVA Studio Chat Completions 호출 공�
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import time
 import uuid
@@ -59,9 +60,35 @@ _MIN_TEMPERATURE_FOR_V1 = 0.01
 _MAX_429_RETRIES = 5
 _BACKOFF_BASE_SECONDS = 2.0
 
+# 2026-08-20: requests의 timeout=은 "청크 사이 대기시간"만 잰다 — CLOVA Studio가 스트리밍
+# 응답을 아주 천천히(청크마다 60초는 안 넘기지만 전체는 몇 분씩) 흘려보내면 실제로는 절대
+# 안 끝나는 호출이 생긴다(30건 배치 실행 때 실측: 호출 하나가 몇 분씩 멈춰있는 현상 반복).
+# 별도 스레드에서 요청을 돌리고 그 스레드 자체에 진짜 wall-clock 제한(전체 호출 1회당,
+# 429 재시도 포함)을 걸어서 이 문제를 막는다.
+DEFAULT_HARD_TIMEOUT_SECONDS = 120.0
+_HCX_CALL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="hcx-call"
+)
+
 
 class HcxApiError(RuntimeError):
     """CLOVA Studio 호출 실패 (HTTP 에러 또는 예상과 다른 응답 형식)."""
+
+
+def _post_with_hard_timeout(url, headers, body, read_timeout, deadline):
+    """requests.post를 별도 스레드에서 실행하고 deadline(time.monotonic() 기준 절대시각)까지만
+    기다린다. 스레드 자체는 소켓이 열려있는 한 백그라운드에서 계속 돌 수 있지만(파이썬은
+    스레드를 강제 종료할 수 없음), 호출한 쪽은 deadline이 지나면 즉시 제어권을 돌려받는다."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("HCX 호출 전체 제한시간을 초과했습니다.")
+    future = _HCX_CALL_EXECUTOR.submit(
+        requests.post, url, headers=headers, json=body, timeout=read_timeout
+    )
+    try:
+        return future.result(timeout=remaining)
+    except concurrent.futures.TimeoutError as e:
+        raise TimeoutError("HCX 호출 전체 제한시간을 초과했습니다.") from e
 
 
 def call_hcx(
@@ -74,6 +101,7 @@ def call_hcx(
     seed: Optional[int] = 42,
     api_key: Optional[str] = None,
     timeout: int = 60,
+    hard_timeout: float = DEFAULT_HARD_TIMEOUT_SECONDS,
 ) -> str:
     """system/user 메시지 한 쌍을 CLOVA Studio에 보내고 assistant 응답 텍스트만 돌려줍니다.
 
@@ -85,6 +113,11 @@ def call_hcx(
     유력한 원인이었다. 1~4294967295 사이 고정값을 주면 같은 입력에 항상 같은 결과가
     나온다(공식 문서: "출력 일관성 수준을 조정"). None으로 넘기면 기존처럼 seed를
     아예 안 보낸다(무작위 필요한 특수 상황 대비).
+
+    timeout: requests의 청크 사이 대기시간(초) — 개별 read 사이 간격만 잰다.
+    hard_timeout: 이 call_hcx() 호출 전체(429 재시도 포함)에 대한 실제 wall-clock
+    제한(초). 스트리밍 응답이 청크는 꾸준히 오지만 전체적으로 아주 느릴 때 timeout=만으로는
+    안 막히는 무한 대기를 막기 위함 — 이 시간을 넘기면 HcxApiError를 던진다.
     """
     api_key = api_key or os.environ.get("HCX_API_KEY")
     if not api_key:
@@ -115,15 +148,27 @@ def call_hcx(
         body["maxTokens"] = max_tokens
 
     url = f"{CLOVASTUDIO_HOST}/{api_version}/chat-completions/{model}"
+    deadline = time.monotonic() + hard_timeout
 
-    response = requests.post(url, headers=headers, json=body, timeout=timeout)
-    for attempt in range(_MAX_429_RETRIES):
-        if response.status_code != 429:
-            break
-        retry_after = response.headers.get("Retry-After")
-        wait_seconds = float(retry_after) if retry_after else _BACKOFF_BASE_SECONDS * (2**attempt)
-        time.sleep(wait_seconds)
-        response = requests.post(url, headers=headers, json=body, timeout=timeout)
+    try:
+        response = _post_with_hard_timeout(url, headers, body, timeout, deadline)
+        for attempt in range(_MAX_429_RETRIES):
+            if response.status_code != 429:
+                break
+            retry_after = response.headers.get("Retry-After")
+            wait_seconds = (
+                float(retry_after) if retry_after else _BACKOFF_BASE_SECONDS * (2**attempt)
+            )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("HCX 호출 전체 제한시간을 초과했습니다.")
+            time.sleep(min(wait_seconds, remaining))
+            response = _post_with_hard_timeout(url, headers, body, timeout, deadline)
+    except TimeoutError as e:
+        raise HcxApiError(
+            f"HCX 호출이 전체 제한시간({hard_timeout:.0f}초)을 넘겨서 중단했습니다. "
+            "CLOVA Studio 응답이 비정상적으로 느린 상태일 수 있습니다."
+        ) from e
 
     response.raise_for_status()
     data = response.json()
