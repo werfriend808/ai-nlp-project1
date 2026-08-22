@@ -158,7 +158,7 @@ function App() {
         )}
       </Header>
       <main
-        className={`mx-auto flex flex-col gap-6 px-6 py-6 ${selectedGroup ? "max-w-6xl" : "max-w-4xl"}`}
+        className={`mx-auto flex flex-col gap-6 px-6 py-6 ${selectedGroup ? "max-w-7xl" : "max-w-6xl"}`}
       >
         {usingMockData && (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">

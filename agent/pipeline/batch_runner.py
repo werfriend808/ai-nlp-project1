@@ -1910,13 +1910,28 @@ def main(
         articles = ARTICLES
 
     all_results: list[dict] = []
+    failed_articles: list[str] = []
     for article in articles:
-        all_results.extend(
-            run_article(
-                article, client, calculator, table_params, embedding_cache, catalog_by_id,
-                vdb_fn=vdb_fn, bm25_fn=bm25_fn,
+        # 2026-08-22 실측: source_filter.backfill_source_org()가 HCX 응답의 source_org가
+        # 배열로 온 경우를 못 버텨서(Counter(list)가 TypeError) 30건 배치 중 한 기사에서
+        # 터졌는데, 이 루프에 try/except가 아예 없어서 그 한 건 때문에 나머지 기사 전부가
+        # 처리 안 되고 배치 자체가 중단됐다(근본 원인인 claim_extractor._to_optional_str
+        # 쪽도 같이 고쳤지만, 여기도 방어선을 둔다 — 배치 파이프라인은 어떤 단계에서도
+        # 알려지지 않은 예외 하나가 전체를 죽이면 안 된다는 원칙, 다른 단계들이 이미
+        # 따르고 있는 것과 동일).
+        try:
+            all_results.extend(
+                run_article(
+                    article, client, calculator, table_params, embedding_cache, catalog_by_id,
+                    vdb_fn=vdb_fn, bm25_fn=bm25_fn,
+                )
             )
-        )
+        except Exception as e:
+            failed_articles.append(article.get("label", "?"))
+            print(f"[배치] 기사 처리 중 예상치 못한 오류로 스킵 ({type(e).__name__}: {e}) — 다음 기사로 계속")
+
+    if failed_articles:
+        print(f"\n[배치] 예외로 스킵된 기사 {len(failed_articles)}건: {failed_articles}")
 
     print_review_summary(all_results)
     print(f"\n[DB] {len(all_results)}건을 data/verifications.db에 저장했습니다.")

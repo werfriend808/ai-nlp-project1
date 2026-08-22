@@ -205,15 +205,7 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
         onClick={() => setIsOpen(true)}
         className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 transition hover:shadow-xl hover:shadow-indigo-500/40 active:scale-95"
       >
-        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none">
-          <path
-            d="M12 5v14M5 12h14"
-            stroke="currentColor"
-            strokeWidth={2.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+    
         새로운 뉴스 기사 검증하기
         {hasAnyBusy && (
           <span className="ml-1 h-2 w-2 animate-pulse rounded-full bg-white" aria-label="처리 중" />
@@ -239,13 +231,13 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
               <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                 ⏱️ 건당 몇 분 소요
               </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              <span className="inline-flex items-center gap-1 mb-2 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                 📋 여러 건은 순서대로 자동 처리
               </span>
             </div>
 
             {!isSubmitting && (
-              <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
+              <div className="mt-2 flex min-h-0 flex-1 flex-col gap-3">
                 <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {urlInputs.map((value, i) => (
                     <div key={i} className="flex items-center gap-2">

@@ -9,7 +9,7 @@ export function Header({ children, wide = false }: HeaderProps) {
   return (
     <header className="sticky top-0 z-10 relative bg-white/80 px-6 py-4 backdrop-blur-md dark:bg-gray-950/80">
       <div
-        className={`mx-auto flex flex-wrap items-center justify-between gap-3 ${wide ? "max-w-6xl" : "max-w-4xl"}`}
+        className={`mx-auto flex flex-wrap items-center justify-between gap-3 ${wide ? "max-w-7xl" : "max-w-6xl"}`}
       >
         <div className="flex items-center gap-3">
           <span
