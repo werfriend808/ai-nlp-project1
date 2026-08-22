@@ -8,13 +8,6 @@ interface HeaderProps {
 export function Header({ children, wide = false }: HeaderProps) {
   return (
     <header className="sticky top-0 z-10 relative overflow-hidden bg-white/70 px-6 py-4 shadow-[0_1px_0_0_rgba(0,0,0,0.04)] backdrop-blur-xl dark:bg-gray-950/70">
-      {/* 2026-08-22: 헤더가 "고전적"이라는 피드백 — 은은한 그라디언트 블롭(glow)을 로고
-          뒤에 깔아서 요즘 SaaS 대시보드에서 흔한 "떠 있는 유리 패널" 느낌을 준다. 텍스트
-          가독성에 영향 없게 blur를 크게 주고 opacity를 낮게 유지한다. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-10 -top-16 h-40 w-40 rounded-full bg-gradient-to-br from-indigo-400 via-fuchsia-400 to-transparent opacity-20 blur-3xl dark:opacity-30"
-      />
       <div
         className={`relative mx-auto flex flex-wrap items-center justify-between gap-3 ${wide ? "max-w-7xl" : "max-w-6xl"}`}
       >

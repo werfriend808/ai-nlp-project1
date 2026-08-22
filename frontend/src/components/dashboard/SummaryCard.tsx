@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import type { VerificationRecord } from "../../types/verification";
 import { ScoreGauge } from "./ScoreGauge";
 import { ConfidenceDots } from "./ConfidenceDots";
+import { VerdictIcon } from "./VerdictIcon";
 import { VERDICT_COUNT_BOX_CLASS, verdictCountLabel } from "../../lib/verdictColors";
 
 interface SummaryCardProps {
@@ -10,7 +12,7 @@ interface SummaryCardProps {
 }
 
 interface ItemRow {
-  icon: string;
+  icon: ReactNode;
   label: string;
   description: string;
   count: number;
@@ -53,21 +55,21 @@ export function SummaryCard({ records, reviewFilterActive, onToggleReviewFilter 
 
   const rows: ItemRow[] = [
     {
-      icon: "✅",
+      icon: <VerdictIcon verdict="일치" />,
       label: "일치",
       description: "기사 수치가 KOSIS 공식 통계와 일치함",
       count: 일치,
       colorClass: VERDICT_COUNT_BOX_CLASS["일치"],
     },
     {
-      icon: "❌",
+      icon: <VerdictIcon verdict="불일치" />,
       label: "불일치",
       description: "기사 수치가 KOSIS 공식 통계와 차이가 있음",
       count: 불일치,
       colorClass: VERDICT_COUNT_BOX_CLASS["불일치"],
     },
     {
-      icon: "🔍",
+      icon: <VerdictIcon verdict="애매" />,
       label: "검토 필요",
       description: "표 매칭 신뢰도가 낮거나 KOSIS로 검증 불가능한 주제",
       count: 검토필요,
@@ -111,7 +113,7 @@ export function SummaryCard({ records, reviewFilterActive, onToggleReviewFilter 
               className="flex items-center justify-between gap-3 border-t border-gray-100 py-2.5 first:border-t-0 dark:border-gray-800"
             >
               <div className="flex items-center gap-3">
-                <span className="text-base">{row.icon}</span>
+                {row.icon}
                 <div>
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{row.label}</p>
                   <p className="text-xs text-gray-400">{row.description}</p>
