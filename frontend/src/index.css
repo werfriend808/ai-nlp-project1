@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* 2026-08-22: 글씨 전체를 한 단계 키워달라는 피드백 — Tailwind 텍스트 유틸(text-sm/base/lg
+   등)이 전부 rem 기준이라, 루트 폰트 크기를 16px(브라우저 기본)에서 18px로 올리면 각 텍스트
+   유틸을 하나하나 안 고쳐도 사이트 전체가 비례해서 커진다(text-sm 14px→15.75px,
+   text-base 16px→18px 등, 대략 한 단계씩 위로 밀린 효과). */
+html {
+  font-size: 18px;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
