@@ -209,6 +209,40 @@ def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) 
     return trimmed
 
 
+def _load_csv_rows(path: Path = DATA_CSV_PATH) -> list[dict]:
+    """data_set.csv를 읽어 '검색 구분 레이블'이 True인 행만 반환한다(공용 헬퍼 —
+    load_articles_from_csv/load_mixed_articles_from_csv가 같이 쓴다).
+
+    data_set.csv는 여러 차례 Excel에서 내보낸 조각을 이어붙인 흔적이 있어서, 파일 맨 앞뿐
+    아니라 중간 행에도 BOM(U+FEFF)이 섞여 있는 경우가 실측 확인됨(2026-08-10, --csv 배치
+    실행 중 재현 — 기사제목에 낀 BOM을 print()가 그대로 출력하려다 Windows 콘솔(cp949)
+    인코딩 실패로 크래시). encoding="utf-8-sig"는 파일 시작 위치의 BOM만 제거하므로, 읽은
+    텍스트 전체에서 남은 BOM을 한 번 더 제거해서 중간에 낀 것까지 잡는다."""
+    with open(path, encoding="utf-8-sig") as f:
+        text = f.read().replace("﻿", "")
+    return [
+        r for r in csv.DictReader(io.StringIO(text))
+        if r.get("검색 구분 레이블", "").strip().lower() == "true"
+    ]
+
+
+def _row_to_article(row: dict) -> dict:
+    try:
+        y, m, d = (int(v) for v in row["작성일"].split("-"))
+        published = date(y, m, d)
+    except (KeyError, ValueError):
+        published = date(2025, 1, 1)
+    title = row.get("기사제목", "")
+    return {
+        "label": f"[data_set.csv] {title[:40]}",
+        "article_title": title,
+        "article_url": row.get("URL"),
+        "published_date": published,
+        "article_text": _clean_scraped_article_text(title, row["기사 본문 전체"]),
+        "clarify_reply": DEFAULT_CLARIFY_REPLY,
+    }
+
+
 def load_articles_from_csv(
     path: Path = DATA_CSV_PATH, n: int = 15, seed: int = 42
 ) -> list[dict]:
@@ -219,39 +253,44 @@ def load_articles_from_csv(
     손으로 쓴 ARTICLES(알려진 이슈 재현용)와 달리, 실제 기사라 어떤 clarify 질문이
     나올지 미리 알 수 없어서 여러 슬롯을 한 번에 답하는 범용 문구를 그대로 재사용한다.
     """
-    # data_set.csv는 여러 차례 Excel에서 내보낸 조각을 이어붙인 흔적이 있어서, 파일 맨 앞뿐
-    # 아니라 중간 행에도 BOM(U+FEFF)이 섞여 있는 경우가 실측 확인됨(2026-08-10, --csv 배치
-    # 실행 중 재현 — 기사제목에 낀 BOM을 print()가 그대로 출력하려다 Windows 콘솔(cp949)
-    # 인코딩 실패로 크래시). encoding="utf-8-sig"는 파일 시작 위치의 BOM만 제거하므로, 읽은
-    # 텍스트 전체에서 남은 BOM을 한 번 더 제거해서 중간에 낀 것까지 잡는다.
-    with open(path, encoding="utf-8-sig") as f:
-        text = f.read().replace("﻿", "")
-    rows = [
-        r for r in csv.DictReader(io.StringIO(text))
-        if r.get("검색 구분 레이블", "").strip().lower() == "true"
-    ]
-
+    rows = _load_csv_rows(path)
     random.Random(seed).shuffle(rows)
+    return [_row_to_article(row) for row in rows[:n]]
 
-    articles = []
-    for row in rows[:n]:
-        try:
-            y, m, d = (int(v) for v in row["작성일"].split("-"))
-            published = date(y, m, d)
-        except (KeyError, ValueError):
-            published = date(2025, 1, 1)
-        title = row.get("기사제목", "")
-        articles.append(
-            {
-                "label": f"[data_set.csv] {title[:40]}",
-                "article_title": title,
-                "article_url": row.get("URL"),
-                "published_date": published,
-                "article_text": _clean_scraped_article_text(title, row["기사 본문 전체"]),
-                "clarify_reply": DEFAULT_CLARIFY_REPLY,
-            }
-        )
-    return articles
+
+def load_mixed_articles_from_csv(
+    path: Path = DATA_CSV_PATH, n_dense: int = 15, n_random: int = 15, seed: int = 42
+) -> list[dict]:
+    """수치 문장이 많아 보이는 기사 n_dense건(claim_candidate_scanner의 규칙 기반 후보 수
+    기준 상위)과 완전 무작위 n_random건을 섞어 반환한다.
+
+    2026-08-22: 순수 무작위 샘플(load_articles_from_csv)로 데모를 돌려보니, '검색 구분
+    레이블'이 True인 기사여도 1단계 classifier가 "통계와 무관"으로 걸러내는 비율이
+    실측 절반 이상이라(30건 중 16건) 실제 검증까지 가는 기사가 몇 건 안 남는 문제가
+    있었다("기사가 너무 없어서 잘 되고 있는지 모르겠다" 피드백). 수치 후보가 많은 기사를
+    절반 섞으면 classifier 통과율이 높아져 더 풍부한 데모가 되면서도, 나머지 절반은
+    완전 무작위로 남겨 실제 분포(무관한 기사 포함)도 같이 보여준다."""
+    from agent.preprocessing.claim_candidate_scanner import scan_numeric_candidates
+
+    rows = _load_csv_rows(path)
+
+    def _density(row: dict) -> int:
+        return len(scan_numeric_candidates(row.get("기사 본문 전체", "") or ""))
+
+    scored = sorted(rows, key=_density, reverse=True)
+    dense_rows = scored[:n_dense]
+    dense_titles = {r.get("기사제목") for r in dense_rows}
+
+    remaining = [r for r in rows if r.get("기사제목") not in dense_titles]
+    random.Random(seed).shuffle(remaining)
+    random_rows = remaining[:n_random]
+
+    combined = dense_rows + random_rows
+    # 수치 밀도순으로 몰려있으면 배치 진행 로그가 "잘되는 기사만 먼저" 식으로 보여서,
+    # 순서까지 섞어 실행 중간에도 어느 쪽 절반인지 티가 안 나게 한다.
+    random.Random(seed).shuffle(combined)
+
+    return [_row_to_article(row) for row in combined]
 
 
 ARTICLES = [
@@ -1791,7 +1830,14 @@ def print_review_summary(results: list[dict]) -> None:
 
 
 def main(
-    use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42, *, with_vdb: bool = True
+    use_csv_sample: bool = False,
+    csv_n: int = 15,
+    csv_seed: int = 42,
+    *,
+    with_vdb: bool = True,
+    csv_mixed: bool = False,
+    csv_n_dense: int = 15,
+    csv_n_random: int = 15,
 ) -> None:
     """with_vdb(2026-08-22 추가): --csv 배치 실행이 지금까지 vdb_fn/bm25_fn을 안 넘겨서
     keyword+64개 카탈로그 임베딩만 쓰고 있었다 — VDB(28.7만개)/BM25/PHASE 6·7 동적 슬롯매핑
@@ -1846,7 +1892,12 @@ def main(
                 print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
                 return []
 
-    articles = load_articles_from_csv(n=csv_n, seed=csv_seed) if use_csv_sample else ARTICLES
+    if csv_mixed:
+        articles = load_mixed_articles_from_csv(n_dense=csv_n_dense, n_random=csv_n_random, seed=csv_seed)
+    elif use_csv_sample:
+        articles = load_articles_from_csv(n=csv_n, seed=csv_seed)
+    else:
+        articles = ARTICLES
 
     all_results: list[dict] = []
     for article in articles:
@@ -1899,4 +1950,7 @@ if __name__ == "__main__":
         csv_n=_parse_csv_n(sys.argv),
         csv_seed=_parse_csv_seed(sys.argv),
         with_vdb="--no-vdb" not in sys.argv,
+        csv_mixed="--csv-mixed" in sys.argv,
+        csv_n_dense=_parse_int_flag(sys.argv, "--csv-n-dense", 15),
+        csv_n_random=_parse_int_flag(sys.argv, "--csv-n-random", 15),
     )
