@@ -52,10 +52,24 @@ _META_URL = "https://kosis.kr/openapi/Param/statisticsParameterData.do"
 #      (2007-05) ..."), 기간을 넓혀야 한다.
 # 그래도 완전히 못 살리는 표(진짜로 폐기된 시계열)는 여전히 있다 — 이 경우 "데이터가
 # 존재하지 않습니다"가 정직한 답이라 재시도로 해결 안 된다.
+#
+# 2026-08-23 실측 추가: 위 "기간을 넓혀야 한다"는 결론이 반대 문제를 만들었다 — 지역이
+# 세분화된 표(읍면동/시군구 단위, 예: 자살률 DT_1B34E13)는 축이 1개뿐이어도 20년치를
+# 한 번에 요청하면 "[31] 40,000셀을 초과한 결과값은 요청하실 수 없습니다"로 막힌다
+# (직접 재현 확인: DT_1B04005N에 objL1=ALL 하나만 넣고 12개월만 요청해도 이미 초과).
+# 그런데 셀 수는 (축 크기) x (요청 기간의 시점 개수)라서, 기간을 줄이면 축이 커도
+# 대부분 통과한다(예: 읍면동 3,500개 x 1개 시점 = 3,500셀, 문제없음). 그래서 각 prd_se마다
+# 좁은 단일 시점을 먼저 시도하고, 그게 "데이터 없음"으로 실패해야만(폐기된 시계열이라
+# 최근 시점엔 없고 과거에만 있는 경우) 기존의 넓은 기간으로 재시도한다 — 두 문제(폐기된
+# 표는 기간을 넓혀야 찾고, 큰 표는 기간을 좁혀야 통과) 둘 다 해결하려면 순서가 이래야 한다.
 _PRD_SE_ATTEMPTS = (
+    ("M", "202401", "202401"),
     ("M", "200501", "202612"),
+    ("A", "2023", "2023"),
     ("A", "2005", "2026"),
+    ("Y", "2023", "2023"),
     ("Y", "2005", "2026"),
+    ("Q", "20231", "20231"),
     ("Q", "20051", "20264"),
 )
 
@@ -124,7 +138,12 @@ def fetch_axis_names(org_id: str, tbl_id: str, api_key: Optional[str] = None) ->
                 last_error = f"[{err_code}] {err_msg}"
                 # err=21인데 "표가 존재하지 않습니다" 류면 axis 문제가 아니라 표 자체가
                 # 없는 것 — axis 재시도 무의미.
-                is_axis_count_issue = err_code == "21" and "존재하지 않습니다" not in err_msg
+                # 2026-08-23 추가: err=31("40,000셀을 초과한 결과값은 요청하실 수
+                # 없습니다")도 축을 줄이면 셀 수(=각 축 크기의 곱)가 줄어드니 같은 이유로
+                # axis 재시도 대상이다 — 예전엔 여기서 바로 다음 prd_se로 넘어가버려서,
+                # 좁은 기간으로도 못 피할 만큼 축 하나가 큰 표(예: 시군구 단위 표)에서
+                # n_axes를 줄여볼 기회 자체가 없었다(자살률 DT_1B34E13 재현 확인).
+                is_axis_count_issue = err_code in ("21", "31") and "존재하지 않습니다" not in err_msg
                 if not is_axis_count_issue:
                     break  # axis 개수 문제가 아닌 에러 — 재시도해도 결과 동일, 다음 prd_se로.
                 continue
@@ -229,7 +248,12 @@ def fetch_table_detail(org_id: str, tbl_id: str, api_key: Optional[str] = None) 
                 err_code = str(data.get("err"))
                 err_msg = data.get("errMsg", "")
                 last_error = f"[{err_code}] {err_msg}"
-                if not (err_code == "21" and "존재하지 않습니다" not in err_msg):
+                # 2026-08-23: fetch_axis_names()와 같은 이유로 err=31(40,000셀 초과)도
+                # axis 재시도 대상에 넣는다 — 이 함수는 fetch_axis_names()와 별개로
+                # 복붙된 재시도 루프라 그쪽만 고치고 여기를 빠뜨리면 실제 조회 경로
+                # (get_table_detail -> fetch_table_detail, _build_dynamic_kosis_slots가
+                # 쓰는 바로 그 경로)는 여전히 안 고쳐진 채로 남는다.
+                if not (err_code in ("21", "31") and "존재하지 않습니다" not in err_msg):
                     break
                 continue
             if not isinstance(data, list) or not data:
