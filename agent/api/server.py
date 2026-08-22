@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shutil
 import threading
 import uuid
@@ -164,9 +165,37 @@ def _bm25_fn(claim):
 
 # ---------------------------------------------------------------------------
 # 작업(job) 상태 관리. 데모 스케일(동시 요청 소수)이라 인메모리 dict + 락으로 충분하다.
+#
+# 2026-08-22 추가: 프론트에서 URL 여러 개를 한 번에 제출할 수 있게 하면서(아래 "여러 개
+# 검증하기" UI), 요청마다 개별 스레드를 띄우던 기존 방식(_run_job을 threading.Thread로
+# 직접 실행)을 큐 + 워커 스레드 1개로 바꿨다 — GPU에 상주하는 Qwen 임베딩/리랭커 모델과
+# query_vdb.py/detail_cache.py의 전역 psycopg2 커넥션(스레드 안전성 보장 안 됨)을 여러
+# job이 동시에 건드리면 GPU 메모리 경합이나 커넥션 상태 꼬임으로 이어질 위험이 있어서다.
+# 워커를 1개만 둬서 job은 항상 순서대로 하나씩만 실제 처리되게 한다 — POST /api/verify는
+# 여전히 즉시 job_id를 반환하고(큐에 넣기만 하므로 빠름), 프론트는 여러 URL을 연달아
+# 제출한 뒤 각 job_id를 개별적으로 폴링하면 된다(API 계약 자체는 안 바뀜).
 # ---------------------------------------------------------------------------
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
+_job_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+
+
+def _queue_worker() -> None:
+    while True:
+        job_id, url = _job_queue.get()
+        try:
+            _run_job(job_id, url)
+        except Exception as e:  # noqa: BLE001 - 워커 스레드가 죽으면 이후 모든 job이 영영 안 처리됨
+            with _jobs_lock:
+                _jobs[job_id] = {
+                    "status": "failed",
+                    "error": f"처리 중 예상치 못한 오류가 발생했습니다({type(e).__name__}: {e}).",
+                }
+        finally:
+            _job_queue.task_done()
+
+
+threading.Thread(target=_queue_worker, daemon=True).start()
 
 
 class VerifyRequest(BaseModel):
@@ -272,8 +301,7 @@ def start_verify(req: VerifyRequest):
     job_id = str(uuid.uuid4())
     with _jobs_lock:
         _jobs[job_id] = {"status": "queued"}
-    thread = threading.Thread(target=_run_job, args=(job_id, req.url), daemon=True)
-    thread.start()
+    _job_queue.put((job_id, req.url))
     return {"job_id": job_id, "status": "queued"}
 
 
