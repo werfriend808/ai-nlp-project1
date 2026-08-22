@@ -65,6 +65,17 @@ class Claim:
     region: Optional[str] = None                # 수치가 적용되는 지역 (예: "전국", "수도권")
     source_org: Optional[str] = None            # 기사가 인용한 기관 (예: "통계청")
     source_report: Optional[str] = None         # 기사가 인용한 조사·보고서명
+    # --- 2026-08-21 추가(검색 정확도 개선용, optional dimension) ---
+    # age/gender는 population과 달리 "문장에 명시적으로 언급됐을 때만" 채우는 정규화된
+    # 구조화 필드다 — 없으면 반드시 None(하드 필터/감점의 근거로 안 쓰이고, 소프트 부스팅에서
+    # "값이 있을 때만" 가산점을 주는 용도라 없다고 해서 불이익을 주면 안 됨).
+    age: Optional[str] = None                   # 정규화된 연령 구간 (예: "65세 이상", "20~29세"). 명시 안 되면 None.
+    gender: Optional[str] = None                # "여성" | "남성". 명시 안 되면 None.
+    # search_query: KOSIS 표 검색용 짧은 문구(HyDE 스타일) — "{정규화 지표명} {있는 dimension만} {정규화 기관명}".
+    # 별도 LLM 호출 아님(claim_extractor 프롬프트가 이 필드도 같이 생성) — 구체적 수치/연도는
+    # 절대 포함하지 않는다(VDB 문서의 "(연월)"이 claim의 대상 시점이 아니라 크롤링 시점이라
+    # 넣으면 오히려 노이즈가 됨, 2026-08-21 실측).
+    search_query: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +92,10 @@ class TableCandidate:
     score: float                          # 코사인 유사도 or 리랭커 재정렬 점수
     required_slots: list[str] = field(default_factory=list)  # 이 표를 조회하려면 필요한 슬롯들
     source_meta: Optional[str] = None      # 표 설명/출처 메타 (8단계 설명 생성에 재사용)
+    # 2026-08-21 추가(PHASE 6): table_params.json(64개 수동 카탈로그)에 없는 VDB 전용 표를
+    # detail_cache.get_table_detail()로 조회하려면 orgId가 필요하다. kosis_vdb_tables에는
+    # 이미 있던 컬럼인데 query_vdb.py가 안 읽어와서 지금까지 후보에 안 실려 있었다.
+    org_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

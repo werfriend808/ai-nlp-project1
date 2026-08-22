@@ -543,15 +543,16 @@ def _rule_based_verdict(claim: Claim, computed: ComputedResult) -> Optional[Verd
     year_mismatch = _period_year_mismatch(claim.period, computed.period)
 
     if gap > clear_threshold and not unit_mismatch and not year_mismatch:
-        return Verdict(
-            verdict="불일치",
-            gap_type="수치",
-            reason=(
-                f"기사 수치({claim_value})와 통계 계산값({computed.raw_value} {computed.unit}) "
-                f"차이가 {gap:.2f}{gap_unit}로 허용 오차(반올림 단위 추정 ±{tolerance:g}{gap_unit})를 "
-                "크게 초과함 (규칙 기반 판정, LLM 미호출)."
-            ),
-        )
+        # 2026-08-22: 이 분기는 LLM 호출 없이 곧바로 "불일치"를 확정하는데, 그 전제는
+        # "매칭된 표가 애초에 주장이랑 같은 주제"라는 것이다 — 3단계가 엉뚱한 표를
+        # 골랐으면(예: "한국은행 기준금리" 주장에 "예금은행 대출금리" 표) 숫자가 크게
+        # 벌어지는 게 당연한데, 그걸 규칙이 "수치가 명백히 다름"으로 잘못 확정해버린
+        # 실제 사례가 발견됐다 — 이 규칙 자체는 표 주제를 판단할 능력이 없다(숫자만
+        # 봄). 그래서 여기서 바로 확정하지 않고 None을 반환해 LLM(_judge_with_llm)에
+        # 위임한다 — LLM이 topic_match를 먼저 판단하고 나서야 같은 결론(불일치)이든
+        # 판단불가든 낸다. "일치"(작은 격차) 분기는 그대로 둔다 — 표 주제가 잘못 매칭된
+        # 상태에서 숫자까지 우연히 비슷할 위험은 낮다.
+        return None
 
     if gap <= tolerance and not unit_mismatch and not year_mismatch:
         # 엣지케이스 방어: computed.period가 아예 없으면(5단계 필드 누락 등) "시점 불일치 없음"
@@ -587,6 +588,7 @@ def _judge_with_llm(
     model: str = MODEL_SIMPLE,
     prd_se: Optional[str] = None,
     article_date: Optional[str] = None,
+    matched_table_name: Optional[str] = None,
 ) -> Verdict:
     template = _load_prompt_template()
     prompt = (
@@ -600,6 +602,7 @@ def _judge_with_llm(
         .replace("{computed_unit}", computed.unit)
         .replace("{computed_period}", _format_period_label(computed.period, prd_se))
         .replace("{article_date}", article_date or "명시 안 됨")
+        .replace("{matched_table_name}", matched_table_name or "명시 안 됨")
     )
 
     # 2026-08-11 재현성 문제 대응: temperature 기본값(hcx_client의 0.2)을 두면 같은
@@ -615,7 +618,22 @@ def _judge_with_llm(
         gap_type = _normalize_gap_type(parsed.get("gap_type"))
         if gap_type is not None and gap_type not in ("수치", "기간", "모집단", "과장표현"):
             raise ValueError(f"알 수 없는 gap_type 값: {gap_type!r}")
-        return Verdict(verdict=verdict, gap_type=gap_type, reason=str(parsed.get("reason", "")))
+        reason = str(parsed.get("reason", ""))
+
+        # 2026-08-22: judge()가 계산값(숫자)만 보고 verdict를 정하다 보니, 매칭된 표
+        # 자체가 주장과 전혀 다른 주제인데도(예: "한국은행 기준금리" 주장을 "예금은행
+        # 대출금리" 표와 비교) 숫자가 다르다는 이유로 확정 불일치를 내는 사례가 실제로
+        # 발견됐다(3단계가 엉뚱한 표를 후보로 올렸는데 여기서 걸러줄 마지막 기회가
+        # 없었음). topic_match를 LLM이 직접 판단하게 하고, false면 verdict/gap_type을
+        # 숫자 비교 결과와 무관하게 강제로 판단불가/null로 덮어쓴다 — LLM의 "숫자가
+        # 다르니 불일치" 판단이 새어나가지 않도록 코드에서 확정한다(calc_type_router가
+        # LLM의 느슨한 추측을 규칙으로 덮어쓰는 것과 같은 패턴).
+        topic_match = bool(parsed.get("topic_match", True))
+        if not topic_match:
+            verdict = "판단불가"
+            gap_type = None
+
+        return Verdict(verdict=verdict, gap_type=gap_type, reason=reason)
     except (KeyError, ValueError, json.JSONDecodeError) as e:
         raise JudgeError(f"응답 파싱 실패: {reply!r}") from e
 
@@ -627,6 +645,7 @@ def judge(
     model: str = MODEL_SIMPLE,
     prd_se: Optional[str] = None,
     article_date: Optional[str] = None,
+    matched_table_name: Optional[str] = None,
 ) -> Verdict:
     """7단계 메인 진입점 (단일 Claim vs 단일 ComputedResult).
 
@@ -644,11 +663,23 @@ def judge(
     resolve해서 조회했는데도 LLM이 "어느 1월인지 모호하다"며 판단불가(gap_type=기간)를 낸
     사례로 재현됨 — 데이터 조회 자체는 맞았는데 판정 설명 단계에서만 근거 없이 틀린
     케이스. 안 넘기면(기본값 None) "명시 안 됨"으로 표시되어 기존과 동일하게 동작한다
-    (하위 호환, prd_se와 같은 원칙)."""
+    (하위 호환, prd_se와 같은 원칙).
+
+    matched_table_name(2026-08-22 추가): 3단계가 최종적으로 고른 KOSIS 표 이름. judge()는
+    이전까지 이 정보를 아예 받지 않아서, 표 자체가 주장과 무관한 주제인데도(예: "한국은행
+    기준금리" 주장을 "예금은행 대출금리" 표와 비교) 그걸 판단할 근거가 없어 숫자만 보고
+    확정 판정을 내리는 사례가 실제로 발견됐다 — explain()(8단계)은 top(표 정보)을 이미
+    받고 있어서 판정 근거 설명에 "이 표는 관련짓기 어렵다"처럼 스스로 모순을 적으면서도,
+    이미 확정된 verdict를 뒤집을 권한은 없었다. 이 표 이름을 judge()에도 넘겨서
+    _judge_with_llm이 topic_match를 판단하고, 주제가 안 맞으면 숫자 비교와 무관하게
+    판단불가로 강제한다(안 넘기면 기본값 None → "명시 안 됨"으로 표시, 하위 호환)."""
     rule_verdict = _rule_based_verdict(claim, computed)
     if rule_verdict is not None:
         return rule_verdict
-    return _judge_with_llm(claim, computed, model=model, prd_se=prd_se, article_date=article_date)
+    return _judge_with_llm(
+        claim, computed, model=model, prd_se=prd_se, article_date=article_date,
+        matched_table_name=matched_table_name,
+    )
 
 
 # ---------------------------------------------------------------------------

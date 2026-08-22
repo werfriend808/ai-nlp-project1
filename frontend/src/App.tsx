@@ -139,7 +139,7 @@ function App() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <Header wide={!!selectedGroup}>
         {!selectedGroup && (
-          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-sm dark:border-gray-700 dark:bg-gray-900">
             {DATE_RANGE_OPTIONS.map((option) => (
               <button
                 key={option}
@@ -147,8 +147,8 @@ function App() {
                 onClick={() => setDateRange(option)}
                 className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
                   dateRange === option
-                    ? "bg-indigo-600 text-white"
-                    : "text-gray-500 hover:text-gray-700 dark:text-gray-400"
+                    ? "bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white shadow-sm"
+                    : "text-gray-500 hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
                 }`}
               >
                 {option === "전체" ? "전체" : `최근 ${option}일`}
@@ -158,7 +158,11 @@ function App() {
         )}
       </Header>
       <main
-        className={`mx-auto flex flex-col gap-6 px-6 py-6 ${selectedGroup ? "max-w-6xl" : "max-w-4xl"}`}
+        // pb-28(하단 여백)은 화면 하단 중앙에 고정된 "새로운 뉴스 기사 검증하기" 버튼
+        // (VerifyNewArticleButton, fixed bottom-6 + 버튼 자체 높이)이 스크롤 맨 아래에서
+        // 검증 기사 목록 마지막 줄과 겹치는 문제 수정(2026-08-22 실측) — 버튼이 차지하는
+        // 공간만큼 본문 하단에 여유를 둬서 항상 그 아래로 스크롤할 수 있게 한다.
+        className={`mx-auto flex flex-col gap-6 px-6 pb-28 pt-6 ${selectedGroup ? "max-w-7xl" : "max-w-6xl"}`}
       >
         {usingMockData && (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">

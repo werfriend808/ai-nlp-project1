@@ -1,4 +1,6 @@
+import type { ReactNode } from "react";
 import type { VerdictType } from "../types/verification";
+import { VerdictIcon } from "../components/dashboard/VerdictIcon";
 
 // verification_result가 null인 레코드(판정 자체가 안 된 애매/표매칭_불충분 상태)는
 // "애매"로 취급 — 화면 전체(뱃지/하이라이트/카드)에서 일관되게 쓰는 색 매핑.
@@ -49,10 +51,10 @@ export const VERDICT_COUNT_BOX_CLASS: Record<"일치" | "불일치" | "애매", 
   애매: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
 };
 
-export const VERDICT_ICON: Record<"일치" | "불일치" | "애매", string> = {
-  일치: "✅",
-  불일치: "❌",
-  애매: "🔍",
+export const VERDICT_ICON: Record<"일치" | "불일치" | "애매", ReactNode> = {
+  일치: <VerdictIcon verdict="일치" className="h-6 w-6" />,
+  불일치: <VerdictIcon verdict="불일치" className="h-6 w-6" />,
+  애매: <VerdictIcon verdict="애매" className="h-6 w-6" />,
 };
 
 // 기사 목록 테이블 행의 왼쪽 강조 테두리 색.

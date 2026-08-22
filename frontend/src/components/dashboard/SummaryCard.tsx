@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import type { VerificationRecord } from "../../types/verification";
 import { ScoreGauge } from "./ScoreGauge";
 import { ConfidenceDots } from "./ConfidenceDots";
+import { VerdictIcon } from "./VerdictIcon";
 import { VERDICT_COUNT_BOX_CLASS, verdictCountLabel } from "../../lib/verdictColors";
 
 interface SummaryCardProps {
@@ -10,7 +12,7 @@ interface SummaryCardProps {
 }
 
 interface ItemRow {
-  icon: string;
+  icon: ReactNode;
   label: string;
   description: string;
   count: number;
@@ -46,23 +48,28 @@ export function SummaryCard({ records, reviewFilterActive, onToggleReviewFilter 
   const confidenceFilled = Math.round(avgScore * 4);
   const confidenceLabel = avgScore >= 0.8 ? "높음" : avgScore >= 0.6 ? "보통" : "낮음";
 
+  // 2026-08-22 추가: "지금 처리된 기사가 몇 건인지 한눈에 안 보인다"는 피드백 — records는
+  // claim(주장) 단위라 그대로 세면 기사 수가 아니라 주장 수가 나온다. article_title 기준
+  // 고유 기사 수를 따로 센다.
+  const articleCount = new Set(records.map((r) => r.article_title)).size;
+
   const rows: ItemRow[] = [
     {
-      icon: "✅",
+      icon: <VerdictIcon verdict="일치" />,
       label: "일치",
       description: "기사 수치가 KOSIS 공식 통계와 일치함",
       count: 일치,
       colorClass: VERDICT_COUNT_BOX_CLASS["일치"],
     },
     {
-      icon: "❌",
+      icon: <VerdictIcon verdict="불일치" />,
       label: "불일치",
       description: "기사 수치가 KOSIS 공식 통계와 차이가 있음",
       count: 불일치,
       colorClass: VERDICT_COUNT_BOX_CLASS["불일치"],
     },
     {
-      icon: "🔍",
+      icon: <VerdictIcon verdict="애매" />,
       label: "검토 필요",
       description: "표 매칭 신뢰도가 낮거나 KOSIS로 검증 불가능한 주제",
       count: 검토필요,
@@ -71,7 +78,7 @@ export function SummaryCard({ records, reviewFilterActive, onToggleReviewFilter 
   ];
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md hover:shadow-indigo-500/5 dark:border-gray-700 dark:bg-gray-900">
       <div className="flex items-center gap-2 border-b border-gray-100 px-6 py-4 dark:border-gray-800">
         <span className="h-2 w-2 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
         <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -89,6 +96,12 @@ export function SummaryCard({ records, reviewFilterActive, onToggleReviewFilter 
               <p className="text-xs text-gray-400">표 매칭까지 도달한 비율 기준</p>
             </div>
           </div>
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">누적 기사 처리량</p>
+            <p className="text-lg font-bold text-gray-900 dark:text-gray-50">
+              {articleCount.toLocaleString()} 기사 처리
+            </p>
+          </div>
           <ConfidenceDots filled={confidenceFilled} label={confidenceLabel} />
         </div>
 
@@ -100,7 +113,7 @@ export function SummaryCard({ records, reviewFilterActive, onToggleReviewFilter 
               className="flex items-center justify-between gap-3 border-t border-gray-100 py-2.5 first:border-t-0 dark:border-gray-800"
             >
               <div className="flex items-center gap-3">
-                <span className="text-base">{row.icon}</span>
+                {row.icon}
                 <div>
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{row.label}</p>
                   <p className="text-xs text-gray-400">{row.description}</p>

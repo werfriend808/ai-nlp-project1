@@ -47,6 +47,9 @@ except ImportError:
             region: Optional[str] = None
             source_org: Optional[str] = None
             source_report: Optional[str] = None
+            age: Optional[str] = None
+            gender: Optional[str] = None
+            search_query: Optional[str] = None
 
 
 MODEL = "HCX-DASH-002"
@@ -75,6 +78,18 @@ _RECOVERY_PROMPT_TEMPLATE = """아래 문장들은 규칙 기반 스캐너가 �
 - ⚠️ OECD 평균 대비, 전년 대비처럼 다른 대상과 비교하는 문장이어도 공식 기관(통계청 등)이
   발표한 수치라면 검증 가치 있는 claim입니다 — 비교 표현이 있다는 이유만으로 제외하지
   마세요.
+- ⚠️ "조"/"억"/"만" 단위가 섞인 금액은 자릿수를 정확히 환산합니다: 1조=1,000,000,000,000,
+  1억=100,000,000, 1만=10,000입니다. "1조2000억원"은 1,200,000,000,000원입니다(1조와
+  2000억을 각각 정확한 자릿수로 바꾼 뒤 더한 값) — "1200억원"(120,000,000,000)처럼
+  자릿수를 하나 줄여 잘못 계산하는 실수가 실제로 재현됐습니다(2026-08-22). 조/억/만이
+  여러 개 섞인 숫자는 단위별로 하나씩 나눠 계산한 뒤 합산하세요.
+- ⚠️ 한 문장에 절대값(예: "1조2000억원")과 그 값의 비중/비율(예: "정부 R&D의 약 4% 수준")이
+  함께 나오면, 절대값은 claim_type="규모"로, 비중은 claim_type="비교"로 각각 별도 claim
+  2개를 뽑습니다(아래 예시 참고) — 절대값만 뽑고 비중을 버리거나, 반대로 비중만 뽑거나,
+  같은 claim_type("규모")으로 둘 다 중복해서 뽑으면 안 됩니다. 이건 바로 위 "복합 문장"
+  규칙(같은 claim_type의 값이 대상만 다르게 여러 개 나올 때 대표 하나만 뽑는 것)과
+  다릅니다 — 여기는 claim_type 자체가 다른 값 2개(절대량 vs 비중)이므로 반드시 둘 다
+  뽑아야 합니다.
 
 ## 출력 형식 (JSON 배열만 출력, 다른 텍스트 금지 — claim_extractor와 동일 스키마)
 [
@@ -188,6 +203,26 @@ def _to_optional_float(value: object) -> Optional[float]:
         return None
 
 
+def _to_optional_str(value: object) -> Optional[str]:
+    """자유 텍스트 필드(source_org/population/region 등)는 스키마상 문자열이지만, HCX가
+    가끔 배열로 응답하는 경우가 실측으로 확인됐다(2026-08-22, "한국은행과 메리츠증권
+    등에 따르면" 문장에서 source_org를 ["한국은행", "메리츠증권"]으로 준 사례 —
+    item.get()으로 그대로 통과시키면 다운스트림의 Counter(orgs_in_article)이
+    "unhashable type: list"로 죽어서 배치 전체가 중단됐다). 리스트가 오면 값이 있는
+    첫 항목만 쓴다(여러 기관을 한 문자열로 합치면 reranker의 기관명 화이트리스트
+    정확 매칭이 깨지므로, 정보 손실보다 매칭 가능성을 우선한다)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                return item
+        return None
+    return str(value)
+
+
 # interfaces.py의 ClaimType(2단계 계약, 4종). claim_extractor.py 안에서만 방어적으로
 # 참조하는 로컬 사본이라 팀 합의 없이 여기서 그대로 씀 — interfaces.py 자체는 안 건드림.
 _KNOWN_CLAIM_TYPES = {"규모", "증감률", "비교", "전망"}
@@ -249,18 +284,21 @@ def _item_to_claim(item: dict) -> Claim:
     return Claim(
         sentence=str(item["sentence"]),
         claim_type=_normalize_claim_type(item.get("claim_type")),
-        period=item.get("period"),
-        unit=item.get("unit"),
-        population=item.get("population"),
-        statistic_expression=item.get("statistic_expression"),
+        period=_to_optional_str(item.get("period")),
+        unit=_to_optional_str(item.get("unit")),
+        population=_to_optional_str(item.get("population")),
+        statistic_expression=_to_optional_str(item.get("statistic_expression")),
         value=_to_optional_float(item.get("value")),
         value_type=_normalize_value_type(item.get("value_type")),
         comparison_operator=_normalize_comparison_operator(item.get("comparison_operator")),
-        comparison_target=item.get("comparison_target"),
+        comparison_target=_to_optional_str(item.get("comparison_target")),
         comparison_value=_to_optional_float(item.get("comparison_value")),
-        region=item.get("region"),
-        source_org=item.get("source_org"),
-        source_report=item.get("source_report"),
+        region=_to_optional_str(item.get("region")),
+        source_org=_to_optional_str(item.get("source_org")),
+        source_report=_to_optional_str(item.get("source_report")),
+        age=_to_optional_str(item.get("age")),
+        gender=_to_optional_str(item.get("gender")),
+        search_query=_to_optional_str(item.get("search_query")),
     )
 
 

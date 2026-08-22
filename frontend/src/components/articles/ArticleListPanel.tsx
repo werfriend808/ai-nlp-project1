@@ -72,7 +72,7 @@ export function ArticleListPanel({ groups, articleDates, onSelect }: ArticleList
   const pageNumbers = pageWindow(currentPage, totalPages, MAX_PAGE_BUTTONS);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md hover:shadow-indigo-500/5 dark:border-gray-700 dark:bg-gray-900">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">검증 기사 목록</h2>
         <div className="flex flex-wrap items-center gap-2">

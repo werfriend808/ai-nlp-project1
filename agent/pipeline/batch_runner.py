@@ -52,16 +52,18 @@ import random
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
 from agent.preprocessing.classifier import classify
 from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims, strip_title_prefix_from_claims
+from agent.preprocessing.claim_candidate_scanner import _normalize_quotes
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank, is_rrf_trusted
+from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, expand_institution_query_aliases
 from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback, is_region_grounded
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
@@ -72,6 +74,8 @@ from agent.shared.extreme_value_patterns import (
 )
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
+from agent.kosis.detail_cache import get_table_detail, DetailCacheUnavailableError
+from agent.kosis.dynamic_slot_mapping import map_claim_slots
 from agent.verdict.judge import judge, JudgeError
 from agent.explain.explainer import explain, ExplainerError
 from agent.interfaces import ComputedResult, Explanation, Verdict, KosisApiResponse
@@ -149,7 +153,28 @@ _BYLINE_RE = re.compile(
 # 추출해버린다. 확실한(오탐 위험이 낮은) 마커만 좁게 잡는다 — 마커를 넓히면 진짜 본문이
 # 우연히 비슷한 단어를 포함할 때(예: AI 추천 시스템을 다루는 기사) 잘못 잘려나갈 위험이
 # 있어 일부러 보수적으로 유지한다.
-_JUNK_SECTION_RE = re.compile(r"By\s*Taboola|많이\s*본\s*뉴스|오늘의\s*멤버십|AI\s*추천")
+#
+# 2026-08-22 추가: 프론트엔드 실사용 중 "#아파트 #AI #트럼프 아파트 더보기 글로벌 IB들...
+# 1.7%로 하락" 식으로, 기사 본문 뒤에 "#태그 #태그 ... {카테고리} 더보기" 형태의 관련기사
+# 위젯이 붙어 그 안의 무관한 수치가 claim으로 잘못 뽑히는 사례(불일치로 오판정까지 됨)가
+# 실제로 재현됨. data_set.csv 전수 스캔(2705건) 결과 이 "해시태그 2개 이상 연속" 패턴이
+# 733건(27%)에서 나타났고, 샘플 확인 결과 예외 없이 전부 "진짜 본문 끝 / 위젯 시작" 경계와
+# 정확히 일치했다(관련기사 위젯뿐 아니라 "#태그 #태그 기자명 구독수" 같은 바이라인 앞
+# 태그 블록도 포함, 둘 다 잘라내도 안전). 해시태그가 연속으로 2개 이상 나오는 건 실제
+# 기사 본문 문장에서는 사실상 없는 패턴이라(태그는 항상 UI 요소로만 등장) 오탐 위험이
+# 낮다 — 위 마커들처럼 보수적으로 유지할 필요 없이 넓게 잡아도 안전하다.
+#
+# 2026-08-22 추가(2): "구독수 212" 자체가 claim으로 잘못 뽑혀 엉뚱한 KOSIS 표(기업경기조사
+# 등)와 비교당해 불일치로 오판정되는 사례 실제 발견. 원인은 해시태그가 1개뿐이라("#전기차
+# 조재희 기자 구독수 216") 위 "해시태그 2개 이상" 패턴에 안 걸리는 "기자 프로필+구독수"
+# 블록 — data_set.csv 전수 스캔 결과 1647/2706건(61%)에서 나타나고, 샘플 확인 결과 항상
+# "OOO 기자 [소개문구] 구독수 숫자" 형태로 기자 프로필 위젯의 일부였다(위 위젯과 마찬가지로
+# 진짜 본문에는 나올 수 없는 UI 전용 문구라 오탐 위험 낮음).
+_JUNK_SECTION_RE = re.compile(
+    r"By\s*Taboola|많이\s*본\s*뉴스|오늘의\s*멤버십|AI\s*추천"
+    r"|#\S+(?:\s+#\S+){1,}"
+    r"|구독수\s*\d+"
+)
 
 
 def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) -> str:
@@ -174,13 +199,22 @@ def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) 
     7.5%까지 치솟으며..."가 통째로 한 claim.sentence가 됨 — 프론트엔드에서 원문 위치를
     못 찾는 형태로 나타남). 제목 자체는 맥락으로 남기되(LLM이 봐도 됨), 제목이 실제로
     trimmed 맨 앞에서 발견되면 그 뒤에 줄바꿈을 넣어 본문과 명확히 분리한다.
+
+    2026-08-22 실측 발견: CSV의 기사제목 컬럼은 곡선 따옴표(‘/’)를 쓰는데 본문 텍스트
+    안에서는 직선 따옴표(')로 스크랩되는 기사가 있어서("'직원 한 명에 로봇 수십 대'…"),
+    anchor를 raw_text에서 못 찾아(find()==-1) start=0 폴백으로 빠지는 바람에 신문사
+    내비게이션 메뉴 전체가 그대로 본문 앞에 남는 사례가 발견됨. claim_candidate_scanner의
+    _normalize_quotes와 동일한 정규화를 검색에만 적용한다(문자 수가 그대로라 위치는
+    원본 raw_text에 그대로 대응됨) — 실제로 잘라내는 텍스트 자체는 원문 그대로 유지.
     """
-    anchor = title[:12].strip()
-    idx = raw_text.find(anchor) if anchor else -1
+    normalized_title = _normalize_quotes(title)
+    normalized_text = _normalize_quotes(raw_text)
+    anchor = normalized_title[:12].strip()
+    idx = normalized_text.find(anchor) if anchor else -1
     start = idx if idx >= 0 else 0
     trimmed = raw_text[start : start + max_len]
 
-    if idx >= 0 and title and trimmed.startswith(title):
+    if idx >= 0 and title and _normalize_quotes(trimmed).startswith(normalized_title):
         trimmed = title + "\n" + trimmed[len(title) :]
 
     m = _BYLINE_RE.search(trimmed[: len(title) + 100])
@@ -194,6 +228,40 @@ def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) 
     return trimmed
 
 
+def _load_csv_rows(path: Path = DATA_CSV_PATH) -> list[dict]:
+    """data_set.csv를 읽어 '검색 구분 레이블'이 True인 행만 반환한다(공용 헬퍼 —
+    load_articles_from_csv/load_mixed_articles_from_csv가 같이 쓴다).
+
+    data_set.csv는 여러 차례 Excel에서 내보낸 조각을 이어붙인 흔적이 있어서, 파일 맨 앞뿐
+    아니라 중간 행에도 BOM(U+FEFF)이 섞여 있는 경우가 실측 확인됨(2026-08-10, --csv 배치
+    실행 중 재현 — 기사제목에 낀 BOM을 print()가 그대로 출력하려다 Windows 콘솔(cp949)
+    인코딩 실패로 크래시). encoding="utf-8-sig"는 파일 시작 위치의 BOM만 제거하므로, 읽은
+    텍스트 전체에서 남은 BOM을 한 번 더 제거해서 중간에 낀 것까지 잡는다."""
+    with open(path, encoding="utf-8-sig") as f:
+        text = f.read().replace("﻿", "")
+    return [
+        r for r in csv.DictReader(io.StringIO(text))
+        if r.get("검색 구분 레이블", "").strip().lower() == "true"
+    ]
+
+
+def _row_to_article(row: dict) -> dict:
+    try:
+        y, m, d = (int(v) for v in row["작성일"].split("-"))
+        published = date(y, m, d)
+    except (KeyError, ValueError):
+        published = date(2025, 1, 1)
+    title = row.get("기사제목", "")
+    return {
+        "label": f"[data_set.csv] {title[:40]}",
+        "article_title": title,
+        "article_url": row.get("URL"),
+        "published_date": published,
+        "article_text": _clean_scraped_article_text(title, row["기사 본문 전체"]),
+        "clarify_reply": DEFAULT_CLARIFY_REPLY,
+    }
+
+
 def load_articles_from_csv(
     path: Path = DATA_CSV_PATH, n: int = 15, seed: int = 42
 ) -> list[dict]:
@@ -204,39 +272,44 @@ def load_articles_from_csv(
     손으로 쓴 ARTICLES(알려진 이슈 재현용)와 달리, 실제 기사라 어떤 clarify 질문이
     나올지 미리 알 수 없어서 여러 슬롯을 한 번에 답하는 범용 문구를 그대로 재사용한다.
     """
-    # data_set.csv는 여러 차례 Excel에서 내보낸 조각을 이어붙인 흔적이 있어서, 파일 맨 앞뿐
-    # 아니라 중간 행에도 BOM(U+FEFF)이 섞여 있는 경우가 실측 확인됨(2026-08-10, --csv 배치
-    # 실행 중 재현 — 기사제목에 낀 BOM을 print()가 그대로 출력하려다 Windows 콘솔(cp949)
-    # 인코딩 실패로 크래시). encoding="utf-8-sig"는 파일 시작 위치의 BOM만 제거하므로, 읽은
-    # 텍스트 전체에서 남은 BOM을 한 번 더 제거해서 중간에 낀 것까지 잡는다.
-    with open(path, encoding="utf-8-sig") as f:
-        text = f.read().replace("﻿", "")
-    rows = [
-        r for r in csv.DictReader(io.StringIO(text))
-        if r.get("검색 구분 레이블", "").strip().lower() == "true"
-    ]
-
+    rows = _load_csv_rows(path)
     random.Random(seed).shuffle(rows)
+    return [_row_to_article(row) for row in rows[:n]]
 
-    articles = []
-    for row in rows[:n]:
-        try:
-            y, m, d = (int(v) for v in row["작성일"].split("-"))
-            published = date(y, m, d)
-        except (KeyError, ValueError):
-            published = date(2025, 1, 1)
-        title = row.get("기사제목", "")
-        articles.append(
-            {
-                "label": f"[data_set.csv] {title[:40]}",
-                "article_title": title,
-                "article_url": row.get("URL"),
-                "published_date": published,
-                "article_text": _clean_scraped_article_text(title, row["기사 본문 전체"]),
-                "clarify_reply": DEFAULT_CLARIFY_REPLY,
-            }
-        )
-    return articles
+
+def load_mixed_articles_from_csv(
+    path: Path = DATA_CSV_PATH, n_dense: int = 15, n_random: int = 15, seed: int = 42
+) -> list[dict]:
+    """수치 문장이 많아 보이는 기사 n_dense건(claim_candidate_scanner의 규칙 기반 후보 수
+    기준 상위)과 완전 무작위 n_random건을 섞어 반환한다.
+
+    2026-08-22: 순수 무작위 샘플(load_articles_from_csv)로 데모를 돌려보니, '검색 구분
+    레이블'이 True인 기사여도 1단계 classifier가 "통계와 무관"으로 걸러내는 비율이
+    실측 절반 이상이라(30건 중 16건) 실제 검증까지 가는 기사가 몇 건 안 남는 문제가
+    있었다("기사가 너무 없어서 잘 되고 있는지 모르겠다" 피드백). 수치 후보가 많은 기사를
+    절반 섞으면 classifier 통과율이 높아져 더 풍부한 데모가 되면서도, 나머지 절반은
+    완전 무작위로 남겨 실제 분포(무관한 기사 포함)도 같이 보여준다."""
+    from agent.preprocessing.claim_candidate_scanner import scan_numeric_candidates
+
+    rows = _load_csv_rows(path)
+
+    def _density(row: dict) -> int:
+        return len(scan_numeric_candidates(row.get("기사 본문 전체", "") or ""))
+
+    scored = sorted(rows, key=_density, reverse=True)
+    dense_rows = scored[:n_dense]
+    dense_titles = {r.get("기사제목") for r in dense_rows}
+
+    remaining = [r for r in rows if r.get("기사제목") not in dense_titles]
+    random.Random(seed).shuffle(remaining)
+    random_rows = remaining[:n_random]
+
+    combined = dense_rows + random_rows
+    # 수치 밀도순으로 몰려있으면 배치 진행 로그가 "잘되는 기사만 먼저" 식으로 보여서,
+    # 순서까지 섞어 실행 중간에도 어느 쪽 절반인지 티가 안 나게 한다.
+    random.Random(seed).shuffle(combined)
+
+    return [_row_to_article(row) for row in combined]
 
 
 ARTICLES = [
@@ -938,11 +1011,17 @@ def _fetch_value(
     client: KosisApiClient,
     calculator: KosisCalculator,
     decade: Optional[tuple],
+    dynamic_base: Optional[dict] = None,
 ) -> KosisApiResponse:
     """5단계 조회 한 번. decade가 (라벨, 코드리스트)면(_resolve_decade_age 참고) 그 코드들을
     fetch_by_codes()로 한 번에 가져와 compute_sum()으로 합산한 뒤 KosisApiResponse 모양으로
     돌려준다(단위/시점은 합산 결과, org_id/itm_id 등은 응답 중 첫 번째 것 재사용 — 같은
-    표·같은 조회라 전부 동일함). decade가 None이면 기존처럼 client() 단일 호출 그대로."""
+    표·같은 조회라 전부 동일함). decade가 None이면 기존처럼 client() 단일 호출 그대로.
+
+    dynamic_base(2026-08-21 추가, PHASE 6/7): table_params.json에 없는 VDB 전용 표는
+    client.__call__()이 아니라 client.call_dynamic()으로 조회해야 한다(_build_dynamic_kosis_slots
+    참고) — decade(나이대 합산)는 table_params.json에 등록된 age code_map이 있는 표에서만
+    감지되므로(_resolve_decade_age) dynamic 표에서는 항상 None이라 이 분기와는 겹치지 않는다."""
     if decade is not None:
         label, codes = decade
         responses = client.fetch_by_codes(table_id, slots, "age", codes)
@@ -954,7 +1033,85 @@ def _fetch_value(
             org_id=first.org_id, itm_id=first.itm_id,
             obj_l1=first.obj_l1, obj_l2=first.obj_l2, prd_se=first.prd_se,
         )
+    if dynamic_base is not None:
+        return client.call_dynamic(table_id, slots, dynamic_base)
     return client(table_id, slots)
+
+
+def _build_dynamic_kosis_slots(
+    table_id: str, org_id: Optional[str], claim, generic_slots: dict
+) -> Optional[tuple[dict, dict]]:
+    """PHASE 6/7: build_kosis_slots()가 None을 반환한 표(table_params.json 밖, VDB 전용)에
+    대해, KosisApiClient.call_dynamic()이 바로 쓸 수 있는 (kosis_slots, base) 쌍을 즉석에서
+    만든다. detail_cache로 표의 분류축+코드맵을 얻고(캐시 우선), dynamic_slot_mapping으로
+    claim.region/age/gender를 실제 축 코드로 매핑한다. 어느 단계든 실패하면 None — 호출부는
+    기존과 동일하게 이 claim을 스킵한다(사람이 미리 검증 못 한 표라 애매하면 무리하게
+    조회하지 않는 게 안전하다는 원칙, dynamic_slot_mapping.py 모듈 docstring 참고)."""
+    if not org_id:
+        print(f"[동적 슬롯매핑] '{table_id}' VDB 후보에 org_id가 없음(구버전 VDB row?) → 폴백 불가, 스킵")
+        return None
+
+    try:
+        detail = get_table_detail(table_id, org_id)
+    except DetailCacheUnavailableError as e:
+        print(f"[동적 슬롯매핑] detail_cache 연결 실패({e}) → 폴백 불가, 스킵")
+        return None
+
+    if detail["status"] != "ok":
+        print(f"[동적 슬롯매핑] '{table_id}' 표 상세정보 조회 실패(status={detail['status']}) → 스킵")
+        return None
+
+    mapping = map_claim_slots(claim, detail["code_maps"] or {})
+    if mapping.overall_status != "success":
+        print(f"[동적 슬롯매핑] '{table_id}' {mapping.reason} → 스킵")
+        return None
+
+    axis_num_to_name = detail.get("axis_num_to_name") or {}
+    if not axis_num_to_name:
+        print(f"[동적 슬롯매핑] '{table_id}' axis_num_to_name이 캐시에 없음(구버전 캐시?) → 스킵")
+        return None
+
+    dimensions: dict = {}
+    kosis_slots: dict = {"period": generic_slots.get("period")}
+    if generic_slots.get("prd_se"):
+        kosis_slots["prd_se"] = generic_slots["prd_se"]
+    if generic_slots.get("itm_id"):
+        kosis_slots["itm_id"] = generic_slots["itm_id"]
+
+    code_maps = detail.get("code_maps") or {}
+    # KOSIS는 표에 정의된 objL{n} 축을 전부 요청 파라미터에 넣어야 한다("[20] 필수요청
+    # 변수누락"으로 확인됨, 2026-08-21) — claim이 언급 안 한 축도 빠뜨리면 안 된다.
+    # region/age/gender로 이미 resolve된 축은 그 값을 쓰고, 나머지 축은 select_dimension_values()
+    # (catalog 표 경로)와 같은 원리로 claim.population/statistic_expression을 code_map과
+    # 대조해본다 — 실측 발견(2026-08-21, DT_1B8000G): KOSIS는 "출생아수"/"혼인건수" 같은
+    # 통계 항목 자체를 itmId가 아니라 "종류별" 같은 objL 축으로 모델링한 표도 있어서, 이걸
+    # 안 하면 그 축이 다항목(15개)인데 "ALL"로 조회해 결과가 여러 건이라 실패한다
+    # (KosisApiError, 아래 run_stage_5_6의 except가 잡아서 안전하게 스킵은 되지만 검증
+    # 자체가 불필요하게 실패함). 그래도 못 찾은 축만 "ALL"로 채운다(select_dimension_values와
+    # 동일하게, 표 대부분은 하나쯤 총계/전체 코드가 있어 "ALL"이 실제로 KOSIS의 집계 코드로
+    # 통하는 경우가 많음 — 안 통하면 다건 응답으로 이어져 위와 동일하게 안전하게 스킵된다).
+    for axis_num, axis_name in axis_num_to_name.items():
+        code = mapping.resolved.get(axis_name)
+        if code is None:
+            code = _match_by_name(code_maps.get(axis_name, {}), (claim.population, claim.statistic_expression))
+        # code_map을 빈 채로 두면 api_client._call_with_base()의
+        # `code_map.get(user_value, user_value)`가 항상 user_value를 그대로 통과시킨다 —
+        # 이미 여기서 resolve된 실제 KOSIS 코드를 다시 라벨->코드 변환할 필요가 없다.
+        dimensions[axis_name] = {"kosis_param": f"objL{axis_num}", "code_map": {}, "default_value": "ALL"}
+        if code is not None:
+            kosis_slots[axis_name] = code
+
+    base = {
+        "orgId": org_id,
+        "tblId": table_id,
+        "dimensions": dimensions,
+    }
+    if detail.get("prd_se"):
+        base["prdSe"] = [detail["prd_se"]]
+    if not kosis_slots.get("prd_se") and detail.get("prd_se"):
+        kosis_slots["prd_se"] = detail["prd_se"]
+
+    return kosis_slots, base
 
 
 def run_stage_5_6(
@@ -967,6 +1124,8 @@ def run_stage_5_6(
     comparison_target: Optional[str] = None,
     claim_sentence: Optional[str] = None,
     article_year: Optional[int] = None,
+    org_id: Optional[str] = None,
+    claim=None,
 ) -> Optional[ComputedResult]:
     """5·6단계. 7·8단계로 넘길 수 있도록 ComputedResult를 반환한다 (실패/스킵 시 None).
 
@@ -979,14 +1138,28 @@ def run_stage_5_6(
     연도를 원문에서 계산하기 위해 필요(route_calc_type이 이 calc_type을 정해서
     generic_slots["calc_type"]에 덮어쓴 뒤 호출부가 넘겨준다) — 팀원(D)이 다른 브랜치에서
     만든 극값검증 기능을 이 브랜치의 오늘 자 수정사항(다중주기/MoM-YoY 구분)과 함께
-    합친 것(2026-08-14)."""
+    합친 것(2026-08-14).
+
+    org_id/claim(2026-08-21 추가, PHASE 6/7): table_id가 table_params.json(64개 수동
+    카탈로그)에 없으면(VDB 전용 표) build_kosis_slots()가 None을 반환한다 — 예전엔 여기서
+    바로 스킵했지만, 이제 org_id(TableCandidate.org_id)와 claim(region/age/gender 원본
+    슬롯)이 있으면 _build_dynamic_kosis_slots()로 detail_cache+dynamic_slot_mapping을 통해
+    즉석에서 슬롯을 만들어 계속 진행한다. 안 넘기면(기본값 None) 기존과 동일하게 스킵
+    (하위 호환 — 코랩 경로 등 org_id/claim을 아직 안 넘기는 호출부도 그대로 동작)."""
     kosis_slots = build_kosis_slots(table_id, generic_slots, table_params)
+    dynamic_base: Optional[dict] = None
     if kosis_slots is None:
-        print(
-            f"[5단계 api_client] '{table_id}'가 table_params.json에 없음 "
-            "→ C가 아직 이 표를 조사하지 않음 (알려진 갭, 스킵)"
-        )
-        return None
+        if claim is not None:
+            dynamic = _build_dynamic_kosis_slots(table_id, org_id, claim, generic_slots)
+            if dynamic is not None:
+                kosis_slots, dynamic_base = dynamic
+                print(f"[5단계 api_client] '{table_id}' 동적 슬롯매핑 성공(VDB 전용 표) → 조회 계속 진행")
+        if kosis_slots is None:
+            print(
+                f"[5단계 api_client] '{table_id}'가 table_params.json에 없음 "
+                "→ C가 아직 이 표를 조사하지 않았고 동적 슬롯매핑도 실패/불가 (스킵)"
+            )
+            return None
 
     calc_type = generic_slots.get("calc_type")
     # 2026-08-16: "20대"/"70대 이상" 같은 10세단위 나이 표현은 이 claim 안에서 base/target
@@ -1005,8 +1178,8 @@ def run_stage_5_6(
             else:
                 base_period = _prior_year_same_period(kosis_slots["period"])
             base_slots = dict(kosis_slots, period=base_period)
-            base_resp = _fetch_value(table_id, base_slots, client, calculator, decade)
-            target_resp = _fetch_value(table_id, kosis_slots, client, calculator, decade)
+            base_resp = _fetch_value(table_id, base_slots, client, calculator, decade, dynamic_base)
+            target_resp = _fetch_value(table_id, kosis_slots, client, calculator, decade, dynamic_base)
             print(f"[5단계 api_client] base   = {base_resp}")
             print(f"[5단계 api_client] target = {target_resp}")
 
@@ -1028,6 +1201,13 @@ def run_stage_5_6(
             print(f"[6단계 calculator] {result}")
             return result
         elif calc_type in ("최댓값검증", "최솟값검증") and kosis_slots.get("period"):
+            if dynamic_base is not None:
+                # 2026-08-21: fetch_series()/client()가 client.call_dynamic() 상당의
+                # 동적 base 경로를 아직 지원하지 않는다(historical 수십 개 시점을 훑는
+                # 이 분기는 decade와 마찬가지로 스코프가 훨씬 크다) — VDB 전용 표에 대한
+                # 최댓값/최솟값검증은 지금은 스킵한다(알려진 갭, decade와 동일 원칙).
+                print(f"[5단계 api_client] '{table_id}' 동적 슬롯매핑 표는 {calc_type!r} 미지원(알려진 갭) → 스킵")
+                return None
             # 2026-08-16: 이 분기는 decade(나이대 합산)를 아직 지원하지 않는다 — historical
             # 전체 구간의 매 시점마다 5세단위 코드 여러 개를 합산해야 해서 스코프가 훨씬
             # 크다(단순조회/증감처럼 시점 1~2개가 아니라 수십 개 시점 전부). "20대 취업자
@@ -1079,7 +1259,7 @@ def run_stage_5_6(
             print(f"[6단계 calculator] {result}")
             return result
         else:
-            resp = _fetch_value(table_id, kosis_slots, client, calculator, decade)
+            resp = _fetch_value(table_id, kosis_slots, client, calculator, decade, dynamic_base)
             print(f"[5단계 api_client] {resp}")
             print("[6단계 calculator] 단순 조회 (calc_type 없음/미지원) → 계산 없이 값 그대로 사용")
             return ComputedResult(calc_type="단순조회", raw_value=resp.raw_value, unit=resp.unit, period=resp.period)
@@ -1110,7 +1290,10 @@ def run_stage_7_8(
     기사 발행일을 앵커로 시점을 확정할 수 있게 그대로 넘긴다(agent/verdict/judge.py 참고)."""
     article_date_str = article_date.isoformat() if hasattr(article_date, "isoformat") else article_date
     try:
-        verdict = judge(claim, computed, prd_se=prd_se, article_date=article_date_str)
+        verdict = judge(
+            claim, computed, prd_se=prd_se, article_date=article_date_str,
+            matched_table_name=top.table_name if top else None,
+        )
         print(f"[7단계 judge] {verdict}")
     except JudgeError as e:
         print(f"[7단계 judge] 실패 ({type(e).__name__}: {e}) → 설명 생성 스킵")
@@ -1158,6 +1341,11 @@ def _build_verification_record(
     ambiguity_reason: Optional[str],
 ) -> dict:
     """claim + 3~8단계 결과를 db/store.py의 검증 스키마 dict로 조립한다."""
+    # 2026-08-21: table_id가 table_params.json에 없는 VDB 전용 표(PHASE 6/7 동적 슬롯매핑
+    # 경로, run_stage_5_6._build_dynamic_kosis_slots 참고)로 검증에 성공한 claim이어도
+    # 여기선 여전히 None이 된다 — 이 함수는 table_params.json만 보는 build_kosis_slots를
+    # 그대로 재사용하기 때문(알려진 표시 갭, 검증 자체의 정확성과는 무관 — 실제 조회에 쓰인
+    # 값은 run_stage_5_6의 콘솔 로그에서 확인 가능).
     kosis_dimension = None
     if generic_slots is not None and top is not None:
         kosis_dimension = build_kosis_slots(top.table_id, generic_slots, table_params)
@@ -1258,6 +1446,7 @@ def run_article(
     catalog_by_id: dict,
     *,
     vdb_fn=None,
+    bm25_fn=None,
     raise_on_stage12_error: bool = False,
 ) -> list[dict]:
     """기사 하나를 1~8단계까지 돌리고, 16:30~17:00 결과 검수용 레코드 리스트를 반환한다.
@@ -1332,91 +1521,125 @@ def run_article(
     if before_filter != len(claims):
         print(f"[2단계 출처 필터] {before_filter}개 중 {before_filter - len(claims)}개 제외 (KOSIS 미검증 출처)")
 
-    for claim in claims:
-        print(f"{'-' * 60}")
-        print(f"주장: \"{claim.sentence}\" (claim_type={claim.claim_type})")
-
-        if claim.claim_type == "전망":
-            # 미래 예측 주장은 애초에 공식 통계로 검증할 대상이 없다 — 3~8단계를 태워봐야
-            # 표 매핑도 안 되고(과거 통계표에 "전망치"가 없음) API 호출만 낭비되므로,
-            # calc_type 라우팅 조사에서 드러난 이 케이스(100건 실측 중 8/84)는 여기서
-            # 바로 판단불가로 끝낸다 (calc_type_router.route_calc_type도 "전망"은 None을
-            # 반환해 같은 원칙을 공유함).
-            print("[분류] claim_type='전망'(미래 예측) → 3~8단계 건너뛰고 즉시 판단불가 처리")
-            verdict = Verdict(verdict="판단불가", gap_type=None, reason="미래 예측 주장은 공식 통계로 검증 불가")
-            insert_verification(
-                _build_verification_record(
-                    article=article, claim=claim, top=None, generic_slots=None,
-                    table_params=table_params, computed=None, verdict=verdict, explanation=None,
-                    cls_result=cls_result, catalog_by_id=catalog_by_id,
-                    verification_possible="불가", ambiguity_reason="미래 예측 주장(claim_type=전망)은 검증 대상 아님",
-                )
+    # 2026-08-22(속도 개선): 주장(claim)별 4~8단계는 대부분 HCX(LLM) 왕복 대기 시간이라
+    # GPU/DB와 달리 동시에 여러 개를 날려도 안전하다 — 순차 for문 대신 스레드풀로 겹쳐서
+    # 기사당 처리 시간을 줄인다(수치문장 많은 기사일수록 이득이 큼). GPU 임베딩/리랭커
+    # (search_and_rerank 내부, reranker.py의 _SEARCH_LOCK)와 sqlite 쓰기(db/store.py의
+    # _WRITE_LOCK)는 여전히 직렬화되므로 안전하며, 실제 병렬로 풀리는 건 느린 LLM 호출뿐이다.
+    # 워커 수는 HCX API 429(rate limit)를 실측으로 겪어본 적 있어(golden set 검증 스크립트)
+    # 과하게 키우지 않는다.
+    with ThreadPoolExecutor(max_workers=_CLAIM_WORKERS) as executor:
+        futures = [
+            executor.submit(
+                _process_claim,
+                article, claim, cls_result, table_params, catalog_by_id,
+                client, calculator, embedding_cache, vdb_fn, bm25_fn,
             )
-            results.append(
-                {
-                    "article": article["label"],
-                    "claim_sentence": claim.sentence,
-                    "table_name": None,
-                    "verdict": "판단불가",
-                    "gap_type": None,
-                    "classifier_score": cls_result.score,
-                }
-            )
-            continue
-
-        if _mentions_foreign_country(claim.population, claim.region, claim.comparison_target):
-            # KOSIS는 대한민국 통계청 산하 포털이라 해외 국가 자체 통계(중국 GDP, 일본
-            # 1인당 국민소득 등)를 원천적으로 제공하지 않는다. 근데 3단계 매칭이 "GDP"/
-            # "물가" 같은 일반 키워드만 보고 국내 표로 잘못 매칭시켜서, 존재하지도 않는
-            # 비교를 억지로 계산하다 잘못된 판정이 나오는 사례가 실측 확인됐다(2026-08-12
-            # — 한국 vs 일본 1인당 국민소득 비교, 중국 1분기 GDP 등). 전망 claim과 같은
-            # 원칙으로 3~8단계를 아예 건너뛰고 정직하게 판단불가 처리한다.
-            print("[분류] population/region/comparison_target에 해외 국가 포함 → KOSIS 검증 불가, 즉시 판단불가 처리")
-            verdict = Verdict(verdict="판단불가", gap_type=None, reason="해외 국가/지역 통계는 KOSIS(국내 통계)로 검증 불가")
-            insert_verification(
-                _build_verification_record(
-                    article=article, claim=claim, top=None, generic_slots=None,
-                    table_params=table_params, computed=None, verdict=verdict, explanation=None,
-                    cls_result=cls_result, catalog_by_id=catalog_by_id,
-                    verification_possible="불가", ambiguity_reason="해외 국가/지역 데이터는 KOSIS 검증 대상 아님",
-                )
-            )
-            results.append(
-                {
-                    "article": article["label"],
-                    "claim_sentence": claim.sentence,
-                    "table_name": None,
-                    "verdict": "판단불가",
-                    "gap_type": None,
-                    "classifier_score": cls_result.score,
-                }
-            )
-            continue
-
-        try:
-            candidates = search_and_rerank(
-                claim,
-                keyword_fn=keyword_search,
-                embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
-                vdb_fn=vdb_fn,
-                document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
-            )
-        except Exception as e:
-            print(f"[3단계 매핑] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
-            continue
-
-        if not candidates:
-            print("[3단계 매핑] 매칭되는 표 없음 → 스킵")
-            continue
-
-        top = candidates[0]
-        result = _finish_claim_with_top_candidate(
-            article, claim, cls_result, top, table_params, client, calculator, catalog_by_id
-        )
-        if result is not None:
-            results.append(result)
+            for claim in claims
+        ]
+        # future.result()를 제출 순서 그대로 순회 → 실행은 동시에 여러 개가 겹치지만
+        # results 리스트 순서는 기존(순차 처리)과 동일하게 유지된다.
+        for future in futures:
+            result = future.result()
+            if result is not None:
+                results.append(result)
 
     return results
+
+
+_CLAIM_WORKERS = 3
+
+
+def _process_claim(
+    article: dict,
+    claim,
+    cls_result,
+    table_params: dict,
+    catalog_by_id: dict,
+    client: KosisApiClient,
+    calculator: KosisCalculator,
+    embedding_cache: dict,
+    vdb_fn,
+    bm25_fn,
+) -> Optional[dict]:
+    """주장 1건의 3~8단계 전체(표매칭→슬롯채우기→계산→판정→설명, DB저장까지)를 처리한다.
+    run_article()의 for claim in claims: 루프 본문을 그대로 뽑아온 것 — 스레드풀에
+    제출할 수 있도록 함수 하나로 만들었을 뿐 로직 자체는 리팩토링 전후 동일하다."""
+    print(f"{'-' * 60}")
+    print(f"주장: \"{claim.sentence}\" (claim_type={claim.claim_type})")
+
+    if claim.claim_type == "전망":
+        # 미래 예측 주장은 애초에 공식 통계로 검증할 대상이 없다 — 3~8단계를 태워봐야
+        # 표 매핑도 안 되고(과거 통계표에 "전망치"가 없음) API 호출만 낭비되므로,
+        # calc_type 라우팅 조사에서 드러난 이 케이스(100건 실측 중 8/84)는 여기서
+        # 바로 판단불가로 끝낸다 (calc_type_router.route_calc_type도 "전망"은 None을
+        # 반환해 같은 원칙을 공유함).
+        print("[분류] claim_type='전망'(미래 예측) → 3~8단계 건너뛰고 즉시 판단불가 처리")
+        verdict = Verdict(verdict="판단불가", gap_type=None, reason="미래 예측 주장은 공식 통계로 검증 불가")
+        insert_verification(
+            _build_verification_record(
+                article=article, claim=claim, top=None, generic_slots=None,
+                table_params=table_params, computed=None, verdict=verdict, explanation=None,
+                cls_result=cls_result, catalog_by_id=catalog_by_id,
+                verification_possible="불가", ambiguity_reason="미래 예측 주장(claim_type=전망)은 검증 대상 아님",
+            )
+        )
+        return {
+            "article": article["label"],
+            "claim_sentence": claim.sentence,
+            "table_name": None,
+            "verdict": "판단불가",
+            "gap_type": None,
+            "classifier_score": cls_result.score,
+        }
+
+    if _mentions_foreign_country(claim.population, claim.region, claim.comparison_target):
+        # KOSIS는 대한민국 통계청 산하 포털이라 해외 국가 자체 통계(중국 GDP, 일본
+        # 1인당 국민소득 등)를 원천적으로 제공하지 않는다. 근데 3단계 매칭이 "GDP"/
+        # "물가" 같은 일반 키워드만 보고 국내 표로 잘못 매칭시켜서, 존재하지도 않는
+        # 비교를 억지로 계산하다 잘못된 판정이 나오는 사례가 실측 확인됐다(2026-08-12
+        # — 한국 vs 일본 1인당 국민소득 비교, 중국 1분기 GDP 등). 전망 claim과 같은
+        # 원칙으로 3~8단계를 아예 건너뛰고 정직하게 판단불가 처리한다.
+        print("[분류] population/region/comparison_target에 해외 국가 포함 → KOSIS 검증 불가, 즉시 판단불가 처리")
+        verdict = Verdict(verdict="판단불가", gap_type=None, reason="해외 국가/지역 통계는 KOSIS(국내 통계)로 검증 불가")
+        insert_verification(
+            _build_verification_record(
+                article=article, claim=claim, top=None, generic_slots=None,
+                table_params=table_params, computed=None, verdict=verdict, explanation=None,
+                cls_result=cls_result, catalog_by_id=catalog_by_id,
+                verification_possible="불가", ambiguity_reason="해외 국가/지역 데이터는 KOSIS 검증 대상 아님",
+            )
+        )
+        return {
+            "article": article["label"],
+            "claim_sentence": claim.sentence,
+            "table_name": None,
+            "verdict": "판단불가",
+            "gap_type": None,
+            "classifier_score": cls_result.score,
+        }
+
+    try:
+        candidates = search_and_rerank(
+            claim,
+            keyword_fn=keyword_search,
+            embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
+            vdb_fn=vdb_fn,
+            bm25_fn=bm25_fn,
+            document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
+        )
+    except Exception as e:
+        print(f"[3단계 매핑] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
+        return None
+
+    if not candidates:
+        print("[3단계 매핑] 매칭되는 표 없음 → 스킵")
+        return None
+
+    top = candidates[0]
+    return _finish_claim_with_top_candidate(
+        article, claim, cls_result, top, table_params, client, calculator, catalog_by_id
+    )
 
 
 def _finish_claim_with_top_candidate(
@@ -1552,6 +1775,7 @@ def _finish_claim_with_top_candidate(
         top.table_id, slots, table_params, client, calculator,
         comparison_target=claim.comparison_target,
         claim_sentence=claim.sentence, article_year=article["published_date"].year,
+        org_id=top.org_id, claim=claim,
     )
     if computed is None:
         return None
@@ -1660,7 +1884,23 @@ def print_review_summary(results: list[dict]) -> None:
         )
 
 
-def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> None:
+def main(
+    use_csv_sample: bool = False,
+    csv_n: int = 15,
+    csv_seed: int = 42,
+    *,
+    with_vdb: bool = True,
+    csv_mixed: bool = False,
+    csv_n_dense: int = 15,
+    csv_n_random: int = 15,
+) -> None:
+    """with_vdb(2026-08-22 추가): --csv 배치 실행이 지금까지 vdb_fn/bm25_fn을 안 넘겨서
+    keyword+64개 카탈로그 임베딩만 쓰고 있었다 — VDB(28.7만개)/BM25/PHASE 6·7 동적 슬롯매핑
+    등 이 세션에 추가된 개선사항 대부분이 CSV 배치 경로엔 전혀 반영이 안 되는 상태였다
+    (agent/api/server.py의 실시간 검증 경로만 vdb_fn/bm25_fn을 넘기고 있었음). GPU가 있는
+    환경(AWS GPU 서버)에서만 True로 두고, Qwen3-Embedding-4B를 여기서 로딩해서 server.py와
+    동일한 방식으로 vdb_fn/bm25_fn을 만들어 run_article()에 넘긴다. GPU가 없는 로컬 환경에선
+    False로 넘기면 기존처럼 VDB 없이 동작(하위 호환)."""
     try:
         client = KosisApiClient()
     except RuntimeError as e:
@@ -1675,13 +1915,69 @@ def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> N
     catalog_by_id = _load_table_catalog_by_id()
     embedding_cache = build_table_embedding_cache()
 
-    articles = load_articles_from_csv(n=csv_n, seed=csv_seed) if use_csv_sample else ARTICLES
+    vdb_fn = bm25_fn = None
+    if with_vdb:
+        from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
+
+        print("[배치] Qwen3-Embedding-4B 로딩 중(VDB 쿼리용)...")
+        from sentence_transformers import SentenceTransformer
+
+        vdb_model = SentenceTransformer("Qwen/Qwen3-Embedding-4B", truncate_dim=1024)
+        vdb_instruction = (
+            "Given a Korean news claim sentence, retrieve the KOSIS statistical table "
+            "description that best matches it"
+        )
+
+        def _retrieval_query_text(claim) -> str:
+            base = claim.search_query or claim.sentence
+            return expand_institution_query_aliases(base, claim.source_org)
+
+        def vdb_fn(claim):
+            text = f"Instruct: {vdb_instruction}\nQuery: {_retrieval_query_text(claim)}"
+            vec = vdb_model.encode([text], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
+            try:
+                return batch_query_vdb([vec], top_k=VDB_TOP_K)[0]
+            except VdbUnavailableError as e:
+                print(f"[VDB] 조회 실패({e}) — VDB 없이 계속 진행")
+                return []
+
+        def bm25_fn(claim):
+            try:
+                return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
+            except VdbUnavailableError as e:
+                print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
+                return []
+
+    if csv_mixed:
+        articles = load_mixed_articles_from_csv(n_dense=csv_n_dense, n_random=csv_n_random, seed=csv_seed)
+    elif use_csv_sample:
+        articles = load_articles_from_csv(n=csv_n, seed=csv_seed)
+    else:
+        articles = ARTICLES
 
     all_results: list[dict] = []
+    failed_articles: list[str] = []
     for article in articles:
-        all_results.extend(
-            run_article(article, client, calculator, table_params, embedding_cache, catalog_by_id)
-        )
+        # 2026-08-22 실측: source_filter.backfill_source_org()가 HCX 응답의 source_org가
+        # 배열로 온 경우를 못 버텨서(Counter(list)가 TypeError) 30건 배치 중 한 기사에서
+        # 터졌는데, 이 루프에 try/except가 아예 없어서 그 한 건 때문에 나머지 기사 전부가
+        # 처리 안 되고 배치 자체가 중단됐다(근본 원인인 claim_extractor._to_optional_str
+        # 쪽도 같이 고쳤지만, 여기도 방어선을 둔다 — 배치 파이프라인은 어떤 단계에서도
+        # 알려지지 않은 예외 하나가 전체를 죽이면 안 된다는 원칙, 다른 단계들이 이미
+        # 따르고 있는 것과 동일).
+        try:
+            all_results.extend(
+                run_article(
+                    article, client, calculator, table_params, embedding_cache, catalog_by_id,
+                    vdb_fn=vdb_fn, bm25_fn=bm25_fn,
+                )
+            )
+        except Exception as e:
+            failed_articles.append(article.get("label", "?"))
+            print(f"[배치] 기사 처리 중 예상치 못한 오류로 스킵 ({type(e).__name__}: {e}) — 다음 기사로 계속")
+
+    if failed_articles:
+        print(f"\n[배치] 예외로 스킵된 기사 {len(failed_articles)}건: {failed_articles}")
 
     print_review_summary(all_results)
     print(f"\n[DB] {len(all_results)}건을 data/verifications.db에 저장했습니다.")
@@ -1724,4 +2020,8 @@ if __name__ == "__main__":
         use_csv_sample="--csv" in sys.argv,
         csv_n=_parse_csv_n(sys.argv),
         csv_seed=_parse_csv_seed(sys.argv),
+        with_vdb="--no-vdb" not in sys.argv,
+        csv_mixed="--csv-mixed" in sys.argv,
+        csv_n_dense=_parse_int_flag(sys.argv, "--csv-n-dense", 15),
+        csv_n_random=_parse_int_flag(sys.argv, "--csv-n-random", 15),
     )
