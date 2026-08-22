@@ -226,52 +226,54 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
           onClick={handleClose}
         >
           <div
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900"
+            className="flex h-[560px] w-[440px] flex-col rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-900"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+            <h2 className="shrink-0 text-lg font-bold text-gray-900 dark:text-gray-100">
               새로운 뉴스 기사 검증하기
             </h2>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p className="mt-1 shrink-0 text-xs text-gray-500 dark:text-gray-400">
               기사 URL을 한 개 이상 입력하면 1~8단계 파이프라인을 순서대로 돌려서 자동으로
               검증합니다. (건당 몇 분 정도 걸릴 수 있어요 — 여러 개를 넣어도 서버가 하나씩
               순서대로 처리합니다)
             </p>
 
             {!isSubmitting && (
-              <div className="mt-4 flex flex-col gap-3">
-                <div className="flex max-h-64 flex-col gap-2 overflow-y-auto pr-1">
+              <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
+                <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {urlInputs.map((value, i) => (
                     <div key={i} className="flex items-center gap-2">
+                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gray-100 text-xs font-semibold text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                        {i + 1}
+                      </span>
                       <input
                         type="url"
                         value={value}
                         onChange={(e) => handleInputChange(i, e.target.value)}
-                        placeholder="https://www.chosun.com/..."
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                        placeholder="URL을 입력해주세요"
+                        className="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm outline-none focus:border-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
                         autoFocus={i === 0}
                       />
-                      {urlInputs.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveInput(i)}
-                          aria-label="이 입력칸 삭제"
-                          className="shrink-0 rounded-lg px-2 py-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
-                        >
-                          ✕
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveInput(i)}
+                        disabled={urlInputs.length === 1}
+                        aria-label="이 입력칸 삭제"
+                        className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:invisible dark:hover:bg-gray-800"
+                      >
+                        ✕
+                      </button>
                     </div>
                   ))}
                 </div>
                 <button
                   type="button"
                   onClick={handleAddInputs}
-                  className="self-start rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                  className="shrink-0 rounded-lg border border-dashed border-gray-300 py-2 text-xs font-medium text-gray-500 hover:border-indigo-400 hover:text-indigo-600 dark:border-gray-700 dark:text-gray-400 dark:hover:border-indigo-500 dark:hover:text-indigo-400"
                 >
                   + {ADD_BATCH_SIZE}개 더 추가
                 </button>
-                <div className="flex justify-end gap-2">
+                <div className="flex shrink-0 justify-end gap-2">
                   <button
                     type="button"
                     onClick={handleClose}
@@ -292,18 +294,21 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
             )}
 
             {isSubmitting && (
-              <div className="mt-4 flex flex-col gap-3">
-                <p className="text-xs text-gray-500 dark:text-gray-400">
+              <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
+                <p className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
                   {isAllTerminal
                     ? `전체 ${jobs.length}건 처리 완료 (성공 ${doneCount}건, 실패 ${failedCount}건)`
                     : `전체 ${jobs.length}건 중 완료 ${doneCount + failedCount}건 — 서버가 순서대로 처리 중...`}
                 </p>
-                <div className="flex max-h-72 flex-col gap-2 overflow-y-auto pr-1">
+                <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {jobs.map((job, i) => (
                     <div
                       key={i}
                       className="flex items-start gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-700"
                     >
+                      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-gray-100 text-[10px] font-semibold text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                        {i + 1}
+                      </span>
                       <span className="mt-0.5 shrink-0">
                         {job.status === "done" && (
                           <span className="grid h-4 w-4 place-items-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40">
@@ -340,12 +345,12 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
                   <button
                     type="button"
                     onClick={resetAndClose}
-                    className="mt-1 rounded-lg bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2 text-sm font-semibold text-white"
+                    className="mt-1 shrink-0 rounded-lg bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2 text-sm font-semibold text-white"
                   >
                     확인
                   </button>
                 ) : (
-                  <>
+                  <div className="shrink-0">
                     <p className="text-xs text-gray-400">
                       모달을 닫아도 백그라운드에서 계속 진행돼요. 끝나는 대로 목록이 자동으로
                       갱신됩니다.
@@ -353,11 +358,11 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
                     <button
                       type="button"
                       onClick={handleClose}
-                      className="rounded-lg px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                      className="mt-2 rounded-lg px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
                     >
                       닫기(계속 진행됨)
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
             )}
