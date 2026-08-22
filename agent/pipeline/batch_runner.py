@@ -1777,7 +1777,16 @@ def print_review_summary(results: list[dict]) -> None:
         )
 
 
-def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> None:
+def main(
+    use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42, *, with_vdb: bool = True
+) -> None:
+    """with_vdb(2026-08-22 추가): --csv 배치 실행이 지금까지 vdb_fn/bm25_fn을 안 넘겨서
+    keyword+64개 카탈로그 임베딩만 쓰고 있었다 — VDB(28.7만개)/BM25/PHASE 6·7 동적 슬롯매핑
+    등 이 세션에 추가된 개선사항 대부분이 CSV 배치 경로엔 전혀 반영이 안 되는 상태였다
+    (agent/api/server.py의 실시간 검증 경로만 vdb_fn/bm25_fn을 넘기고 있었음). GPU가 있는
+    환경(AWS GPU 서버)에서만 True로 두고, Qwen3-Embedding-4B를 여기서 로딩해서 server.py와
+    동일한 방식으로 vdb_fn/bm25_fn을 만들어 run_article()에 넘긴다. GPU가 없는 로컬 환경에선
+    False로 넘기면 기존처럼 VDB 없이 동작(하위 호환)."""
     try:
         client = KosisApiClient()
     except RuntimeError as e:
@@ -1792,12 +1801,47 @@ def main(use_csv_sample: bool = False, csv_n: int = 15, csv_seed: int = 42) -> N
     catalog_by_id = _load_table_catalog_by_id()
     embedding_cache = build_table_embedding_cache()
 
+    vdb_fn = bm25_fn = None
+    if with_vdb:
+        from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
+
+        print("[배치] Qwen3-Embedding-4B 로딩 중(VDB 쿼리용)...")
+        from sentence_transformers import SentenceTransformer
+
+        vdb_model = SentenceTransformer("Qwen/Qwen3-Embedding-4B", truncate_dim=1024)
+        vdb_instruction = (
+            "Given a Korean news claim sentence, retrieve the KOSIS statistical table "
+            "description that best matches it"
+        )
+
+        def _retrieval_query_text(claim) -> str:
+            return claim.search_query or claim.sentence
+
+        def vdb_fn(claim):
+            text = f"Instruct: {vdb_instruction}\nQuery: {_retrieval_query_text(claim)}"
+            vec = vdb_model.encode([text], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
+            try:
+                return batch_query_vdb([vec], top_k=VDB_TOP_K)[0]
+            except VdbUnavailableError as e:
+                print(f"[VDB] 조회 실패({e}) — VDB 없이 계속 진행")
+                return []
+
+        def bm25_fn(claim):
+            try:
+                return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
+            except VdbUnavailableError as e:
+                print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
+                return []
+
     articles = load_articles_from_csv(n=csv_n, seed=csv_seed) if use_csv_sample else ARTICLES
 
     all_results: list[dict] = []
     for article in articles:
         all_results.extend(
-            run_article(article, client, calculator, table_params, embedding_cache, catalog_by_id)
+            run_article(
+                article, client, calculator, table_params, embedding_cache, catalog_by_id,
+                vdb_fn=vdb_fn, bm25_fn=bm25_fn,
+            )
         )
 
     print_review_summary(all_results)
@@ -1841,4 +1885,5 @@ if __name__ == "__main__":
         use_csv_sample="--csv" in sys.argv,
         csv_n=_parse_csv_n(sys.argv),
         csv_seed=_parse_csv_seed(sys.argv),
+        with_vdb="--no-vdb" not in sys.argv,
     )
