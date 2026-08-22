@@ -158,7 +158,11 @@ function App() {
         )}
       </Header>
       <main
-        className={`mx-auto flex flex-col gap-6 px-6 py-6 ${selectedGroup ? "max-w-7xl" : "max-w-6xl"}`}
+        // pb-28(하단 여백)은 화면 하단 중앙에 고정된 "새로운 뉴스 기사 검증하기" 버튼
+        // (VerifyNewArticleButton, fixed bottom-6 + 버튼 자체 높이)이 스크롤 맨 아래에서
+        // 검증 기사 목록 마지막 줄과 겹치는 문제 수정(2026-08-22 실측) — 버튼이 차지하는
+        // 공간만큼 본문 하단에 여유를 둬서 항상 그 아래로 스크롤할 수 있게 한다.
+        className={`mx-auto flex flex-col gap-6 px-6 pb-28 pt-6 ${selectedGroup ? "max-w-7xl" : "max-w-6xl"}`}
       >
         {usingMockData && (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
