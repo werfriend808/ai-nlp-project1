@@ -157,6 +157,48 @@ def fetch_axis_names(org_id: str, tbl_id: str, api_key: Optional[str] = None) ->
 # 넓혀서 같이 뽑는다. 캐시(kosis_table_detail_cache)에 한 번만 저장하면 재사용되므로,
 # 응답이 좀 커져도(표 하나당 한 번뿐) 큰 비용은 아니다.
 _AXIS_CODE_RE = re.compile(r"^C(\d+)$")
+_META_TBL_URL = "https://kosis.kr/openapi/statisticsData.do"
+
+
+# 2026-08-22: 3단계가 "같은 통계의 구판/신판"(예: DT_1DA7E06S 2013.01~2024.12 vs
+# DT_1DA7E06S_NEW 2013.01~2026.07처럼 KOSIS가 표를 갈아치운 경우) 중 무엇을 골라야
+# 하는지 판단할 근거가 없어서, 점수만 비슷하면 구판이 뽑히기도 하는 문제가 실측
+# 확인됐다. fetch_table_detail()(getList 기반, 데이터 40,000셀 제한에 걸리는 큰 표는
+# 실패함 — 자살률 표 사례)과 달리, 이 함수는 getMeta&type=PRD 전용 엔드포인트라
+# 가볍고(응답에 실제 데이터 없이 수록기간만 옴) 그 제한에 걸리지 않는다.
+_PRD_ROW_RE = re.compile(
+    r'PRD_SE:"([^"]*)"\s*,\s*STRT_PRD_DE:"([^"]*)"\s*,\s*END_PRD_DE:"([^"]*)"'
+)
+
+
+def fetch_period_range(org_id: str, tbl_id: str, api_key: Optional[str] = None) -> Optional[dict]:
+    """표 하나의 주기별 수록기간(시작~종료)을 가져온다.
+    반환: {"월": ("2013.01", "2026.07"), "분기": (...), "년": (...)} 또는 실패 시 None.
+    (월/분기/년 중 표가 지원하는 주기만 키로 들어있음)
+
+    ⚠️ 이 엔드포인트 응답은 키가 따옴표로 안 감싸인 형태로 온다(예: {PRD_SE:"월",...}) —
+    표준 JSON이 아니라서 resp.json()이 조용히 실패한다(실측 확인, 2026-08-22). 정규식으로
+    직접 파싱한다."""
+    key = api_key or os.environ.get("KOSIS_API_KEY")
+    if not key:
+        return None
+    try:
+        resp = requests.get(
+            _META_TBL_URL,
+            params={
+                "method": "getMeta", "type": "PRD", "apiKey": key,
+                "orgId": org_id, "tblId": tbl_id, "format": "json",
+            },
+            timeout=10,
+        )
+    except requests.RequestException:
+        return None
+
+    result: dict[str, tuple[str, str]] = {}
+    for prd_se, start, end in _PRD_ROW_RE.findall(resp.text):
+        if prd_se and start and end:
+            result[prd_se] = (start, end)
+    return result or None
 
 
 def fetch_table_detail(org_id: str, tbl_id: str, api_key: Optional[str] = None) -> dict:

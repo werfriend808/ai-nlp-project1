@@ -18,11 +18,18 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 DB_PATH = Path(__file__).parent.parent / "data" / "verifications.db"
+
+# 2026-08-22: run_article()의 주장(claim) 처리를 스레드풀로 병렬화하면서 추가 — 여러
+# 스레드가 동시에 sqlite3.connect()로 각자 커넥션을 열고 INSERT하면 기본 저널 모드에서
+# "database is locked"(SQLITE_BUSY)가 날 수 있다. 쓰기 자체는 매우 짧아 락 경합 비용이
+# 미미하므로, 파일 락 재시도에 맡기지 않고 아예 이 프로세스 안에서 직렬화한다.
+_WRITE_LOCK = threading.Lock()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS verifications (
@@ -134,15 +141,16 @@ def insert_verification(record: dict, path: Path = DB_PATH) -> None:
     columns_sql = ", ".join(_COLUMNS)
 
     init_db(path)
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute(
-            f"INSERT OR REPLACE INTO verifications ({columns_sql}) VALUES ({placeholders})",
-            values,
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    with _WRITE_LOCK:
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute(
+                f"INSERT OR REPLACE INTO verifications ({columns_sql}) VALUES ({placeholders})",
+                values,
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def fetch_all(path: Path = DB_PATH) -> list[dict]:

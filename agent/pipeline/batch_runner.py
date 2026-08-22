@@ -52,6 +52,7 @@ import random
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -62,7 +63,7 @@ from agent.preprocessing.claim_candidate_scanner import _normalize_quotes
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank, is_rrf_trusted
+from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, expand_institution_query_aliases
 from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback, is_region_grounded
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
@@ -162,9 +163,17 @@ _BYLINE_RE = re.compile(
 # 태그 블록도 포함, 둘 다 잘라내도 안전). 해시태그가 연속으로 2개 이상 나오는 건 실제
 # 기사 본문 문장에서는 사실상 없는 패턴이라(태그는 항상 UI 요소로만 등장) 오탐 위험이
 # 낮다 — 위 마커들처럼 보수적으로 유지할 필요 없이 넓게 잡아도 안전하다.
+#
+# 2026-08-22 추가(2): "구독수 212" 자체가 claim으로 잘못 뽑혀 엉뚱한 KOSIS 표(기업경기조사
+# 등)와 비교당해 불일치로 오판정되는 사례 실제 발견. 원인은 해시태그가 1개뿐이라("#전기차
+# 조재희 기자 구독수 216") 위 "해시태그 2개 이상" 패턴에 안 걸리는 "기자 프로필+구독수"
+# 블록 — data_set.csv 전수 스캔 결과 1647/2706건(61%)에서 나타나고, 샘플 확인 결과 항상
+# "OOO 기자 [소개문구] 구독수 숫자" 형태로 기자 프로필 위젯의 일부였다(위 위젯과 마찬가지로
+# 진짜 본문에는 나올 수 없는 UI 전용 문구라 오탐 위험 낮음).
 _JUNK_SECTION_RE = re.compile(
     r"By\s*Taboola|많이\s*본\s*뉴스|오늘의\s*멤버십|AI\s*추천"
     r"|#\S+(?:\s+#\S+){1,}"
+    r"|구독수\s*\d+"
 )
 
 
@@ -1281,7 +1290,10 @@ def run_stage_7_8(
     기사 발행일을 앵커로 시점을 확정할 수 있게 그대로 넘긴다(agent/verdict/judge.py 참고)."""
     article_date_str = article_date.isoformat() if hasattr(article_date, "isoformat") else article_date
     try:
-        verdict = judge(claim, computed, prd_se=prd_se, article_date=article_date_str)
+        verdict = judge(
+            claim, computed, prd_se=prd_se, article_date=article_date_str,
+            matched_table_name=top.table_name if top else None,
+        )
         print(f"[7단계 judge] {verdict}")
     except JudgeError as e:
         print(f"[7단계 judge] 실패 ({type(e).__name__}: {e}) → 설명 생성 스킵")
@@ -1509,92 +1521,125 @@ def run_article(
     if before_filter != len(claims):
         print(f"[2단계 출처 필터] {before_filter}개 중 {before_filter - len(claims)}개 제외 (KOSIS 미검증 출처)")
 
-    for claim in claims:
-        print(f"{'-' * 60}")
-        print(f"주장: \"{claim.sentence}\" (claim_type={claim.claim_type})")
-
-        if claim.claim_type == "전망":
-            # 미래 예측 주장은 애초에 공식 통계로 검증할 대상이 없다 — 3~8단계를 태워봐야
-            # 표 매핑도 안 되고(과거 통계표에 "전망치"가 없음) API 호출만 낭비되므로,
-            # calc_type 라우팅 조사에서 드러난 이 케이스(100건 실측 중 8/84)는 여기서
-            # 바로 판단불가로 끝낸다 (calc_type_router.route_calc_type도 "전망"은 None을
-            # 반환해 같은 원칙을 공유함).
-            print("[분류] claim_type='전망'(미래 예측) → 3~8단계 건너뛰고 즉시 판단불가 처리")
-            verdict = Verdict(verdict="판단불가", gap_type=None, reason="미래 예측 주장은 공식 통계로 검증 불가")
-            insert_verification(
-                _build_verification_record(
-                    article=article, claim=claim, top=None, generic_slots=None,
-                    table_params=table_params, computed=None, verdict=verdict, explanation=None,
-                    cls_result=cls_result, catalog_by_id=catalog_by_id,
-                    verification_possible="불가", ambiguity_reason="미래 예측 주장(claim_type=전망)은 검증 대상 아님",
-                )
+    # 2026-08-22(속도 개선): 주장(claim)별 4~8단계는 대부분 HCX(LLM) 왕복 대기 시간이라
+    # GPU/DB와 달리 동시에 여러 개를 날려도 안전하다 — 순차 for문 대신 스레드풀로 겹쳐서
+    # 기사당 처리 시간을 줄인다(수치문장 많은 기사일수록 이득이 큼). GPU 임베딩/리랭커
+    # (search_and_rerank 내부, reranker.py의 _SEARCH_LOCK)와 sqlite 쓰기(db/store.py의
+    # _WRITE_LOCK)는 여전히 직렬화되므로 안전하며, 실제 병렬로 풀리는 건 느린 LLM 호출뿐이다.
+    # 워커 수는 HCX API 429(rate limit)를 실측으로 겪어본 적 있어(golden set 검증 스크립트)
+    # 과하게 키우지 않는다.
+    with ThreadPoolExecutor(max_workers=_CLAIM_WORKERS) as executor:
+        futures = [
+            executor.submit(
+                _process_claim,
+                article, claim, cls_result, table_params, catalog_by_id,
+                client, calculator, embedding_cache, vdb_fn, bm25_fn,
             )
-            results.append(
-                {
-                    "article": article["label"],
-                    "claim_sentence": claim.sentence,
-                    "table_name": None,
-                    "verdict": "판단불가",
-                    "gap_type": None,
-                    "classifier_score": cls_result.score,
-                }
-            )
-            continue
-
-        if _mentions_foreign_country(claim.population, claim.region, claim.comparison_target):
-            # KOSIS는 대한민국 통계청 산하 포털이라 해외 국가 자체 통계(중국 GDP, 일본
-            # 1인당 국민소득 등)를 원천적으로 제공하지 않는다. 근데 3단계 매칭이 "GDP"/
-            # "물가" 같은 일반 키워드만 보고 국내 표로 잘못 매칭시켜서, 존재하지도 않는
-            # 비교를 억지로 계산하다 잘못된 판정이 나오는 사례가 실측 확인됐다(2026-08-12
-            # — 한국 vs 일본 1인당 국민소득 비교, 중국 1분기 GDP 등). 전망 claim과 같은
-            # 원칙으로 3~8단계를 아예 건너뛰고 정직하게 판단불가 처리한다.
-            print("[분류] population/region/comparison_target에 해외 국가 포함 → KOSIS 검증 불가, 즉시 판단불가 처리")
-            verdict = Verdict(verdict="판단불가", gap_type=None, reason="해외 국가/지역 통계는 KOSIS(국내 통계)로 검증 불가")
-            insert_verification(
-                _build_verification_record(
-                    article=article, claim=claim, top=None, generic_slots=None,
-                    table_params=table_params, computed=None, verdict=verdict, explanation=None,
-                    cls_result=cls_result, catalog_by_id=catalog_by_id,
-                    verification_possible="불가", ambiguity_reason="해외 국가/지역 데이터는 KOSIS 검증 대상 아님",
-                )
-            )
-            results.append(
-                {
-                    "article": article["label"],
-                    "claim_sentence": claim.sentence,
-                    "table_name": None,
-                    "verdict": "판단불가",
-                    "gap_type": None,
-                    "classifier_score": cls_result.score,
-                }
-            )
-            continue
-
-        try:
-            candidates = search_and_rerank(
-                claim,
-                keyword_fn=keyword_search,
-                embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
-                vdb_fn=vdb_fn,
-                bm25_fn=bm25_fn,
-                document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
-            )
-        except Exception as e:
-            print(f"[3단계 매핑] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
-            continue
-
-        if not candidates:
-            print("[3단계 매핑] 매칭되는 표 없음 → 스킵")
-            continue
-
-        top = candidates[0]
-        result = _finish_claim_with_top_candidate(
-            article, claim, cls_result, top, table_params, client, calculator, catalog_by_id
-        )
-        if result is not None:
-            results.append(result)
+            for claim in claims
+        ]
+        # future.result()를 제출 순서 그대로 순회 → 실행은 동시에 여러 개가 겹치지만
+        # results 리스트 순서는 기존(순차 처리)과 동일하게 유지된다.
+        for future in futures:
+            result = future.result()
+            if result is not None:
+                results.append(result)
 
     return results
+
+
+_CLAIM_WORKERS = 3
+
+
+def _process_claim(
+    article: dict,
+    claim,
+    cls_result,
+    table_params: dict,
+    catalog_by_id: dict,
+    client: KosisApiClient,
+    calculator: KosisCalculator,
+    embedding_cache: dict,
+    vdb_fn,
+    bm25_fn,
+) -> Optional[dict]:
+    """주장 1건의 3~8단계 전체(표매칭→슬롯채우기→계산→판정→설명, DB저장까지)를 처리한다.
+    run_article()의 for claim in claims: 루프 본문을 그대로 뽑아온 것 — 스레드풀에
+    제출할 수 있도록 함수 하나로 만들었을 뿐 로직 자체는 리팩토링 전후 동일하다."""
+    print(f"{'-' * 60}")
+    print(f"주장: \"{claim.sentence}\" (claim_type={claim.claim_type})")
+
+    if claim.claim_type == "전망":
+        # 미래 예측 주장은 애초에 공식 통계로 검증할 대상이 없다 — 3~8단계를 태워봐야
+        # 표 매핑도 안 되고(과거 통계표에 "전망치"가 없음) API 호출만 낭비되므로,
+        # calc_type 라우팅 조사에서 드러난 이 케이스(100건 실측 중 8/84)는 여기서
+        # 바로 판단불가로 끝낸다 (calc_type_router.route_calc_type도 "전망"은 None을
+        # 반환해 같은 원칙을 공유함).
+        print("[분류] claim_type='전망'(미래 예측) → 3~8단계 건너뛰고 즉시 판단불가 처리")
+        verdict = Verdict(verdict="판단불가", gap_type=None, reason="미래 예측 주장은 공식 통계로 검증 불가")
+        insert_verification(
+            _build_verification_record(
+                article=article, claim=claim, top=None, generic_slots=None,
+                table_params=table_params, computed=None, verdict=verdict, explanation=None,
+                cls_result=cls_result, catalog_by_id=catalog_by_id,
+                verification_possible="불가", ambiguity_reason="미래 예측 주장(claim_type=전망)은 검증 대상 아님",
+            )
+        )
+        return {
+            "article": article["label"],
+            "claim_sentence": claim.sentence,
+            "table_name": None,
+            "verdict": "판단불가",
+            "gap_type": None,
+            "classifier_score": cls_result.score,
+        }
+
+    if _mentions_foreign_country(claim.population, claim.region, claim.comparison_target):
+        # KOSIS는 대한민국 통계청 산하 포털이라 해외 국가 자체 통계(중국 GDP, 일본
+        # 1인당 국민소득 등)를 원천적으로 제공하지 않는다. 근데 3단계 매칭이 "GDP"/
+        # "물가" 같은 일반 키워드만 보고 국내 표로 잘못 매칭시켜서, 존재하지도 않는
+        # 비교를 억지로 계산하다 잘못된 판정이 나오는 사례가 실측 확인됐다(2026-08-12
+        # — 한국 vs 일본 1인당 국민소득 비교, 중국 1분기 GDP 등). 전망 claim과 같은
+        # 원칙으로 3~8단계를 아예 건너뛰고 정직하게 판단불가 처리한다.
+        print("[분류] population/region/comparison_target에 해외 국가 포함 → KOSIS 검증 불가, 즉시 판단불가 처리")
+        verdict = Verdict(verdict="판단불가", gap_type=None, reason="해외 국가/지역 통계는 KOSIS(국내 통계)로 검증 불가")
+        insert_verification(
+            _build_verification_record(
+                article=article, claim=claim, top=None, generic_slots=None,
+                table_params=table_params, computed=None, verdict=verdict, explanation=None,
+                cls_result=cls_result, catalog_by_id=catalog_by_id,
+                verification_possible="불가", ambiguity_reason="해외 국가/지역 데이터는 KOSIS 검증 대상 아님",
+            )
+        )
+        return {
+            "article": article["label"],
+            "claim_sentence": claim.sentence,
+            "table_name": None,
+            "verdict": "판단불가",
+            "gap_type": None,
+            "classifier_score": cls_result.score,
+        }
+
+    try:
+        candidates = search_and_rerank(
+            claim,
+            keyword_fn=keyword_search,
+            embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
+            vdb_fn=vdb_fn,
+            bm25_fn=bm25_fn,
+            document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
+        )
+    except Exception as e:
+        print(f"[3단계 매핑] 실패 ({type(e).__name__}: {e}) → 이 주장 스킵")
+        return None
+
+    if not candidates:
+        print("[3단계 매핑] 매칭되는 표 없음 → 스킵")
+        return None
+
+    top = candidates[0]
+    return _finish_claim_with_top_candidate(
+        article, claim, cls_result, top, table_params, client, calculator, catalog_by_id
+    )
 
 
 def _finish_claim_with_top_candidate(
@@ -1884,7 +1929,8 @@ def main(
         )
 
         def _retrieval_query_text(claim) -> str:
-            return claim.search_query or claim.sentence
+            base = claim.search_query or claim.sentence
+            return expand_institution_query_aliases(base, claim.source_org)
 
         def vdb_fn(claim):
             text = f"Instruct: {vdb_instruction}\nQuery: {_retrieval_query_text(claim)}"

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -38,6 +39,11 @@ TABLE_NAME = "kosis_table_detail_cache"
 CACHE_TTL_DAYS = 90
 
 _conn = None
+# 2026-08-22: run_article()의 주장(claim) 처리를 스레드풀로 병렬화하면서 추가 — _conn은
+# 프로세스당 하나뿐인 psycopg2 커넥션이라 두 스레드가 동시에 같은 커넥션으로 쿼리를 날리면
+# 응답이 뒤섞인다. 실제 KOSIS API 호출(fetch_table_detail, 최대 15초)은 커넥션을 안 쓰므로
+# 락 밖에 두고, 커넥션을 만지는 캐시 읽기/쓰기만 짧게 잠근다.
+_LOCK = threading.RLock()
 
 
 class DetailCacheUnavailableError(RuntimeError):
@@ -76,8 +82,7 @@ def _save(
     error_detail: Optional[str] = None,
     retry_count: int = 0,
 ) -> None:
-    conn = _get_connection()
-    with conn.cursor() as cur:
+    with _LOCK, _get_connection().cursor() as cur:
         cur.execute(
             f"""
             insert into {TABLE_NAME}
@@ -123,8 +128,7 @@ def get_table_detail(tbl_id: str, org_id: str, *, api_key: Optional[str] = None)
     axis_name->code를 실제 KOSIS API 파라미터(objL{n}, prdSe)로 잇는 데 필요하다 — 처음
     구현 때는 axis_names/code_maps만 반환해서, 캐시가 있어도 호출부가 objL 번호나 표
     주기를 몰라 실제 조회로 못 이어졌다(2026-08-21에 발견해 같이 고침)."""
-    conn = _get_connection()
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with _LOCK, _get_connection().cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(f"select * from {TABLE_NAME} where tbl_id = %s", (tbl_id,))
         row = cur.fetchone()
 

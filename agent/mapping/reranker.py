@@ -32,6 +32,7 @@ import json
 import math
 import os
 import re
+import threading
 
 # embedding_search.py와 동일한 이유(OpenMP 런타임 중복 로드로 인한 세그폴트, 2026-08-03 확인) —
 # 이 모듈만 단독 import될 때도 안전하도록 여기에도 동일하게 설정한다.
@@ -64,6 +65,7 @@ except ImportError:
     pass
 
 from agent.observability import Timer, log_event
+from agent.kosis.enrich_objl import fetch_period_range
 
 try:
     from agent.interfaces import Claim, TableCandidate
@@ -435,6 +437,20 @@ _KNOWN_INSTITUTIONS = [
     "산업통상부", "고용노동부", "보건복지부", "관세청", "산림청",
 ]
 
+# 2026-08-22: "한국은행 기준금리" 주장이 "예금은행 대출금리"(전혀 다른 통계, 시중은행이
+# 정하는 금리)로 오매칭돼 확정 불일치까지 나버린 실제 사례 발견 — 원인은 진짜 정답표
+# (VDB의 DT_2OEEO032, OECD 소스 "중앙은행 기준금리", 대한민국 분류값 포함해 실제 조회
+# 확인됨)가 표 제목에 "한국은행"이 아니라 국제비교표 특유의 일반 명칭 "중앙은행"을 써서,
+# 검색 쿼리("한국은행 ...")로는 후보 풀에 아예 들어오지도 못했기 때문이다("중앙은행
+# 기준금리"로 직접 검색하면 1위로 잡히는 것까지 실측 확인). docs/PENDING_TABLES.md에
+# "기준금리는 KOSIS Open API로 검증 불가"라고 기록돼 있었는데, 이건 이 국제비교표를 미처
+# 못 찾고 내린 결론이라 재검토가 필요하다. "국가데이터처"(위 주석)처럼 기관명 자체가 아니라
+# "그 기관이 흔히 다른 이름으로도 불리는 특정 케이스"만 좁게 다루므로 같은 회귀 위험이
+# 작다 — 필요할 때마다 이런 특정 기관 쌍만 추가한다(일반 용어는 여기 넣지 않는다).
+_INSTITUTION_ALIASES: dict[str, list[str]] = {
+    "한국은행": ["중앙은행"],
+}
+
 
 def _normalize_institution(source_org: Optional[str]) -> Optional[str]:
     if not source_org:
@@ -455,14 +471,30 @@ def _apply_institution_signal(
     if institution is None:
         return candidates
 
+    doc_terms = [institution, *_INSTITUTION_ALIASES.get(institution, [])]
     tagged = []
     for c in candidates:
         doc = (document_texts or {}).get(c.table_id, c.table_name)
-        if institution in doc:
+        if any(term in doc for term in doc_terms):
             tagged.append(_tag_source_rank(c, "institution_rank", 1))
         else:
             tagged.append(c)
     return tagged
+
+
+def expand_institution_query_aliases(query: str, source_org: Optional[str]) -> str:
+    """VDB dense/BM25에 보낼 검색 쿼리에 기관명 별칭을 덧붙인다(대체 아님, 추가만) —
+    claim.source_org가 "한국은행"인데 정답표는 국제비교표 특유의 일반 명칭("중앙은행")을
+    쓰는 경우처럼, 검색어에 없는 표현 때문에 후보 풀에 아예 못 들어오는 걸 막는다.
+    원 쿼리는 그대로 두므로 기존에 "한국은행"으로 잘 맞던 다른 표(예금은행 금리 등)의
+    매칭에는 영향이 없다."""
+    if not source_org:
+        return query
+    aliases = _INSTITUTION_ALIASES.get(source_org.strip())
+    if not aliases:
+        return query
+    extra = " ".join(a for a in aliases if a not in query)
+    return f"{query} {extra}".strip() if extra else query
 
 
 _GENDER_TERMS = ["여성", "남성"]
@@ -517,6 +549,100 @@ def _apply_region_signal(
 # 주제가 맞는 후보들 사이에서만 주기로 타이브레이크하는 방식으로 범위를 좁혀야 한다.
 
 
+# 2026-08-22: run_article()의 주장(claim) 처리를 스레드풀로 병렬화하면서 추가 — vdb_fn(GPU
+# 임베딩 모델), embedding_fn(같은 GPU 모델 또는 그 캐시), rerank()(GPU 크로스인코더)가 전부
+# 이 함수 안에서만 호출되므로, 이 함수 전체를 락으로 감싸는 게 여러 곳에 락을 흩뿌리는 것보다
+# 안전하고 단순하다. 3단계(표매칭) 자체는 파이프라인에서 빠른 축이라 여기를 직렬화해도
+# 손해가 적고, 진짜 느린 4~8단계(LLM 호출)는 이 락 밖에서 병렬로 풀린다.
+_SEARCH_LOCK = threading.Lock()
+
+
+# 2026-08-22: 위(540줄) "월별/연도별 부스팅 시도했다가 되돌림" 사례와 정확히 같은 위험이
+# 있는 종류의 신호라서(구조적 표 제목 패턴 기반, 도메인 특이성 없음) 그 교훈을 그대로
+# 따른다 — 점수를 직접 바꾸지 않고, 이미 리랭커가 사실상 동점으로 본 후보들 사이에서만
+# "분류축이 더 단순한 쪽"으로 타이브레이크한다(예: "성/연령별 취업자" 2축 vs "산업/연령/
+# 교육정도/종사지위별 취업자" 4축 — claim이 세부분류를 요구 안 하면 단순 표가 대개 정답에
+# 더 가깝다, 취업자 근접중복 표 홍수 실측 사례). 반드시 골든셋으로 즉시 재검증해서 회귀
+# 여부를 확인한 뒤에만 유지한다.
+_COMPLEXITY_TIE_EPSILON = 0.0015  # 이 이내로 점수 차이 나는 후보끼리만 재정렬 대상
+_FINE_GRAINED_MARKERS = ("소분류", "세분류")
+
+
+def _table_complexity(table_name: str) -> int:
+    """분류축 개수를 "/" 개수로 근사(예: "산업/연령/교육정도/종사지위별" -> 3). "소분류"/
+    "세분류" 표기가 있으면 세분화된 축이라는 뜻이라 추가 패널티를 준다."""
+    score = table_name.count("/")
+    if any(marker in table_name for marker in _FINE_GRAINED_MARKERS):
+        score += 1
+    return score
+
+
+def _apply_simplicity_tiebreak(candidates: list[TableCandidate]) -> list[TableCandidate]:
+    if len(candidates) < 2:
+        return candidates
+    result = list(candidates)
+    i = 0
+    while i < len(result):
+        j = i + 1
+        while j < len(result) and result[i].score - result[j].score <= _COMPLEXITY_TIE_EPSILON:
+            j += 1
+        if j - i > 1:
+            # 이 구간(i~j-1)은 리랭커 점수가 사실상 동점 — 원래 순서(상대 순위)는 유지한 채
+            # 복잡도만 오름차순으로 안정 정렬(단순한 표가 앞으로).
+            result[i:j] = sorted(result[i:j], key=lambda c: _table_complexity(c.table_name))
+        i = j
+    return result
+
+
+_PERIOD_YEAR_RE = re.compile(r"(19|20)\d{2}")
+_PERIOD_COVERAGE_TOP_N = 5  # 상위 몇 개까지만 확인할지 — 매 claim마다 API 호출이 늘어나므로 좁게 잡음
+
+
+def _extract_target_year(claim: Claim) -> Optional[int]:
+    if not claim.period:
+        return None
+    m = _PERIOD_YEAR_RE.search(claim.period)
+    return int(m.group(0)) if m else None
+
+
+def _covers_year(period_range: dict, year: int) -> Optional[bool]:
+    """period_range(fetch_period_range() 반환값)의 주기 중 하나라도 year를 포함하면
+    True, 파싱 가능한 주기가 전부 벗어나면 False, 파싱 자체가 안 되면 None(판단 보류)."""
+    checked = False
+    for start, end in period_range.values():
+        start_m, end_m = _PERIOD_YEAR_RE.search(start), _PERIOD_YEAR_RE.search(end)
+        if not start_m or not end_m:
+            continue
+        checked = True
+        if int(start_m.group(0)) <= year <= int(end_m.group(0)):
+            return True
+    return False if checked else None
+
+
+# 2026-08-22: 같은 통계를 구판/신판 tblId로 KOSIS가 갈아치운 경우(예: DT_1DA7E06S가
+# 2024년까지만 수록하고 끝난 반면 DT_1DA7E06S_NEW가 2013년부터 이어받아 지금까지
+# 수록 — 실측 확인), 리랭커 점수만으로는 구판이 이길 때가 있었다. claim이 필요로 하는
+# 연도가 후보 표의 실제 수록기간을 벗어나면(확인 가능한 경우에 한해) 순위 밖으로 민다 —
+# "최신판을 무조건 우선"이 아니라 "그 표에 실제로 그 연도 데이터가 있는가"만 본다.
+# 기사가 오래된 시점을 다뤄서 오히려 구판에만 있는 데이터가 필요한 경우까지 안전하게
+# 처리된다. 상위 N개만 확인(비용 제한), 조회 실패/판단 불가 시엔 그대로 순위 유지(fail-open).
+def _apply_period_coverage_filter(claim: Claim, candidates: list[TableCandidate]) -> list[TableCandidate]:
+    year = _extract_target_year(claim)
+    if year is None or not candidates:
+        return candidates
+
+    head, tail = candidates[:_PERIOD_COVERAGE_TOP_N], candidates[_PERIOD_COVERAGE_TOP_N:]
+    kept, excluded = [], []
+    for c in head:
+        if not c.org_id:
+            kept.append(c)
+            continue
+        period_range = fetch_period_range(c.org_id, c.table_id)
+        covers = _covers_year(period_range, year) if period_range else None
+        (kept if covers is not False else excluded).append(c)
+    return kept + excluded + tail
+
+
 def search_and_rerank(
     claim: Claim,
     *,
@@ -540,21 +666,29 @@ def search_and_rerank(
     document_texts: table_id -> 임베딩/설명 텍스트. rerank()로 그대로 전달된다(생략 시
     table_name으로 대체되는데, 리랭커가 짧은 제목만 보고 판단하게 되어 성능이 떨어진다).
     """
-    with Timer() as t_kw:
-        kw_results = keyword_fn(claim)
-    with Timer() as t_emb:
-        emb_results = embedding_fn(claim)
-    with Timer() as t_vdb:
-        vdb_results = vdb_fn(claim) if vdb_fn else []
-    with Timer() as t_bm25:
-        bm25_results = bm25_fn(claim) if bm25_fn else []
-    merged = _merge_candidates(kw_results, emb_results, vdb_results, bm25_results)
-    merged = _apply_population_signal(claim, merged, document_texts)
-    merged = _apply_institution_signal(claim, merged, document_texts)
-    merged = _apply_gender_signal(claim, merged, document_texts)
-    merged = _apply_region_signal(claim, merged, document_texts)
-    with Timer() as t_rerank:
-        result = rerank(claim, merged, top_k=top_k, document_texts=document_texts)
+    with _SEARCH_LOCK:
+        with Timer() as t_kw:
+            kw_results = keyword_fn(claim)
+        with Timer() as t_emb:
+            emb_results = embedding_fn(claim)
+        with Timer() as t_vdb:
+            vdb_results = vdb_fn(claim) if vdb_fn else []
+        with Timer() as t_bm25:
+            bm25_results = bm25_fn(claim) if bm25_fn else []
+        merged = _merge_candidates(kw_results, emb_results, vdb_results, bm25_results)
+        merged = _apply_population_signal(claim, merged, document_texts)
+        merged = _apply_institution_signal(claim, merged, document_texts)
+        merged = _apply_gender_signal(claim, merged, document_texts)
+        merged = _apply_region_signal(claim, merged, document_texts)
+        with Timer() as t_rerank:
+            result = rerank(claim, merged, top_k=top_k, document_texts=document_texts)
+
+    # GPU 락 밖에서 실행 — KOSIS API 호출이라 GPU/DB 자원과 무관하고, 락을 오래 붙잡을
+    # 이유가 없다(다른 claim의 GPU 작업을 불필요하게 막지 않기 위함).
+    # (2026-08-22: _apply_simplicity_tiebreak도 시도했으나 골든셋 70건 재검증에서 효과
+    # 없음+1건 순위 악화(7위→9위)로 되돌림 — "월별/연도별" 부스팅 회귀 사례와 같은 종류의
+    # 위험한 신호로 판단, 구현은 위에 남겨두되 호출은 뺌.)
+    result = _apply_period_coverage_filter(claim, result)
 
     # 2026-08-22(관측성): 3단계 검색/리랭킹 한 번을 구조화 로그 한 줄로 남긴다 — 소스별
     # 후보 수·지연시간, 최종 1등 후보/점수를 나중에 집계할 수 있게(예: "이번 배치에서

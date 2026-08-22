@@ -224,14 +224,14 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
             <h2 className="shrink-0 text-lg font-bold text-gray-900 dark:text-gray-100">
               새로운 뉴스 기사 검증하기
             </h2>
-            <p className="mt-1 shrink-0 text-xs text-gray-500 dark:text-gray-400">
-              기사 URL을 입력하면 1~8단계 파이프라인이 자동으로 검증합니다.
+            <p className="mt-1 shrink-0 text-xs mb-1 text-gray-500 dark:text-gray-400 ">
+              기사 URL을 입력하면 자동으로 검증합니다.
             </p>
             <div className="mb-2 mt-2 flex shrink-0 flex-wrap gap-1.5 border-b border-gray-100 pb-3 dark:border-gray-800">
               <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                 ⏱️ 건당 몇 분 소요
               </span>
-              <span className="inline-flex items-center gap-1 mb-2 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                 📋 여러 건은 순서대로 자동 처리
               </span>
             </div>

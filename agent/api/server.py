@@ -46,6 +46,7 @@ from agent.kosis.api_client import KosisApiClient
 from agent.kosis.calculator import KosisCalculator
 from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
 from agent.mapping.embedding_search import build_table_embedding_cache
+from agent.mapping.reranker import expand_institution_query_aliases
 from agent.pipeline.batch_runner import (
     DEFAULT_CLARIFY_REPLY,
     TABLE_PARAMS_PATH,
@@ -131,7 +132,8 @@ print("[서버 시작] 준비 완료")
 # 골든셋 실측: raw 문장 대비 이 스타일 쿼리가 Dense Recall@30 29.3%→61.0%, BM25는
 # 2.4%→41.5%로 개선 확인(HyDE 검증 로그 참고) — dense/bm25 둘 다 같은 쿼리를 쓴다.
 def _retrieval_query_text(claim) -> str:
-    return claim.search_query or claim.sentence
+    base = claim.search_query or claim.sentence
+    return expand_institution_query_aliases(base, claim.source_org)
 
 
 def _vdb_fn(claim):

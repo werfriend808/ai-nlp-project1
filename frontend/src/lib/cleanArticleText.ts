@@ -50,6 +50,31 @@ function collapseRepeatedBlocks(text: string, minLen = 20, maxLen = 300): string
   return result;
 }
 
+// 문장 끝(.?!) 뒤 공백 다음이 숫자가 아닐 때만 경계로 본다 — "46.1%로 2023년(46.9%)"처럼
+// 소수점 뒤에 곧바로 숫자/기호가 이어지는 경우(공백이 아예 없어 애초에 안 걸림)와, "…9,384,325명"
+// 뒤에 공백 없이 이어지는 경우는 그대로 안전하다. 공백 뒤가 숫자로 시작하는 문장(드묾)은
+// 못 쪼개고 넘어가지만, 문장 중간을 잘못 끊는 것보다 덜 쪼개는 쪽이 안전하다.
+const SENTENCE_BOUNDARY_RE = /(?<=[.?!])\s+(?=[^\d])/;
+const PARAGRAPH_GROUP_SIZE = 3;
+
+// data_set.csv 스크랩 본문은 문단 구분(줄바꿈) 없이 완전히 한 줄로 저장돼 있다(팀 제공
+// 원본 자체가 그렇다, 2026-08-22 확인). 프론트가 실시간으로 기사 URL에서 다시 긁어와
+// 원래 문단(db/fetch_article_text.py, Fusion CMS는 \n\n 유지) 텍스트를 못 가져온 경우
+// (URL 만료/네트워크 실패 등)엔 이 CSV 텍스트로 그대로 폴백하는데, 그러면 화면에 문단
+// 구분 없는 벽처럼 보인다. 원래 문단 경계를 복원할 방법은 없으니(정보 자체가 유실됨),
+// 대신 문장 3개 단위로 묶어 읽기 편하게라도 쪼갠다 — "진짜 문단"은 아니지만 완전히
+// 이어붙은 것보다는 훨씬 읽기 쉽다.
+function reconstructParagraphs(text: string): string {
+  const sentences = text.split(SENTENCE_BOUNDARY_RE);
+  if (sentences.length <= 1) return text;
+
+  const paragraphs: string[] = [];
+  for (let i = 0; i < sentences.length; i += PARAGRAPH_GROUP_SIZE) {
+    paragraphs.push(sentences.slice(i, i + PARAGRAPH_GROUP_SIZE).join(" "));
+  }
+  return paragraphs.join("\n\n");
+}
+
 export function cleanArticleTextForDisplay(text: string): string {
   const adMatch = text.match(AD_TRAILER_RE);
   let trimmed = adMatch?.index !== undefined ? text.slice(0, adMatch.index) : text;
@@ -66,6 +91,11 @@ export function cleanArticleTextForDisplay(text: string): string {
   }
 
   trimmed = collapseRepeatedBlocks(trimmed);
+  trimmed = trimmed.trim();
 
-  return trimmed.trim();
+  if (!trimmed.includes("\n")) {
+    trimmed = reconstructParagraphs(trimmed);
+  }
+
+  return trimmed;
 }
