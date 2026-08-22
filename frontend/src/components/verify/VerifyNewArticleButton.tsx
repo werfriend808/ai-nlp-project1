@@ -233,10 +233,16 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
               새로운 뉴스 기사 검증하기
             </h2>
             <p className="mt-1 shrink-0 text-xs text-gray-500 dark:text-gray-400">
-              기사 URL을 한 개 이상 입력하면 1~8단계 파이프라인을 순서대로 돌려서 자동으로
-              검증합니다. (건당 몇 분 정도 걸릴 수 있어요 — 여러 개를 넣어도 서버가 하나씩
-              순서대로 처리합니다)
+              기사 URL을 입력하면 1~8단계 파이프라인이 자동으로 검증합니다.
             </p>
+            <div className="mt-2 flex shrink-0 flex-wrap gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                ⏱️ 건당 몇 분 소요
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                📋 여러 건은 순서대로 자동 처리
+              </span>
+            </div>
 
             {!isSubmitting && (
               <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
@@ -250,7 +256,7 @@ export function VerifyNewArticleButton({ onVerificationDone }: VerifyNewArticleB
                         type="url"
                         value={value}
                         onChange={(e) => handleInputChange(i, e.target.value)}
-                        placeholder="URL을 입력해주세요"
+                        placeholder="기사 URL을 입력해주세요"
                         className="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm outline-none focus:border-indigo-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
                         autoFocus={i === 0}
                       />
