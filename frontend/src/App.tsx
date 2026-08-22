@@ -139,7 +139,7 @@ function App() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <Header wide={!!selectedGroup}>
         {!selectedGroup && (
-          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-sm dark:border-gray-700 dark:bg-gray-900">
             {DATE_RANGE_OPTIONS.map((option) => (
               <button
                 key={option}
@@ -147,8 +147,8 @@ function App() {
                 onClick={() => setDateRange(option)}
                 className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
                   dateRange === option
-                    ? "bg-indigo-600 text-white"
-                    : "text-gray-500 hover:text-gray-700 dark:text-gray-400"
+                    ? "bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white shadow-sm"
+                    : "text-gray-500 hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
                 }`}
               >
                 {option === "전체" ? "전체" : `최근 ${option}일`}

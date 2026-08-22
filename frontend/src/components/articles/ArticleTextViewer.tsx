@@ -106,7 +106,7 @@ export function ArticleTextViewer({ articleText, claims, articleDate }: ArticleT
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md hover:shadow-indigo-500/5 dark:border-gray-700 dark:bg-gray-900">
         <div className="flex items-center gap-2 border-b border-gray-100 px-6 py-4 dark:border-gray-800">
           <span className="h-2 w-2 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
           <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">기사 원문</span>
