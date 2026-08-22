@@ -47,6 +47,9 @@ except ImportError:
             region: Optional[str] = None
             source_org: Optional[str] = None
             source_report: Optional[str] = None
+            age: Optional[str] = None
+            gender: Optional[str] = None
+            search_query: Optional[str] = None
 
 
 MODEL = "HCX-DASH-002"
@@ -233,6 +236,9 @@ def _item_to_claim(item: dict) -> Claim:
         region=item.get("region"),
         source_org=item.get("source_org"),
         source_report=item.get("source_report"),
+        age=item.get("age"),
+        gender=item.get("gender"),
+        search_query=item.get("search_query"),
     )
 
 

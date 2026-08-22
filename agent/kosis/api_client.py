@@ -24,10 +24,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
 import requests
+
+from agent.observability import log_event
 
 try:
     from dotenv import find_dotenv, load_dotenv
@@ -161,7 +164,8 @@ class KosisApiClient:
         self,
         api_key: Optional[str] = None,
         table_params_path: Path = TABLE_PARAMS_PATH,
-        timeout: int = 10,
+        timeout: Optional[int] = None,
+        retry: Optional[int] = None,
     ):
         self.api_key = api_key or os.environ.get("KOSIS_API_KEY")
         if not self.api_key:
@@ -169,8 +173,47 @@ class KosisApiClient:
                 "KOSIS_API_KEY가 없습니다. .env(KOSIS_API_KEY=...)에 넣거나 "
                 "KosisApiClient(api_key=...)로 직접 넘겨주세요."
             )
-        self.timeout = timeout
+        # 2026-08-21(PHASE 8): timeout/retry를 생성자 인자로 명시적으로 넘기지 않으면
+        # 환경변수(KOSIS_TIMEOUT/KOSIS_RETRY)를 인스턴스 생성 시점에 읽는다 — 모듈
+        # 임포트 시점에 고정하지 않아서, 같은 프로세스에서도 .env를 다시 로드하면 반영된다.
+        self.timeout = timeout if timeout is not None else int(os.environ.get("KOSIS_TIMEOUT", "10"))
+        # retry=1은 "네트워크 레벨 실패(타임아웃/연결 끊김) 시 최대 1번 추가 재시도"를
+        # 뜻한다(즉 최대 시도 횟수는 retry+1) — KOSIS가 정상 응답했지만 비즈니스 로직상
+        # 에러(err 필드 등)인 경우는 재시도 대상이 아니다(_request() 참고, 재시도해도
+        # 같은 응답이 반복될 뿐이라 의미 없음).
+        self.retry = retry if retry is not None else int(os.environ.get("KOSIS_RETRY", "1"))
         self._table_params = _load_table_params(table_params_path)
+
+    def _request(self, params: dict) -> "requests.Response":
+        """KOSIS_BASE_URL로 GET 요청 한 번 — 네트워크 레벨 실패(타임아웃/연결 끊김/5xx 등
+        requests.RequestException)만 self.retry 횟수만큼 재시도한다. __call__/fetch_series/
+        fetch_by_codes가 각자 만들던 동일한 requests.get() 호출 3벌을 여기로 모았다."""
+        last_error: Optional[Exception] = None
+        # Timer는 with 블록을 다 빠져나와야 elapsed_ms가 채워지는데, 여기서는 루프
+        # 안에서 성공 즉시(블록을 빠져나가기 전에) 지연시간을 로그에 남겨야 해서
+        # time.perf_counter()를 직접 쓴다(agent.observability.Timer와 동일한 계산식).
+        request_start = time.perf_counter()
+        for attempt in range(self.retry + 1):
+            try:
+                response = requests.get(KOSIS_BASE_URL, params=params, timeout=self.timeout)
+                response.raise_for_status()
+                log_event(
+                    "kosis_api_call", tbl_id=params.get("tblId"), success=True,
+                    attempts=attempt + 1, latency_ms=round((time.perf_counter() - request_start) * 1000, 1),
+                )
+                return response
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < self.retry:
+                    print(f"[KOSIS API] 네트워크 오류({type(e).__name__}: {e}) — 재시도 {attempt + 1}/{self.retry}")
+        log_event(
+            "kosis_api_call", tbl_id=params.get("tblId"), success=False,
+            attempts=self.retry + 1, latency_ms=round((time.perf_counter() - request_start) * 1000, 1),
+            error=str(last_error),
+        )
+        raise KosisApiError(
+            f"KOSIS API 요청이 네트워크 오류로 {self.retry + 1}번 모두 실패했습니다: {last_error}"
+        ) from last_error
 
     def __call__(self, table_id: str, slots: Slots) -> KosisApiResponse:
         if table_id not in self._table_params:
@@ -178,8 +221,16 @@ class KosisApiClient:
                 f"'{table_id}'가 table_params.json에 없습니다. "
                 f"C가 먼저 이 표의 파라미터를 조사해서 table_params.json에 추가해야 합니다."
             )
-        base = self._table_params[table_id]
+        return self._call_with_base(table_id, slots, self._table_params[table_id])
 
+    def call_dynamic(self, table_id: str, slots: Slots, base: dict) -> KosisApiResponse:
+        """2026-08-21 추가(PHASE 6/7): table_params.json(64개 수동 카탈로그) 밖의 VDB 전용
+        표를 조회한다. base는 agent.kosis.detail_cache로 즉석에서 만든 것(orgId/tblId/
+        dimensions) — __call__()과 동일한 조회 로직을 그대로 재사용하되, self._table_params
+        조회(=미리 사람이 검증해둔 표인지 확인)를 건너뛴다는 점만 다르다."""
+        return self._call_with_base(table_id, slots, base)
+
+    def _call_with_base(self, table_id: str, slots: Slots, base: dict) -> KosisApiResponse:
         params = {
             "method": "getList",
             "apiKey": self.api_key,
@@ -220,8 +271,7 @@ class KosisApiClient:
         params["startPrdDe"] = start_prd_de
         params["endPrdDe"] = end_prd_de
 
-        response = requests.get(KOSIS_BASE_URL, params=params, timeout=self.timeout)
-        response.raise_for_status()
+        response = self._request(params)
         data = response.json()
 
         if isinstance(data, dict) and "err" in data:
@@ -320,8 +370,7 @@ class KosisApiClient:
             if code is not None:
                 params[kosis_param] = code
 
-        response = requests.get(KOSIS_BASE_URL, params=params, timeout=self.timeout)
-        response.raise_for_status()
+        response = self._request(params)
         data = response.json()
 
         if isinstance(data, dict) and "err" in data:
@@ -417,8 +466,7 @@ class KosisApiClient:
         params["startPrdDe"] = start_prd_de
         params["endPrdDe"] = end_prd_de
 
-        response = requests.get(KOSIS_BASE_URL, params=params, timeout=self.timeout)
-        response.raise_for_status()
+        response = self._request(params)
         data = response.json()
 
         if isinstance(data, dict) and "err" in data:

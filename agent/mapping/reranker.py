@@ -63,6 +63,8 @@ try:
 except ImportError:
     pass
 
+from agent.observability import Timer, log_event
+
 try:
     from agent.interfaces import Claim, TableCandidate
 except ImportError:
@@ -111,7 +113,16 @@ def load_document_texts(catalog_path: Path = CATALOG_PATH) -> dict[str, str]:
 # 이건 OS 레벨 크래시라 아래 try/except로 못 잡는다. 이럴 땐 모델 로딩 자체를 시도하지 않도록
 # .env에 KOSIS_DISABLE_RERANKER=1을 넣어서 우회한다 (rerank()가 기존 score 기준 항등
 # 정렬로 폴백 — keyword_search 점수 우선, 그다음 embedding_search 유사도).
-_DISABLE_RERANKER = os.environ.get("KOSIS_DISABLE_RERANKER", "").strip().lower() in ("1", "true", "yes")
+#
+# 2026-08-21(PHASE 8): RERANKER_ENABLED가 명시적으로 설정돼 있으면 그걸 우선한다(원래
+# 아키텍처 스펙이 요청한 이름) — 안 넘기면 기존 KOSIS_DISABLE_RERANKER를 그대로 본다
+# (하위 호환, 기존에 이 env var로 배포 스크립트/문서를 이미 쓰고 있을 수 있어서 대체가
+# 아니라 우선순위만 얹는다).
+_RERANKER_ENABLED_ENV = os.environ.get("RERANKER_ENABLED")
+if _RERANKER_ENABLED_ENV is not None:
+    _DISABLE_RERANKER = _RERANKER_ENABLED_ENV.strip().lower() not in ("1", "true", "yes")
+else:
+    _DISABLE_RERANKER = os.environ.get("KOSIS_DISABLE_RERANKER", "").strip().lower() in ("1", "true", "yes")
 
 _reranker_singleton = None  # CrossEncoder 인스턴스 lazy 캐시 (프로세스당 1회만 로딩)
 
@@ -181,12 +192,20 @@ def _merge_candidates(
     keyword_candidates: list[TableCandidate],
     embedding_candidates: list[TableCandidate],
     vdb_candidates: Optional[list[TableCandidate]] = None,
+    bm25_candidates: Optional[list[TableCandidate]] = None,
 ) -> list[TableCandidate]:
-    """keyword_search/embedding_search/VDB 후보를 table_id 기준으로 합치면서, 각 소스
-    안에서의 순위(1부터, 입력 리스트가 이미 점수 내림차순 정렬돼 있다고 가정)를
-    source_meta에 "keyword_rank=N"/"embedding_rank=N"/"vdb_rank=N"으로 남긴다 —
-    이후 _rrf_fuse()가 점수 크기가 아니라 이 순위만으로 최종 신뢰도를 계산한다.
+    """keyword_search/embedding_search/VDB(dense)/BM25(trigram) 후보를 table_id 기준으로
+    합치면서, 각 소스 안에서의 순위(1부터, 입력 리스트가 이미 점수 내림차순 정렬돼 있다고
+    가정)를 source_meta에 "keyword_rank=N"/"embedding_rank=N"/"vdb_rank=N"/"bm25_rank=N"으로
+    남긴다 — 이후 _rrf_fuse()가 점수 크기가 아니라 이 순위만으로 최종 신뢰도를 계산한다.
     입력으로 받은 candidate 객체는 변형하지 않고 dataclasses.replace로 복사본만 만든다.
+
+    2026-08-21: bm25_candidates(agent.kosis.query_vdb.lexical_query_vdb, pg_trgm 기반) 추가.
+    keyword_rank와 달리 is_rrf_trusted()에서 자동 신뢰 대상이 아니다 — keyword_search(64개
+    수동 카탈로그, 정확한 규칙 매칭)와 달리 trigram 유사도는 raw 문장 기준 실측 Recall이
+    거의 0%였고(짧은 search_query를 줘야 의미 있는 신호가 됨, golden set 실측: Recall@30
+    2.4%→41.5%), 노이즈 가능성이 여전히 embedding_rank/vdb_rank와 비슷한 수준이라 보수적으로
+    취급한다.
 
     2026-08-18: "keyword=신뢰 / embedding·vdb=unverified" 이분법(그리고 그로 인한
     _promote_verified_within_top_ranks 승격 로직)을 RRF(Reciprocal Rank Fusion)로
@@ -212,10 +231,14 @@ def _merge_candidates(
     _add(keyword_candidates, "keyword_rank")
     _add(embedding_candidates, "embedding_rank")
     _add(vdb_candidates or [], "vdb_rank")
+    _add(bm25_candidates or [], "bm25_rank")
     return list(merged.values())
 
 
-_RANK_TAG_RE = re.compile(r"\b(keyword_rank|embedding_rank|vdb_rank|reranker_rank|population_rank)=(\d+)")
+_RANK_TAG_RE = re.compile(
+    r"\b(keyword_rank|embedding_rank|vdb_rank|bm25_rank|reranker_rank|population_rank"
+    r"|institution_rank|gender_rank|region_rank)=(\d+)"
+)
 
 
 def _parse_rrf_ranks(source_meta: Optional[str]) -> dict[str, int]:
@@ -223,8 +246,18 @@ def _parse_rrf_ranks(source_meta: Optional[str]) -> dict[str, int]:
     return {key: int(val) for key, val in _RANK_TAG_RE.findall(source_meta or "")}
 
 
-RRF_K = 60  # RRF 원 논문(Cormack et al., 2009)의 관례값. 작을수록 상위 순위 후보에 더 민감해진다.
+# 2026-08-21(PHASE 8): 환경변수 RRF_K로 조정 가능하게 함. 기본값은 RRF 원 논문
+# (Cormack et al., 2009)의 관례값 60 — 작을수록 상위 순위 후보에 더 민감해진다.
+RRF_K = int(os.environ.get("RRF_K", "60"))
 
+
+# 2026-08-21(PHASE 8): rerank()/search_and_rerank()가 최종적으로 몇 개를 돌려주는지 —
+# 리랭커가 재정렬한 결과 개수(RERANKER_TOP_K)와 3단계가 4단계 이후로 넘기는 최종 후보
+# 개수(KOSIS_TOP_K)가 지금 구현에서는 하나의 동일한 top_k 파라미터라 두 이름 중
+# KOSIS_TOP_K를 대표로 쓴다(RERANKER_TOP_K를 넘기면 그것도 동일하게 인식 — 둘 다 세팅된
+# 경우 KOSIS_TOP_K 우선). 기본값 5는 그동안 golden set 검증에 쓴 값 그대로.
+_TOP_K_ENV = os.environ.get("KOSIS_TOP_K") or os.environ.get("RERANKER_TOP_K")
+DEFAULT_TOP_K = int(_TOP_K_ENV) if _TOP_K_ENV else 5
 
 _RERANK_RAW_RE = re.compile(r"rerank_raw=(-?\d+\.\d+)")
 
@@ -251,14 +284,15 @@ def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     MIN_RERANKER_CONFIDENCE 미만이면 신뢰하지 않는다 — "후보 풀 전부가 나빴는데 그중
     제일 덜 나쁜 걸 1등 시켰을 뿐"인 경우를 걸러내기 위함(위 실측 사례 참고).
 
-    2026-08-21: population_rank(아래 _apply_population_signal 참고)도 keyword_rank와
-    동급으로 신뢰한다 — claim 문장에서 직접 뽑은 명시적 규칙 기반 신호라 임베딩/리랭커의
-    노이즈 있는 유사도 판단보다 신뢰도가 높다고 보기 때문.
+    2026-08-21: population_rank/institution_rank/gender_rank/region_rank(아래
+    _apply_*_signal 함수들 참고)도 keyword_rank와 동급으로 신뢰한다 — claim에서 직접
+    뽑은(또는 화이트리스트로 정규화된) 명시적 규칙 기반 신호라 임베딩/리랭커의 노이즈
+    있는 유사도 판단보다 신뢰도가 높다고 보기 때문.
     """
     ranks = _parse_rrf_ranks(source_meta)
     if "keyword_rank" in ranks:
         return True
-    if "population_rank" in ranks:
+    if any(k in ranks for k in ("population_rank", "institution_rank", "gender_rank", "region_rank")):
         return True
     if ranks.get("reranker_rank") != 1:
         return False
@@ -298,7 +332,7 @@ def rerank(
     claim: Claim,
     candidates: list[TableCandidate],
     *,
-    top_k: int = 5,
+    top_k: int = DEFAULT_TOP_K,
     document_texts: Optional[dict[str, str]] = None,
 ) -> list[TableCandidate]:
     """후보 TableCandidate 리스트를 리랭커로 재정렬한 뒤 RRF로 최종 융합한다.
@@ -377,28 +411,173 @@ def _apply_population_signal(
     return tagged
 
 
+# 2026-08-21(PHASE 5): institution/gender/region도 population과 같은 원리로 소프트
+# 부스팅한다 — claim에 값이 있을 때만, 하드 필터 없이. claim.source_org는 옛 명칭("통계청")
+# 이나 포털명("KOSIS")으로 뽑히는 경우가 실측 확인돼서(HyDE 재테스트 로그 참고), 표
+# 텍스트("국가데이터처 ...")와 그대로 비교하면 매칭 실패한다 — 화이트리스트로 정규화한
+# 뒤에만 신호로 쓴다(정규화 실패하면 신호 자체를 생략, "모르는 기관"을 억지로 우기지 않음).
+#
+# 2026-08-21/22: "국가데이터처"를 화이트리스트에서 뺐다 — 골든셋 41건 재평가에서 Recall@1이
+# 65.9%→51.2%로 떨어지는 회귀가 실측 확인됐다(institution_rank가 켜진 12건 중 10건이 오히려
+# 오답을 1등으로 밀어올림). 원인: population 용어(청년/고령 등)와 달리 "국가데이터처"는
+# KOSIS 자체를 운영하는 기관이라 후보 표 설명에 너무 흔하게 등장한다 — 특히 VDB
+# text(기관명+연도명+표명 포맷)는 발행기관을 항상 앞에 붙이므로, source_org가 "통계청"으로
+# 뽑히는(가장 흔한 케이스, 이번 골든셋 12/13건) 순간 상관없는 후보들까지 대거
+# institution_rank=1(keyword_rank와 동급 신뢰)을 받아버렸다 — 이미 되돌린 _apply_granularity_signal
+# (월별/연도별)과 정확히 같은 실패 패턴(도메인 특이성 없는 용어로 부스팅). 나머지 기관명
+# (한국은행/국세청/관세청 등)은 후보 풀에서 훨씬 드물게 등장해 이 문제가 없을 가능성이
+# 높지만, 이번 골든셋엔 그 기관들이 활성화된 사례가 거의 없어 개별 검증은 못 했다 —
+# 재검증 없이는 이것도 안전하다고 확정하지 않는다.
+_ORG_ALIASES = {"통계청": "국가데이터처", "국가통계포털": "국가데이터처"}
+_KNOWN_INSTITUTIONS = [
+    "한국은행", "국세청", "기획예산처", "국민연금공단",
+    "과학기술정보통신부", "한국무역협회", "한국부동산원", "한국거래소",
+    "산업통상부", "고용노동부", "보건복지부", "관세청", "산림청",
+]
+
+
+def _normalize_institution(source_org: Optional[str]) -> Optional[str]:
+    if not source_org:
+        return None
+    stripped = source_org.strip()
+    normalized = _ORG_ALIASES.get(stripped, stripped)
+    return normalized if normalized in _KNOWN_INSTITUTIONS else None
+
+
+def _apply_institution_signal(
+    claim: Claim, candidates: list[TableCandidate], document_texts: Optional[dict[str, str]]
+) -> list[TableCandidate]:
+    """claim.source_org가 화이트리스트 기관으로 정규화되면(예: "통계청"→"국가데이터처"),
+    그 정규화된 기관명을 표 설명에 포함하는 후보에 institution_rank=1을 붙인다.
+    정규화 안 되면(목록에 없는/모르는 기관) 신호 자체를 생략 — 하드 필터 아님, 다른
+    후보를 배제하지 않는다."""
+    institution = _normalize_institution(claim.source_org)
+    if institution is None:
+        return candidates
+
+    tagged = []
+    for c in candidates:
+        doc = (document_texts or {}).get(c.table_id, c.table_name)
+        if institution in doc:
+            tagged.append(_tag_source_rank(c, "institution_rank", 1))
+        else:
+            tagged.append(c)
+    return tagged
+
+
+_GENDER_TERMS = ["여성", "남성"]
+
+
+def _apply_gender_signal(
+    claim: Claim, candidates: list[TableCandidate], document_texts: Optional[dict[str, str]]
+) -> list[TableCandidate]:
+    """claim.gender가 "여성"/"남성"으로 명시돼 있으면(claim_extractor가 optional dimension으로
+    뽑음 — 없으면 None), 그 단어를 표 설명에 포함하는 후보에 gender_rank=1을 붙인다."""
+    if claim.gender not in _GENDER_TERMS:
+        return candidates
+
+    tagged = []
+    for c in candidates:
+        doc = (document_texts or {}).get(c.table_id, c.table_name)
+        if claim.gender in doc:
+            tagged.append(_tag_source_rank(c, "gender_rank", 1))
+        else:
+            tagged.append(c)
+    return tagged
+
+
+def _apply_region_signal(
+    claim: Claim, candidates: list[TableCandidate], document_texts: Optional[dict[str, str]]
+) -> list[TableCandidate]:
+    """claim.region이 있으면(claim_extractor 규칙상 실제로 지리적 범위를 한정하는 표현이
+    있을 때만 채워짐 — "전국"류 일반 표현은 애초에 null로 옴) 그 지역명을 표 설명에 포함하는
+    후보에 region_rank=1을 붙인다."""
+    if not claim.region:
+        return candidates
+
+    tagged = []
+    for c in candidates:
+        doc = (document_texts or {}).get(c.table_id, c.table_name)
+        if claim.region in doc:
+            tagged.append(_tag_source_rank(c, "region_rank", 1))
+        else:
+            tagged.append(c)
+    return tagged
+
+
+# 2026-08-21 시도했다가 되돌린 것: claim.period(예: "지난달"/"작년")로 월/분기/연 주기를
+# 판정해서 표 제목에 "월별"/"연도별" 등이 있는 후보를 population_rank와 같은 방식으로
+# 부스팅해봤다(DT_1J22041 "연도별 소비자물가 등락률" vs DT_1J22042 "월별 소비자물가
+# 등락률"처럼 같은 통계가 주기별로 다른 tblId로 나뉘는 실제 사례가 있어서). 근데 골든셋
+# 41건 재평가 결과 Recall@1이 65.9%→56.1%로 오히려 떨어져서 되돌렸다 — "월별"/"연도별"
+# 같은 주기 단어는 "청년"/"고령"과 달리 도메인 특이성이 없어서 완전히 무관한 표에도
+# 흔히 등장한다(예: "지난달 외식 물가" claim이 CPI와 무관한 "월별 소매판매액지수"로
+# 튐, "월.분기.연간 인구동향"이 정답인 claim이 "월별 출생아 수"라는 다른 세부표로 밀림).
+# 재시도한다면 주기 단어 하나만으로 부스팅하지 말고, 최소한 population_rank처럼 이미
+# 주제가 맞는 후보들 사이에서만 주기로 타이브레이크하는 방식으로 범위를 좁혀야 한다.
+
+
 def search_and_rerank(
     claim: Claim,
     *,
     keyword_fn,
     embedding_fn,
     vdb_fn=None,
-    top_k: int = 5,
+    bm25_fn=None,
+    top_k: int = DEFAULT_TOP_K,
     document_texts: Optional[dict[str, str]] = None,
 ) -> list[TableCandidate]:
-    """3단계 전체 흐름: keyword_search + embedding_search(+ VDB) 결과를 합쳐 rerank까지 수행.
+    """3단계 전체 흐름: keyword_search + embedding_search(+ VDB dense +VDB BM25) 결과를 합쳐
+    rerank까지 수행.
 
     keyword_fn, embedding_fn: 각각 keyword_search(claim), embedding_search(claim) 함수를 주입.
-    vdb_fn: (선택) VDB 조회 함수 — 넘기면 KOSIS 표 전체(28만7천여 개)도 후보에 포함시킨다.
+    vdb_fn: (선택) VDB dense 조회 함수 — 넘기면 KOSIS 표 전체(28만7천여 개)도 후보에 포함시킨다.
+    bm25_fn: (선택, 2026-08-21 추가) VDB에 trigram(pg_trgm) 기반 텍스트 검색을 하는 함수 —
+    agent.kosis.query_vdb.lexical_query_vdb를 claim의 search_query로 감싼 클로저를 넘긴다.
+    dense가 못 잡는 "기관명/지표명이 정확히 일치" 케이스를 보완한다(골든셋 실측: HyDE 스타일
+    쿼리 기준 Dense Recall@30 61.0% vs BM25 41.5% — 서로 다른 실패 패턴이라 RRF로 합치면
+    상호보완 기대).
     document_texts: table_id -> 임베딩/설명 텍스트. rerank()로 그대로 전달된다(생략 시
     table_name으로 대체되는데, 리랭커가 짧은 제목만 보고 판단하게 되어 성능이 떨어진다).
     """
-    kw_results = keyword_fn(claim)
-    emb_results = embedding_fn(claim)
-    vdb_results = vdb_fn(claim) if vdb_fn else []
-    merged = _merge_candidates(kw_results, emb_results, vdb_results)
+    with Timer() as t_kw:
+        kw_results = keyword_fn(claim)
+    with Timer() as t_emb:
+        emb_results = embedding_fn(claim)
+    with Timer() as t_vdb:
+        vdb_results = vdb_fn(claim) if vdb_fn else []
+    with Timer() as t_bm25:
+        bm25_results = bm25_fn(claim) if bm25_fn else []
+    merged = _merge_candidates(kw_results, emb_results, vdb_results, bm25_results)
     merged = _apply_population_signal(claim, merged, document_texts)
-    return rerank(claim, merged, top_k=top_k, document_texts=document_texts)
+    merged = _apply_institution_signal(claim, merged, document_texts)
+    merged = _apply_gender_signal(claim, merged, document_texts)
+    merged = _apply_region_signal(claim, merged, document_texts)
+    with Timer() as t_rerank:
+        result = rerank(claim, merged, top_k=top_k, document_texts=document_texts)
+
+    # 2026-08-22(관측성): 3단계 검색/리랭킹 한 번을 구조화 로그 한 줄로 남긴다 — 소스별
+    # 후보 수·지연시간, 최종 1등 후보/점수를 나중에 집계할 수 있게(예: "이번 배치에서
+    # BM25가 실제로 후보를 몇 건이나 보탰나", "리랭커 지연시간 분포"). log_event()는
+    # 실패해도 예외를 안 올리므로 여기서 별도 try/except 불필요.
+    top1 = result[0] if result else None
+    log_event(
+        "table_matching",
+        sentence=claim.sentence[:200],
+        search_query=claim.search_query,
+        kw_count=len(kw_results), emb_count=len(emb_results),
+        vdb_count=len(vdb_results), bm25_count=len(bm25_results),
+        merged_count=len(merged), result_count=len(result),
+        top1_table_id=top1.table_id if top1 else None,
+        top1_score=round(top1.score, 4) if top1 else None,
+        latency_ms={
+            "keyword": round(t_kw.elapsed_ms, 1), "embedding": round(t_emb.elapsed_ms, 1),
+            "vdb_dense": round(t_vdb.elapsed_ms, 1), "vdb_bm25": round(t_bm25.elapsed_ms, 1),
+            "rerank": round(t_rerank.elapsed_ms, 1),
+        },
+        reranker_enabled=not _DISABLE_RERANKER,
+    )
+    return result
 
 
 if __name__ == "__main__":

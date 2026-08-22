@@ -148,6 +148,100 @@ def fetch_axis_names(org_id: str, tbl_id: str, api_key: Optional[str] = None) ->
     raise ObjlFetchError(f"{tbl_id}: 모든 시도 실패 (마지막 오류: {last_error})")
 
 
+# PHASE 6/7(2026-08-21) — VDB(28.7만 개)에서만 찾은 표는 지금까지 build_kosis_slots()가
+# table_params.json(64개 수동 카탈로그)에 없다는 이유로 무조건 None을 반환해서 실제 값
+# 조회 자체가 불가능했다. fetch_axis_names()는 축 "이름"만 뽑았는데(임베딩 텍스트 보강
+# 용도라 개별 항목까지 넣으면 희석됨), 값 조회를 하려면 각 축의 "코드"(예: 시도별 축의
+# "서울"->"11")까지 필요하다 — 어차피 같은 API 응답(objL=ALL) 안에 이미 들어있는
+# 정보라 API를 한 번 더 부를 필요는 없고, 응답의 첫 행(data[0])만 보던 것을 전체 행으로
+# 넓혀서 같이 뽑는다. 캐시(kosis_table_detail_cache)에 한 번만 저장하면 재사용되므로,
+# 응답이 좀 커져도(표 하나당 한 번뿐) 큰 비용은 아니다.
+_AXIS_CODE_RE = re.compile(r"^C(\d+)$")
+
+
+def fetch_table_detail(org_id: str, tbl_id: str, api_key: Optional[str] = None) -> dict:
+    """표 하나의 분류축 이름 + 값 코드맵을 한 번의 API 성공 응답에서 같이 뽑는다.
+    반환: {"axis_names": [...], "code_maps": {axis_name: {label: code}}, "prd_se": "M"}
+    fetch_axis_names()와 재시도 로직은 동일 — 실패하면 ObjlFetchError."""
+    key = api_key or os.environ.get("KOSIS_API_KEY")
+    if not key:
+        raise ObjlFetchError("KOSIS_API_KEY가 없습니다.")
+
+    last_error: Optional[str] = None
+    for prd_se, start, end in _PRD_SE_ATTEMPTS:
+        for n_axes in (8, 7, 6, 5, 4, 3, 2, 1):
+            params = {
+                "method": "getList", "apiKey": key, "format": "json", "jsonVD": "Y",
+                "orgId": org_id, "tblId": tbl_id, "prdSe": prd_se,
+                "startPrdDe": start, "endPrdDe": end,
+                **{f"objL{i}": "ALL" for i in range(1, n_axes + 1)}, "itmId": "ALL",
+            }
+            try:
+                resp = requests.get(_META_URL, params=params, timeout=15)
+                data = resp.json()
+            except (requests.RequestException, ValueError) as e:
+                last_error = str(e)
+                break
+
+            if isinstance(data, dict) and "err" in data:
+                err_code = str(data.get("err"))
+                err_msg = data.get("errMsg", "")
+                last_error = f"[{err_code}] {err_msg}"
+                if not (err_code == "21" and "존재하지 않습니다" not in err_msg):
+                    break
+                continue
+            if not isinstance(data, list) or not data:
+                last_error = "빈 응답"
+                break
+
+            axis_names: list[str] = []
+            seen_axis = set()
+            for key_name in data[0].keys():
+                m = _AXIS_NAME_RE.match(key_name)
+                if m:
+                    name = data[0].get(key_name)
+                    if name and name not in seen_axis:
+                        seen_axis.add(name)
+                        axis_names.append(name)
+            if not axis_names:
+                last_error = "응답은 있으나 분류축 필드 없음"
+                continue
+
+            # 축 번호(n) -> 축 이름 매핑을 먼저 만들고(예: "1"->"시도별"), 전체 행을 훑어서
+            # 각 축의 (라벨->코드) 페어를 모은다. 응답이 커도(최대 40,000셀) 표 하나당
+            # 한 번만 하는 일이라 감당 가능하다.
+            axis_num_to_name: dict[str, str] = {}
+            for key_name in data[0].keys():
+                m = _AXIS_NAME_RE.match(key_name)
+                if m:
+                    axis_num_to_name[m.group(1)] = data[0][key_name]
+
+            code_maps: dict[str, dict[str, str]] = {name: {} for name in axis_names}
+            for row in data:
+                for key_name, value in row.items():
+                    m = _AXIS_CODE_RE.match(key_name)
+                    if not m:
+                        continue
+                    n = m.group(1)
+                    axis_name = axis_num_to_name.get(n)
+                    label = row.get(f"C{n}_NM")
+                    if axis_name and label and value:
+                        code_maps[axis_name][label] = value
+
+            # axis_num_to_name(2026-08-21 추가, PHASE 7): "행정구역별" 같은 축 이름만으론
+            # KOSIS API 파라미터(objL1/objL2/...)를 못 만든다 — 축 번호(n, "C{n}" 패턴)가
+            # 곧 objL{n}이므로 이름->번호 역매핑에 쓸 수 있게 같이 반환한다(agent/kosis/
+            # dynamic_slot_mapping.py가 resolve한 axis_name을 실제 API 호출로 잇는 다리).
+            return {
+                "axis_names": axis_names,
+                "code_maps": code_maps,
+                "prd_se": prd_se,
+                "axis_num_to_name": axis_num_to_name,
+            }
+
+    raise ObjlFetchError(f"{tbl_id}: 모든 시도 실패 (마지막 오류: {last_error})")
+
+
 def build_enriched_text(base_text: str, axis_names: list[str]) -> str:
     """기존 텍스트("기관명 (연월) 표명")에 분류축 이름을 붙인다.
 

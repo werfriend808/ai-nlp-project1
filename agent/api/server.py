@@ -43,7 +43,7 @@ except ImportError:
 from db.fetch_article_text import fetch_article_for_verification
 from agent.kosis.api_client import KosisApiClient
 from agent.kosis.calculator import KosisCalculator
-from agent.kosis.query_vdb import batch_query_vdb, VdbUnavailableError, VDB_TOP_K
+from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
 from agent.mapping.embedding_search import build_table_embedding_cache
 from agent.pipeline.batch_runner import (
     DEFAULT_CLARIFY_REPLY,
@@ -124,16 +124,41 @@ _CALCULATOR = KosisCalculator()
 print("[서버 시작] 준비 완료")
 
 
+# 2026-08-21: claim.search_query(claim_extractor가 같이 생성 — "{지표명} {있는 dimension만}
+# {정규화 기관명}" 스타일, VDB 문서 텍스트("{기관} (연월) {표명}")와 형식을 맞춘 짧은 쿼리)가
+# 있으면 그걸 쓰고, 없으면(옛 데이터·추출 실패 등) claim.sentence로 안전하게 폴백한다.
+# 골든셋 실측: raw 문장 대비 이 스타일 쿼리가 Dense Recall@30 29.3%→61.0%, BM25는
+# 2.4%→41.5%로 개선 확인(HyDE 검증 로그 참고) — dense/bm25 둘 다 같은 쿼리를 쓴다.
+def _retrieval_query_text(claim) -> str:
+    return claim.search_query or claim.sentence
+
+
 def _vdb_fn(claim):
-    """run_article()에 주입할 VDB 조회 함수 — claim 하나를 Qwen으로 임베딩해서
-    Supabase(kosis_vdb_tables, 28만7천여 개)를 조회한다. VDB 연결 자체가 안 되면(일시적
-    장애 등) 조용히 빈 리스트를 반환해서 keyword+64개 카탈로그만으로라도 계속 진행되게 한다."""
-    text = f"Instruct: {_VDB_QUERY_INSTRUCTION}\nQuery: {claim.sentence}"
+    """run_article()에 주입할 VDB dense 조회 함수 — search_query(또는 폴백으로 sentence)를
+    Qwen으로 임베딩해서 Supabase(kosis_vdb_tables, 28만7천여 개)를 조회한다. VDB 연결
+    자체가 안 되면(일시적 장애 등) 조용히 빈 리스트를 반환해서 keyword+64개 카탈로그만으로도
+    계속 진행되게 한다."""
+    text = f"Instruct: {_VDB_QUERY_INSTRUCTION}\nQuery: {_retrieval_query_text(claim)}"
     vec = _VDB_EMBED_MODEL.encode([text], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
     try:
         return batch_query_vdb([vec], top_k=VDB_TOP_K)[0]
     except VdbUnavailableError as e:
         print(f"[VDB] 조회 실패({e}) — VDB 없이 계속 진행")
+        return []
+
+
+def _bm25_fn(claim):
+    """run_article()에 주입할 VDB BM25(trigram) 조회 함수 — dense와 같은 search_query를
+    쓴다. VDB 연결이 안 되면 조용히 빈 리스트(dense/keyword만으로 계속 진행).
+
+    2026-08-21 버그 수정: 지금까지 dense용 상수(VDB_TOP_K)를 그대로 재사용하고 있었다 —
+    query_vdb.py가 BM25 전용 LEXICAL_TOP_K를 따로 정의해뒀는데도 여기서 안 쓰고 있어서,
+    DENSE_TOP_K와 BM25_TOP_K를 환경변수로 따로 조정해도(PHASE 8) BM25 쪽은 실제로는
+    dense 값을 따라갔다."""
+    try:
+        return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
+    except VdbUnavailableError as e:
+        print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
         return []
 
 
@@ -214,6 +239,7 @@ def _run_job(job_id: str, url: str) -> None:
             _EMBEDDING_CACHE,
             _CATALOG_BY_ID,
             vdb_fn=_vdb_fn,
+            bm25_fn=_bm25_fn,
             raise_on_stage12_error=True,
         )
     except Exception as e:

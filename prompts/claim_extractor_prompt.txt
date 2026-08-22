@@ -90,6 +90,36 @@
   발표한", "OOO 통계"처럼 명시적으로 그 수치와 연결된 경우만).
 - source_report: 기사가 인용한 조사·통계·보고서명 (예: "2024년 양곡소비량조사 결과"). 없으면 null.
 
+## 추출 규칙 (검색용 필드 — age/gender/search_query)
+- age: 주장에 **명시적으로** 연령대가 언급된 경우에만 정규화된 구간으로 채웁니다(예: "20대" →
+  "20~29세", "65세 이상" → "65세 이상", "청년" → "15~29세", "고령층"/"노인" → "65세 이상").
+  ⚠️ population(예: "20대 남성")에 연령 정보가 섞여 있어도, age는 population과 별개로
+  **반드시 채웁니다**(중복 기입 — population은 자유 서술, age는 정규화된 구조화 필드로 용도가
+  다릅니다). 문장에 연령 언급이 전혀 없으면 population/statistic_expression으로부터 유추해서
+  채우지 말고 반드시 null로 둡니다 — age는 optional dimension이라, 없는 걸 억지로 채우면
+  검색 단계에서 없는 조건으로 잘못 걸러지는 부작용이 생깁니다.
+- gender: 주장에 "여성"/"남성"이 명시적으로 언급된 경우에만 채웁니다. 없으면 null(마찬가지로
+  유추 금지).
+- search_query: 이 claim이 검증할 법한 KOSIS 통계표를 찾기 위한 짧은 한국어 검색 문구(5~15자
+  내외). 구성 원칙:
+  1) [정규화된 지표명](statistic_expression을 KOSIS식 공식 표현에 가깝게 다듬은 것) +
+  2) [이 claim에 **실제로 값이 있는** age/gender/region/population만, 있는 만큼만 이어붙임 —
+     없는 dimension은 자리도 만들지 말고 그냥 생략] +
+  3) [source_org를 아래 기관 목록의 정식 명칭으로 정규화한 것 — 목록에 없거나 확신이 없으면
+     기관명 자체를 생략. "KOSIS"는 포털 이름이지 발행기관이 아니므로 절대 쓰지 말고, "통계청"은
+     구 명칭이므로 반드시 "국가데이터처"로 바꿔 씁니다]
+  ⚠️ 절대 하지 말 것: 구체적인 수치·연도·비율을 search_query에 넣는 것(예: "2.1%", "2024년"
+  금지 — 표 제목에는 특정 값이 없어서 검색에 방해만 됩니다), 그리고 age/gender/region이 없는데
+  일반적인 인구통계 단어("전체", "전국" 등)를 억지로 채워 넣는 것.
+  ⚠️⚠️ 이 기관명 정규화(예: "통계청"→"국가데이터처")는 **search_query와 source_org 필드
+  안에서만** 적용합니다. sentence 필드는 이 규칙과 완전히 무관합니다 — sentence는 항상
+  기사 원문 그대로("통계청"이 원문이면 sentence에도 "통계청" 그대로) 한 글자도 바꾸지
+  않습니다. sentence를 정규화하면 원문 위치를 못 찾아 프론트엔드 하이라이트가 깨집니다.
+
+  기관 목록(64개 검증된 카탈로그 기준): 국가데이터처, 한국은행, 국세청, 기획예산처, 국민연금공단,
+  과학기술정보통신부, 한국무역협회, 한국부동산원, 한국거래소, 산업통상부, 고용노동부, 보건복지부,
+  관세청, 산림청
+
 ## 출력 형식 (JSON 배열만 출력, 다른 텍스트 금지)
 [
   {
@@ -99,7 +129,8 @@
     "value_type": "수준값|증감폭" 또는 null (claim_type이 "규모"일 때만, 그 외엔 항상 null),
     "comparison_operator": "증가|감소|동일|초과|미만" 또는 null,
     "comparison_target": "..." 또는 null, "comparison_value": 숫자 또는 null,
-    "region": "..." 또는 null, "source_org": "..." 또는 null, "source_report": "..." 또는 null
+    "region": "..." 또는 null, "source_org": "..." 또는 null, "source_report": "..." 또는 null,
+    "age": "..." 또는 null, "gender": "여성|남성" 또는 null, "search_query": "..." 또는 null
   }
 ]
 추출할 문장이 하나도 없으면 빈 배열 []을 출력합니다.
@@ -289,6 +320,36 @@ population을 비워두면 안 됩니다 — 이 claim이 매칭될 KOSIS 표에
 [
   {"sentence": "여성 한 명이 낳을 것으로 예상되는 아이 수를 뜻하는 합계출산율도 작년 0.75명으로 전년(0.72명) 대비 0.03명 늘었다.", "claim_type": "규모", "period": "작년", "unit": "명", "population": null, "statistic_expression": "합계출산율", "value": 0.75, "value_type": "수준값", "comparison_operator": "증가", "comparison_target": "전년", "comparison_value": 0.72, "region": null, "source_org": null, "source_report": null},
   {"sentence": "여성 한 명이 낳을 것으로 예상되는 아이 수를 뜻하는 합계출산율도 작년 0.75명으로 전년(0.72명) 대비 0.03명 늘었다.", "claim_type": "증감률", "period": "작년", "unit": "명", "population": null, "statistic_expression": "합계출산율", "value": 0.03, "value_type": "증감폭", "comparison_operator": "증가", "comparison_target": "전년", "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+
+[예시 입력 — age/gender/search_query: 있는 dimension만 채우고 없는 건 null로 두는 경우]
+기사: "20대 여성 취업자가 늘었다. 지난달 소비자물가가 전년 동월 대비 2.1% 상승했다."
+
+[예시 출력]
+(첫 문장은 연령·성별이 명시돼 있으므로 age/gender를 채우고 search_query에도 반영합니다.
+둘째 문장은 연령·성별·지역 언급이 전혀 없으므로 age/gender/region 모두 null이고,
+search_query도 지표명+기관명만으로 만듭니다 — "전체"/"전국" 같은 단어를 억지로 안 채웁니다.)
+[
+  {"sentence": "20대 여성 취업자가 늘었다.", "claim_type": "규모", "period": null, "unit": null, "population": "20대 여성", "statistic_expression": "취업자 수", "value": null, "value_type": null, "comparison_operator": "증가", "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null, "age": "20~29세", "gender": "여성", "search_query": "경제활동인구 취업자 20대 여성"},
+  {"sentence": "지난달 소비자물가가 전년 동월 대비 2.1% 상승했다.", "claim_type": "증감률", "period": "지난달", "unit": "%", "population": null, "statistic_expression": "소비자물가", "value": 2.1, "value_type": null, "comparison_operator": "증가", "comparison_target": "전년 동월", "comparison_value": null, "region": null, "source_org": null, "source_report": null, "age": null, "gender": null, "search_query": "소비자물가지수"}
+]
+
+[예시 입력 — age/search_query: 노동/물가 통계가 아닌 낯선 분야(복지/의료)에서도 age가
+명시돼 있으면 반드시 채우는 경우: 실제 오탐 재현 사례(경제 지표 예시에만 익숙해져서 건강보험
+같은 분야에서 age를 비워버리는 실수가 있었음). 동시에 기관명 정규화(통계청→국가데이터처)는
+search_query 필드 안에서만 일어나고 sentence 필드는 원문("통계청")을 토씨 하나 안 틀리고
+그대로 유지해야 함을 보여주는 예시이기도 함(실제 오탐 재현 사례: sentence 안의 "통계청"까지
+"국가데이터처"로 바꿔써서 원문과 안 맞게 된 실수가 있었음 — sentence는 절대 정규화하지 않음)]
+기사: "통계청이 6일 발표한 자료에 따르면 65세 이상 고령층의 건강보험 적용인구가 2025년 1000만명을 넘어섰다."
+
+[예시 출력]
+(지표가 "취업자"/"소비자물가"처럼 흔한 경제 지표가 아니라 "건강보험 적용인구"(복지/의료 분야)여도
+규칙은 동일합니다 — "65세 이상"이 문장에 명시돼 있으므로 age를 반드시 채우고, search_query에도
+반영합니다. sentence는 원문 그대로 "통계청"을 유지하고(정규화 금지), search_query에서만
+"국가데이터처"로 정규화합니다 — source_org도 마찬가지로 검색/정규화 목적의 필드라 정규화해도
+되지만, sentence만큼은 절대 원문에서 한 글자도 바꾸면 안 됩니다.)
+[
+  {"sentence": "통계청이 6일 발표한 자료에 따르면 65세 이상 고령층의 건강보험 적용인구가 2025년 1000만명을 넘어섰다.", "claim_type": "규모", "period": "2025년", "unit": "명", "population": "65세 이상 고령층", "statistic_expression": "건강보험 적용인구", "value": 10000000, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": "국가데이터처", "source_report": null, "age": "65세 이상", "gender": null, "search_query": "건강보험 적용인구 65세 이상"}
 ]
 
 ## 추출할 기사

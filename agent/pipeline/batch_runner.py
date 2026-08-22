@@ -72,6 +72,8 @@ from agent.shared.extreme_value_patterns import (
 )
 from agent.kosis.api_client import KosisApiClient, KosisApiError
 from agent.kosis.calculator import KosisCalculator, CalculationError
+from agent.kosis.detail_cache import get_table_detail, DetailCacheUnavailableError
+from agent.kosis.dynamic_slot_mapping import map_claim_slots
 from agent.verdict.judge import judge, JudgeError
 from agent.explain.explainer import explain, ExplainerError
 from agent.interfaces import ComputedResult, Explanation, Verdict, KosisApiResponse
@@ -938,11 +940,17 @@ def _fetch_value(
     client: KosisApiClient,
     calculator: KosisCalculator,
     decade: Optional[tuple],
+    dynamic_base: Optional[dict] = None,
 ) -> KosisApiResponse:
     """5단계 조회 한 번. decade가 (라벨, 코드리스트)면(_resolve_decade_age 참고) 그 코드들을
     fetch_by_codes()로 한 번에 가져와 compute_sum()으로 합산한 뒤 KosisApiResponse 모양으로
     돌려준다(단위/시점은 합산 결과, org_id/itm_id 등은 응답 중 첫 번째 것 재사용 — 같은
-    표·같은 조회라 전부 동일함). decade가 None이면 기존처럼 client() 단일 호출 그대로."""
+    표·같은 조회라 전부 동일함). decade가 None이면 기존처럼 client() 단일 호출 그대로.
+
+    dynamic_base(2026-08-21 추가, PHASE 6/7): table_params.json에 없는 VDB 전용 표는
+    client.__call__()이 아니라 client.call_dynamic()으로 조회해야 한다(_build_dynamic_kosis_slots
+    참고) — decade(나이대 합산)는 table_params.json에 등록된 age code_map이 있는 표에서만
+    감지되므로(_resolve_decade_age) dynamic 표에서는 항상 None이라 이 분기와는 겹치지 않는다."""
     if decade is not None:
         label, codes = decade
         responses = client.fetch_by_codes(table_id, slots, "age", codes)
@@ -954,7 +962,85 @@ def _fetch_value(
             org_id=first.org_id, itm_id=first.itm_id,
             obj_l1=first.obj_l1, obj_l2=first.obj_l2, prd_se=first.prd_se,
         )
+    if dynamic_base is not None:
+        return client.call_dynamic(table_id, slots, dynamic_base)
     return client(table_id, slots)
+
+
+def _build_dynamic_kosis_slots(
+    table_id: str, org_id: Optional[str], claim, generic_slots: dict
+) -> Optional[tuple[dict, dict]]:
+    """PHASE 6/7: build_kosis_slots()가 None을 반환한 표(table_params.json 밖, VDB 전용)에
+    대해, KosisApiClient.call_dynamic()이 바로 쓸 수 있는 (kosis_slots, base) 쌍을 즉석에서
+    만든다. detail_cache로 표의 분류축+코드맵을 얻고(캐시 우선), dynamic_slot_mapping으로
+    claim.region/age/gender를 실제 축 코드로 매핑한다. 어느 단계든 실패하면 None — 호출부는
+    기존과 동일하게 이 claim을 스킵한다(사람이 미리 검증 못 한 표라 애매하면 무리하게
+    조회하지 않는 게 안전하다는 원칙, dynamic_slot_mapping.py 모듈 docstring 참고)."""
+    if not org_id:
+        print(f"[동적 슬롯매핑] '{table_id}' VDB 후보에 org_id가 없음(구버전 VDB row?) → 폴백 불가, 스킵")
+        return None
+
+    try:
+        detail = get_table_detail(table_id, org_id)
+    except DetailCacheUnavailableError as e:
+        print(f"[동적 슬롯매핑] detail_cache 연결 실패({e}) → 폴백 불가, 스킵")
+        return None
+
+    if detail["status"] != "ok":
+        print(f"[동적 슬롯매핑] '{table_id}' 표 상세정보 조회 실패(status={detail['status']}) → 스킵")
+        return None
+
+    mapping = map_claim_slots(claim, detail["code_maps"] or {})
+    if mapping.overall_status != "success":
+        print(f"[동적 슬롯매핑] '{table_id}' {mapping.reason} → 스킵")
+        return None
+
+    axis_num_to_name = detail.get("axis_num_to_name") or {}
+    if not axis_num_to_name:
+        print(f"[동적 슬롯매핑] '{table_id}' axis_num_to_name이 캐시에 없음(구버전 캐시?) → 스킵")
+        return None
+
+    dimensions: dict = {}
+    kosis_slots: dict = {"period": generic_slots.get("period")}
+    if generic_slots.get("prd_se"):
+        kosis_slots["prd_se"] = generic_slots["prd_se"]
+    if generic_slots.get("itm_id"):
+        kosis_slots["itm_id"] = generic_slots["itm_id"]
+
+    code_maps = detail.get("code_maps") or {}
+    # KOSIS는 표에 정의된 objL{n} 축을 전부 요청 파라미터에 넣어야 한다("[20] 필수요청
+    # 변수누락"으로 확인됨, 2026-08-21) — claim이 언급 안 한 축도 빠뜨리면 안 된다.
+    # region/age/gender로 이미 resolve된 축은 그 값을 쓰고, 나머지 축은 select_dimension_values()
+    # (catalog 표 경로)와 같은 원리로 claim.population/statistic_expression을 code_map과
+    # 대조해본다 — 실측 발견(2026-08-21, DT_1B8000G): KOSIS는 "출생아수"/"혼인건수" 같은
+    # 통계 항목 자체를 itmId가 아니라 "종류별" 같은 objL 축으로 모델링한 표도 있어서, 이걸
+    # 안 하면 그 축이 다항목(15개)인데 "ALL"로 조회해 결과가 여러 건이라 실패한다
+    # (KosisApiError, 아래 run_stage_5_6의 except가 잡아서 안전하게 스킵은 되지만 검증
+    # 자체가 불필요하게 실패함). 그래도 못 찾은 축만 "ALL"로 채운다(select_dimension_values와
+    # 동일하게, 표 대부분은 하나쯤 총계/전체 코드가 있어 "ALL"이 실제로 KOSIS의 집계 코드로
+    # 통하는 경우가 많음 — 안 통하면 다건 응답으로 이어져 위와 동일하게 안전하게 스킵된다).
+    for axis_num, axis_name in axis_num_to_name.items():
+        code = mapping.resolved.get(axis_name)
+        if code is None:
+            code = _match_by_name(code_maps.get(axis_name, {}), (claim.population, claim.statistic_expression))
+        # code_map을 빈 채로 두면 api_client._call_with_base()의
+        # `code_map.get(user_value, user_value)`가 항상 user_value를 그대로 통과시킨다 —
+        # 이미 여기서 resolve된 실제 KOSIS 코드를 다시 라벨->코드 변환할 필요가 없다.
+        dimensions[axis_name] = {"kosis_param": f"objL{axis_num}", "code_map": {}, "default_value": "ALL"}
+        if code is not None:
+            kosis_slots[axis_name] = code
+
+    base = {
+        "orgId": org_id,
+        "tblId": table_id,
+        "dimensions": dimensions,
+    }
+    if detail.get("prd_se"):
+        base["prdSe"] = [detail["prd_se"]]
+    if not kosis_slots.get("prd_se") and detail.get("prd_se"):
+        kosis_slots["prd_se"] = detail["prd_se"]
+
+    return kosis_slots, base
 
 
 def run_stage_5_6(
@@ -967,6 +1053,8 @@ def run_stage_5_6(
     comparison_target: Optional[str] = None,
     claim_sentence: Optional[str] = None,
     article_year: Optional[int] = None,
+    org_id: Optional[str] = None,
+    claim=None,
 ) -> Optional[ComputedResult]:
     """5·6단계. 7·8단계로 넘길 수 있도록 ComputedResult를 반환한다 (실패/스킵 시 None).
 
@@ -979,14 +1067,28 @@ def run_stage_5_6(
     연도를 원문에서 계산하기 위해 필요(route_calc_type이 이 calc_type을 정해서
     generic_slots["calc_type"]에 덮어쓴 뒤 호출부가 넘겨준다) — 팀원(D)이 다른 브랜치에서
     만든 극값검증 기능을 이 브랜치의 오늘 자 수정사항(다중주기/MoM-YoY 구분)과 함께
-    합친 것(2026-08-14)."""
+    합친 것(2026-08-14).
+
+    org_id/claim(2026-08-21 추가, PHASE 6/7): table_id가 table_params.json(64개 수동
+    카탈로그)에 없으면(VDB 전용 표) build_kosis_slots()가 None을 반환한다 — 예전엔 여기서
+    바로 스킵했지만, 이제 org_id(TableCandidate.org_id)와 claim(region/age/gender 원본
+    슬롯)이 있으면 _build_dynamic_kosis_slots()로 detail_cache+dynamic_slot_mapping을 통해
+    즉석에서 슬롯을 만들어 계속 진행한다. 안 넘기면(기본값 None) 기존과 동일하게 스킵
+    (하위 호환 — 코랩 경로 등 org_id/claim을 아직 안 넘기는 호출부도 그대로 동작)."""
     kosis_slots = build_kosis_slots(table_id, generic_slots, table_params)
+    dynamic_base: Optional[dict] = None
     if kosis_slots is None:
-        print(
-            f"[5단계 api_client] '{table_id}'가 table_params.json에 없음 "
-            "→ C가 아직 이 표를 조사하지 않음 (알려진 갭, 스킵)"
-        )
-        return None
+        if claim is not None:
+            dynamic = _build_dynamic_kosis_slots(table_id, org_id, claim, generic_slots)
+            if dynamic is not None:
+                kosis_slots, dynamic_base = dynamic
+                print(f"[5단계 api_client] '{table_id}' 동적 슬롯매핑 성공(VDB 전용 표) → 조회 계속 진행")
+        if kosis_slots is None:
+            print(
+                f"[5단계 api_client] '{table_id}'가 table_params.json에 없음 "
+                "→ C가 아직 이 표를 조사하지 않았고 동적 슬롯매핑도 실패/불가 (스킵)"
+            )
+            return None
 
     calc_type = generic_slots.get("calc_type")
     # 2026-08-16: "20대"/"70대 이상" 같은 10세단위 나이 표현은 이 claim 안에서 base/target
@@ -1005,8 +1107,8 @@ def run_stage_5_6(
             else:
                 base_period = _prior_year_same_period(kosis_slots["period"])
             base_slots = dict(kosis_slots, period=base_period)
-            base_resp = _fetch_value(table_id, base_slots, client, calculator, decade)
-            target_resp = _fetch_value(table_id, kosis_slots, client, calculator, decade)
+            base_resp = _fetch_value(table_id, base_slots, client, calculator, decade, dynamic_base)
+            target_resp = _fetch_value(table_id, kosis_slots, client, calculator, decade, dynamic_base)
             print(f"[5단계 api_client] base   = {base_resp}")
             print(f"[5단계 api_client] target = {target_resp}")
 
@@ -1028,6 +1130,13 @@ def run_stage_5_6(
             print(f"[6단계 calculator] {result}")
             return result
         elif calc_type in ("최댓값검증", "최솟값검증") and kosis_slots.get("period"):
+            if dynamic_base is not None:
+                # 2026-08-21: fetch_series()/client()가 client.call_dynamic() 상당의
+                # 동적 base 경로를 아직 지원하지 않는다(historical 수십 개 시점을 훑는
+                # 이 분기는 decade와 마찬가지로 스코프가 훨씬 크다) — VDB 전용 표에 대한
+                # 최댓값/최솟값검증은 지금은 스킵한다(알려진 갭, decade와 동일 원칙).
+                print(f"[5단계 api_client] '{table_id}' 동적 슬롯매핑 표는 {calc_type!r} 미지원(알려진 갭) → 스킵")
+                return None
             # 2026-08-16: 이 분기는 decade(나이대 합산)를 아직 지원하지 않는다 — historical
             # 전체 구간의 매 시점마다 5세단위 코드 여러 개를 합산해야 해서 스코프가 훨씬
             # 크다(단순조회/증감처럼 시점 1~2개가 아니라 수십 개 시점 전부). "20대 취업자
@@ -1079,7 +1188,7 @@ def run_stage_5_6(
             print(f"[6단계 calculator] {result}")
             return result
         else:
-            resp = _fetch_value(table_id, kosis_slots, client, calculator, decade)
+            resp = _fetch_value(table_id, kosis_slots, client, calculator, decade, dynamic_base)
             print(f"[5단계 api_client] {resp}")
             print("[6단계 calculator] 단순 조회 (calc_type 없음/미지원) → 계산 없이 값 그대로 사용")
             return ComputedResult(calc_type="단순조회", raw_value=resp.raw_value, unit=resp.unit, period=resp.period)
@@ -1158,6 +1267,11 @@ def _build_verification_record(
     ambiguity_reason: Optional[str],
 ) -> dict:
     """claim + 3~8단계 결과를 db/store.py의 검증 스키마 dict로 조립한다."""
+    # 2026-08-21: table_id가 table_params.json에 없는 VDB 전용 표(PHASE 6/7 동적 슬롯매핑
+    # 경로, run_stage_5_6._build_dynamic_kosis_slots 참고)로 검증에 성공한 claim이어도
+    # 여기선 여전히 None이 된다 — 이 함수는 table_params.json만 보는 build_kosis_slots를
+    # 그대로 재사용하기 때문(알려진 표시 갭, 검증 자체의 정확성과는 무관 — 실제 조회에 쓰인
+    # 값은 run_stage_5_6의 콘솔 로그에서 확인 가능).
     kosis_dimension = None
     if generic_slots is not None and top is not None:
         kosis_dimension = build_kosis_slots(top.table_id, generic_slots, table_params)
@@ -1258,6 +1372,7 @@ def run_article(
     catalog_by_id: dict,
     *,
     vdb_fn=None,
+    bm25_fn=None,
     raise_on_stage12_error: bool = False,
 ) -> list[dict]:
     """기사 하나를 1~8단계까지 돌리고, 16:30~17:00 결과 검수용 레코드 리스트를 반환한다.
@@ -1399,6 +1514,7 @@ def run_article(
                 keyword_fn=keyword_search,
                 embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
                 vdb_fn=vdb_fn,
+                bm25_fn=bm25_fn,
                 document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
             )
         except Exception as e:
@@ -1552,6 +1668,7 @@ def _finish_claim_with_top_candidate(
         top.table_id, slots, table_params, client, calculator,
         comparison_target=claim.comparison_target,
         claim_sentence=claim.sentence, article_year=article["published_date"].year,
+        org_id=top.org_id, claim=claim,
     )
     if computed is None:
         return None

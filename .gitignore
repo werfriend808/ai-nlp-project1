@@ -26,3 +26,6 @@ data/vdb_pending.jsonl
 data/vdb_pending.jsonl.bak
 data/vdb_pending.jsonl.bak2
 agent/kosis/chroma_db/
+
+# 관측성 로그(agent/observability.py) — 실행할 때마다 쌓이는 런타임 산출물, 소스 아님
+logs/*.jsonl

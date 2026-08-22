@@ -43,6 +43,7 @@ except ImportError:
         score: float
         required_slots: list = field(default_factory=list)
         source_meta: Optional[str] = None
+        org_id: Optional[str] = None
 
 TABLE_NAME = "kosis_vdb_tables"
 
@@ -51,7 +52,9 @@ TABLE_NAME = "kosis_vdb_tables"
 # 안에 못 넣는 사례가 실측 확인됐다. VDB 후보는 어차피 "unverified"로 표시돼서 리랭커가
 # 다시 평가하므로(_merge_candidates 참고), 여기서 늘려도 잘못된 표가 부당하게 승격될
 # 위험은 없다 — 그냥 리랭커가 볼 후보 풀이 넓어질 뿐이다.
-VDB_TOP_K = 10
+# 2026-08-21(PHASE 8): 환경변수 DENSE_TOP_K로 배포 시점에 조정 가능하게 함. 기본값은
+# 그동안 골든셋으로 검증해온 10을 그대로 유지(하위 호환).
+VDB_TOP_K = int(os.environ.get("DENSE_TOP_K", "10"))
 # 절대 유사도 하한선. "28만개 중 그나마 제일 비슷한 것"이어도 이 밑이면 사실상 무관하다고
 # 보고 후보에서 제외한다 — top-k 개수 제한만으로는 못 거르는 노이즈를 추가로 막는다.
 # 2026-08-19: 0.75는 e5-small 기준 값이었다 — Qwen3-Embedding-4B로 바뀐 뒤 실측 기준
@@ -76,6 +79,13 @@ def _get_connection():
                 "SUPABASE_DB_URL이 없습니다. .env에 Supabase 프로젝트의 Postgres 연결 문자열을 넣으세요."
             )
         _conn = psycopg2.connect(db_url)
+        # 이 커넥션은 읽기 전용(SELECT만)이라 autocommit으로 둔다 — 안 그러면 매 쿼리가
+        # 트랜잭션을 열어놓은 채 커밋 없이 남는다(2026-08-21, lexical_query_vdb의
+        # `set pg_trgm.similarity_threshold`도 세션 단위라 커넥션 재사용 중 계속
+        # 살아있어야 함 — autocommit이면 SET 자체도 별도 커밋 없이 즉시 반영된다).
+        _conn.autocommit = True
+        with _conn.cursor() as cur:
+            cur.execute("set pg_trgm.similarity_threshold = 0.1;")
     return _conn
 
 
@@ -106,7 +116,7 @@ def batch_query_vdb(
                 # 벡터 기준) — Chroma 때와 같은 변환식(유사도 = 1 - 거리)을 그대로 쓴다.
                 cur.execute(
                     f"""
-                    select tbl_id, text, embedding <=> %s::vector as distance
+                    select tbl_id, org_id, text, embedding <=> %s::vector as distance
                     from {TABLE_NAME}
                     order by embedding <=> %s::vector
                     limit %s;
@@ -116,7 +126,7 @@ def batch_query_vdb(
                 rows = cur.fetchall()
 
                 candidates = []
-                for tbl_id, text, dist in rows:
+                for tbl_id, org_id, text, dist in rows:
                     similarity = 1.0 - float(dist)
                     if similarity < VDB_MIN_SIMILARITY:
                         continue
@@ -127,6 +137,7 @@ def batch_query_vdb(
                             score=similarity,
                             required_slots=[],
                             source_meta=f"kosis_vdb model={_SOURCE_MODEL}",
+                            org_id=org_id or None,
                         )
                     )
                 results.append(candidates)
@@ -145,3 +156,63 @@ def batch_query_vdb(
         raise VdbUnavailableError(f"Supabase(pgvector) 조회 중 연결 오류: {e}") from e
 
     return results
+
+
+# 2026-08-21 도입: VDB(28.7만 개)에도 어휘 검색을 추가한다 — 지금까지 keyword_search는
+# 64개 수동 카탈로그만 보고 VDB는 임베딩 단독이었는데, "기관명이 정확히 일치" 같은
+# 신호는 임베딩 코사인 유사도보다 정확한 단어 매칭이 훨씬 더 잘 잡는다(형제 표 구분
+# 실패의 상당수가 이 신호 부재 때문이었음). Postgres에 정식 BM25 확장은 없어서
+# pg_trgm(문자 단위 trigram 유사도)으로 대체 — 형태소 분석 없이 한국어에도 그대로
+# 적용된다. 사전 준비: `create extension pg_trgm;` +
+# `create index kosis_vdb_tables_text_trgm_idx on kosis_vdb_tables using gin (text gin_trgm_ops);`
+# (이미 적용됨, 2026-08-21).
+# 2026-08-21(PHASE 8): 환경변수 BM25_TOP_K로 배포 시점에 조정 가능하게 함(DENSE_TOP_K와
+# 동일 원칙). 기본값은 골든셋 검증에 쓴 30 유지.
+LEXICAL_TOP_K = int(os.environ.get("BM25_TOP_K", "30"))
+
+
+def lexical_query_vdb(query_text: str, *, top_k: int = LEXICAL_TOP_K) -> list[TableCandidate]:
+    """trigram 유사도로 VDB를 텍스트 검색한다. query_text는 호출부가 준비한다 —
+    claim.sentence 원문 그대로 넘길 수도, source_org/statistic_expression 등을 이어붙인
+    구조화 쿼리를 넘길 수도 있다(이 함수는 무엇이 오든 그대로 유사도 비교만 한다)."""
+    if not query_text or not query_text.strip():
+        return []
+
+    try:
+        conn = _get_connection()
+    except psycopg2.OperationalError as e:
+        raise VdbUnavailableError(f"Supabase(pgvector)에 연결 못 했습니다: {e}") from e
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                select tbl_id, org_id, text, similarity(text, %s) as sim
+                from {TABLE_NAME}
+                where text %% %s
+                order by sim desc
+                limit %s;
+                """,
+                (query_text, query_text, top_k),
+            )
+            rows = cur.fetchall()
+    except psycopg2.Error as e:
+        global _conn
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _conn = None
+        raise VdbUnavailableError(f"Supabase(pgvector) 텍스트 검색 중 연결 오류: {e}") from e
+
+    return [
+        TableCandidate(
+            table_id=tbl_id,
+            table_name=text,
+            score=float(sim),
+            required_slots=[],
+            source_meta="kosis_vdb_lexical(pg_trgm)",
+            org_id=org_id or None,
+        )
+        for tbl_id, org_id, text, sim in rows
+    ]
