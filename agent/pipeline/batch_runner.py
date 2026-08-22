@@ -58,6 +58,7 @@ from typing import Optional
 
 from agent.preprocessing.classifier import classify
 from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims, strip_title_prefix_from_claims
+from agent.preprocessing.claim_candidate_scanner import _normalize_quotes
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
@@ -189,13 +190,22 @@ def _clean_scraped_article_text(title: str, raw_text: str, max_len: int = 3000) 
     7.5%까지 치솟으며..."가 통째로 한 claim.sentence가 됨 — 프론트엔드에서 원문 위치를
     못 찾는 형태로 나타남). 제목 자체는 맥락으로 남기되(LLM이 봐도 됨), 제목이 실제로
     trimmed 맨 앞에서 발견되면 그 뒤에 줄바꿈을 넣어 본문과 명확히 분리한다.
+
+    2026-08-22 실측 발견: CSV의 기사제목 컬럼은 곡선 따옴표(‘/’)를 쓰는데 본문 텍스트
+    안에서는 직선 따옴표(')로 스크랩되는 기사가 있어서("'직원 한 명에 로봇 수십 대'…"),
+    anchor를 raw_text에서 못 찾아(find()==-1) start=0 폴백으로 빠지는 바람에 신문사
+    내비게이션 메뉴 전체가 그대로 본문 앞에 남는 사례가 발견됨. claim_candidate_scanner의
+    _normalize_quotes와 동일한 정규화를 검색에만 적용한다(문자 수가 그대로라 위치는
+    원본 raw_text에 그대로 대응됨) — 실제로 잘라내는 텍스트 자체는 원문 그대로 유지.
     """
-    anchor = title[:12].strip()
-    idx = raw_text.find(anchor) if anchor else -1
+    normalized_title = _normalize_quotes(title)
+    normalized_text = _normalize_quotes(raw_text)
+    anchor = normalized_title[:12].strip()
+    idx = normalized_text.find(anchor) if anchor else -1
     start = idx if idx >= 0 else 0
     trimmed = raw_text[start : start + max_len]
 
-    if idx >= 0 and title and trimmed.startswith(title):
+    if idx >= 0 and title and _normalize_quotes(trimmed).startswith(normalized_title):
         trimmed = title + "\n" + trimmed[len(title) :]
 
     m = _BYLINE_RE.search(trimmed[: len(title) + 100])
