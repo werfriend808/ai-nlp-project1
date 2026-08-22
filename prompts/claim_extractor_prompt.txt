@@ -352,5 +352,34 @@ search_query 필드 안에서만 일어나고 sentence 필드는 원문("통계�
   {"sentence": "통계청이 6일 발표한 자료에 따르면 65세 이상 고령층의 건강보험 적용인구가 2025년 1000만명을 넘어섰다.", "claim_type": "규모", "period": "2025년", "unit": "명", "population": "65세 이상 고령층", "statistic_expression": "건강보험 적용인구", "value": 10000000, "value_type": "수준값", "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": "국가데이터처", "source_report": null, "age": "65세 이상", "gender": null, "search_query": "건강보험 적용인구 65세 이상"}
 ]
 
+[예시 입력 — 헤드라인 수치 뒤에 "~등"으로 예시 품목/사례가 덧붙는 경우: 실제 미탐 재현 사례]
+기사: "외식 물가는 지난 2월(3%)에 이어 지난달에도 3% 상승했는데, 생선회(5.4%)와 치킨(5.3%) 등 소비자들이 자주 찾는 외식 품목들의 가격이 크게 오르며 체감 물가상승률을 높였다."
+
+[예시 출력]
+(앞 절 "외식 물가는... 3% 상승했는데,"가 헤드라인 수치이고, 뒤에 "생선회(5.4%)와 치킨(5.3%)
+등"은 "등"으로 끝나 완결된 목록처럼 안 보이지만 이것도 각각 독립된 수치 주장입니다. "등이
+붙었으니 예시일 뿐"이라고 판단해서 건너뛰면 안 됩니다 — 앞의 "여러 항목이 나열된 경우"
+예시(등급별 병렬 나열)와 똑같이 취급해서, 헤드라인 claim 1개 + "등" 앞에 언급된 개별 품목
+claim들을 모두 뽑습니다.)
+[
+  {"sentence": "외식 물가는 지난 2월(3%)에 이어 지난달에도 3% 상승했는데, 생선회(5.4%)와 치킨(5.3%) 등 소비자들이 자주 찾는 외식 품목들의 가격이 크게 오르며 체감 물가상승률을 높였다.", "claim_type": "증감률", "period": "지난달", "unit": "%", "population": "외식", "statistic_expression": "외식 물가 상승률", "value": 3.0, "value_type": null, "comparison_operator": null, "comparison_target": "2월", "comparison_value": 3.0, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "외식 물가는 지난 2월(3%)에 이어 지난달에도 3% 상승했는데, 생선회(5.4%)와 치킨(5.3%) 등 소비자들이 자주 찾는 외식 품목들의 가격이 크게 오르며 체감 물가상승률을 높였다.", "claim_type": "증감률", "period": "지난달", "unit": "%", "population": "생선회", "statistic_expression": "생선회 가격 상승률", "value": 5.4, "value_type": null, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null},
+  {"sentence": "외식 물가는 지난 2월(3%)에 이어 지난달에도 3% 상승했는데, 생선회(5.4%)와 치킨(5.3%) 등 소비자들이 자주 찾는 외식 품목들의 가격이 크게 오르며 체감 물가상승률을 높였다.", "claim_type": "증감률", "period": "지난달", "unit": "%", "population": "치킨", "statistic_expression": "치킨 가격 상승률", "value": 5.3, "value_type": null, "comparison_operator": null, "comparison_target": null, "comparison_value": null, "region": null, "source_org": null, "source_report": null}
+]
+
+[예시 입력 — "OO 밑으로 내려간 적이 없다"처럼 한 시점이 아니라 여러 해에 걸친 최저·최고 하한선을
+주장하는 경우: 실제 미탐 재현 사례]
+기사: "한국산업기술기획평가원에 따르면, 2017~2022년 우리나라의 국가 주도 R&D 과제 성공률은 97% 밑으로 내려간 적이 한 번도 없다."
+
+[예시 출력]
+("97% 밑으로 내려간 적이 없다"는 특정 한 시점의 값이 아니라 "2017~2022년 모든 해의 성공률이
+97% 이상이었다"는 하한선 주장입니다. 특정 연도 하나를 콕 집을 수 없다고 애매하다며 버리지
+말고, value에 그 하한선 숫자(97)를, comparison_operator에 "초과"를(경계값 97 자체를 포함하는
+표현이라 "이상"에 더 가깝지만 이 스키마엔 "이상"이 없으므로 "초과"로 근사), period에 전체
+구간을 그대로 담아 뽑습니다.)
+[
+  {"sentence": "한국산업기술기획평가원에 따르면, 2017~2022년 우리나라의 국가 주도 R&D 과제 성공률은 97% 밑으로 내려간 적이 한 번도 없다.", "claim_type": "규모", "period": "2017~2022년", "unit": "%", "population": "국가 주도 R&D 과제", "statistic_expression": "R&D 과제 성공률(최저치)", "value": 97.0, "value_type": "수준값", "comparison_operator": "초과", "comparison_target": null, "comparison_value": null, "region": null, "source_org": "한국산업기술기획평가원", "source_report": null}
+]
+
 ## 추출할 기사
 {article_text}

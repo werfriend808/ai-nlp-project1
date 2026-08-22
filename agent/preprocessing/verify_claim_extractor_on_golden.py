@@ -266,6 +266,9 @@ def main() -> None:
             f"발견(보정)={n_found_adjusted} 추출총={len(extracted_sentences)} "
             f"추가(정당추정)={len(extra_legit)} 추가(규칙위반추정)={len(extra_bad)} | {title[:40]}"
         )
+        matched_gold = [gs for gs in gold_sentences if gs not in missed_gold]
+        for mg in matched_gold:
+            print(f"    [매칭됨] {mg[:80]}")
         if missed_gold:
             for ms in missed_gold:
                 print(f"    [진짜누락] {ms[:80]}")
