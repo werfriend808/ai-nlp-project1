@@ -46,6 +46,11 @@ export function SummaryCard({ records, reviewFilterActive, onToggleReviewFilter 
   const confidenceFilled = Math.round(avgScore * 4);
   const confidenceLabel = avgScore >= 0.8 ? "높음" : avgScore >= 0.6 ? "보통" : "낮음";
 
+  // 2026-08-22 추가: "지금 처리된 기사가 몇 건인지 한눈에 안 보인다"는 피드백 — records는
+  // claim(주장) 단위라 그대로 세면 기사 수가 아니라 주장 수가 나온다. article_title 기준
+  // 고유 기사 수를 따로 센다.
+  const articleCount = new Set(records.map((r) => r.article_title)).size;
+
   const rows: ItemRow[] = [
     {
       icon: "✅",
@@ -88,6 +93,12 @@ export function SummaryCard({ records, reviewFilterActive, onToggleReviewFilter 
               <p className="text-lg font-bold text-gray-900 dark:text-gray-50">{scoreStatus}</p>
               <p className="text-xs text-gray-400">표 매칭까지 도달한 비율 기준</p>
             </div>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">누적 기사 처리량</p>
+            <p className="text-lg font-bold text-gray-900 dark:text-gray-50">
+              {articleCount.toLocaleString()} 기사 처리
+            </p>
           </div>
           <ConfidenceDots filled={confidenceFilled} label={confidenceLabel} />
         </div>
