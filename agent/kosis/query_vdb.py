@@ -290,7 +290,11 @@ def item_query_vdb(query_vec: list[float], *, top_k: int = ITEM_TOP_K) -> list[T
             table_name=table_text,
             score=similarity,
             required_slots=[],
-            source_meta=f"kosis_vdb_item(matched='{item_name}')",
+            # 2026-08-24: score도 같이 남긴다 — reranker.py의 신뢰 게이트가 item_rank
+            # "순위"만으론 노이즈를 못 거른다(표 1개만 인덱싱된 지금은 item_rank가 있으면
+            # 사실상 항상 1등이라 순위 자체가 무의미). 유사도 점수로 문턱을 걸어야 한다
+            # (골든셋 실측: 정답 0.3676~0.4810 vs 무관한 오탐 0.30~0.3584, 깨끗하게 분리됨).
+            source_meta=f"kosis_vdb_item(matched='{item_name}', score={similarity:.4f})",
             org_id=org_id or None,
         )
         for tbl_id, (similarity, org_id, item_name, table_text) in ranked

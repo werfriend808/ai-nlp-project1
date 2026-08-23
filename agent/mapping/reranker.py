@@ -264,7 +264,7 @@ _RANK_TAG_RE = re.compile(
 # 텍스트 전체에 항목명을 다 붙이는 실험(DT_1NTA2002, 되돌림)은 리랭커 성능에 도움이
 # 안 됐지만, item_rank로 실제로 매칭된 그 항목명 하나만 콕 집어 리랭커 입력에 동적으로
 # 붙이는 건 다일루션 없이 정확한 신호만 전달한다는 가설로 시도한다.
-_ITEM_MATCH_RE = re.compile(r"kosis_vdb_item\(matched='([^']*)'\)")
+_ITEM_MATCH_RE = re.compile(r"kosis_vdb_item\(matched='([^']*)'(?:,\s*score=[\d.]+)?\)")
 
 
 def _parse_rrf_ranks(source_meta: Optional[str]) -> dict[str, int]:
@@ -318,19 +318,21 @@ def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     2026-08-23: item_rank는 위 규칙 신호들과 다르다 — "청년"/"여성" 같은 정확한 단어가
     표에 그대로 있는지를 보는 게 아니라, 임베딩 코사인 유사도(item_query_vdb)로 판단하는
     "감으로 말하는" 신호라 bm25_rank/vdb_rank와 같은 부류다(그래서 population_rank
-    화이트리스트에 그냥 끼워 넣지 않는다). 대신 "서로 다른 방식으로 찾은 두 유사도
-    신호가 같은 후보를 가리키면 믿는다"는 교차검증 원칙으로 신뢰한다: item_rank=1이면서
-    bm25_rank/vdb_rank/embedding_rank 중 최소 하나가 같은 후보에 함께 붙어 있을 때만
-    신뢰(DT_1NTA2002 golden set 실측: item_rank=1 + bm25_rank=3 동시 발생 확인). item
-    채널 단독으로만 잡힌 경우는 여전히 안 믿는다 — 아직 표본이 작은 새 채널이라 보수적으로
-    간다.
+    화이트리스트에 그냥 끼워 넣지 않는다). 처음엔 "item_rank=1 + 다른 채널 corroboration"
+    조건으로 신뢰해봤는데, 골든셋 실측(DT_1NTA2002 11건)에서 이 조건이 구조적으로 거의
+    항상 거짓이었다 — item 채널은 애초에 "다른 채널이 다 놓친 걸 혼자 찾아라"고 만든
+    거라, 정의상 다른 채널이 같이 찾아주는 일이 거의 없다(11건 중 corroboration 있었던
+    건 0건). 대신 item_trust_score()의 유사도 점수 문턱으로 직접 신뢰한다 — 골든셋
+    70건 실측: 정답 매칭 점수(0.3676~0.4810, 2건 예외 0.3277) vs 무관한 claim의 오탐
+    점수(0.30~0.3584)가 깨끗하게 갈려서, 순위가 아니라 점수 자체가 신뢰할 만한
+    구분자임을 확인했다.
     """
     ranks = _parse_rrf_ranks(source_meta)
     if "keyword_rank" in ranks:
         return True
     if any(k in ranks for k in ("population_rank", "institution_rank", "gender_rank", "region_rank")):
         return True
-    if ranks.get("item_rank") == 1 and any(k in ranks for k in ("bm25_rank", "vdb_rank", "embedding_rank")):
+    if _item_trusted(source_meta):
         return True
     if ranks.get("reranker_rank") != 1:
         return False
@@ -338,6 +340,49 @@ def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     if not raw_match:
         return False
     return _sigmoid(float(raw_match.group(1))) >= MIN_RERANKER_CONFIDENCE
+
+
+_ITEM_SCORE_RE = re.compile(r"kosis_vdb_item\(matched='[^']*',\s*score=([\d.]+)\)")
+
+# 2026-08-24 실측(70건 골든셋, 단일 표 인덱싱 기준): item 채널이 찾은 후보의 코사인
+# 유사도 점수가 노이즈(무관한 claim이 우연히 매칭된 경우, 28건 실측 범위 0.30~0.3584)와
+# 진짜 신호(정답 11건 중 9건, 0.3676~0.4810) 사이에 자연스러운 틈이 있다. item_rank
+# "순위" 자체는 지금처럼 표 1개만 인덱싱된 상태에선 있으면 사실상 항상 1등이라 구분력이
+# 없다 — 반드시 점수로 문턱을 걸어야 한다.
+ITEM_TRUST_MIN_SIMILARITY = 0.36
+
+
+def _item_trusted(source_meta: Optional[str]) -> bool:
+    """item 채널이 찾은 후보를 점수 문턱으로 신뢰할지 판단한다(위 ITEM_TRUST_MIN_SIMILARITY
+    실측 근거 참고)."""
+    if not source_meta:
+        return False
+    m = _ITEM_SCORE_RE.search(source_meta)
+    return bool(m) and float(m.group(1)) >= ITEM_TRUST_MIN_SIMILARITY
+
+
+def select_trusted_candidate(candidates: list) -> Optional[TableCandidate]:
+    """RRF 융합 순위 그대로, 최종적으로 채택할 후보 하나를 고른다.
+
+    2026-08-24: candidates[0](RRF 종합 1위)만 검사하던 기존 방식 대신, "믿을 만한 첫
+    후보"를 찾도록 넓혔다. 처음엔 is_rrf_trusted() 전체(keyword_rank/population_rank/
+    reranker_rank==1 등)로 후보 전체를 훑어봤는데, 골든셋 70건 재검증에서 오히려
+    회귀가 커졌다(틀렸는데 신뢰되는 케이스 25건→35건) — reranker_rank==1이 RRF 종합
+    순위와 안 겹쳐도 무조건 신뢰하게 되면서, 원래 RRF가 주던 이중 확인(교차 인코더
+    +종합 순위 둘 다 동의해야 신뢰)이 깨졌기 때문이다. 그래서 범위를 item 채널로만
+    좁힌다 — item 유사도 점수는 노이즈/신호가 깨끗하게 갈린다는 게 이미 검증됐으므로
+    (_item_trusted 참고) 이 조건 하나만 candidates[0] 밖에서도 예외적으로 허용한다.
+    아무 조건도 못 넘으면 기존과 동일하게 candidates[0]을 반환해(안전한 폴백)
+    is_rrf_trusted() 재검사가 "판단불가" 경로로 그대로 이어지게 한다."""
+    if not candidates:
+        return None
+    top1 = candidates[0]
+    if is_rrf_trusted(top1.source_meta):
+        return top1
+    for c in candidates[1:]:
+        if _item_trusted(c.source_meta):
+            return c
+    return top1
 
 
 def _sigmoid(x: float) -> float:

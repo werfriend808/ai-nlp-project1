@@ -63,7 +63,7 @@ from agent.preprocessing.claim_candidate_scanner import _normalize_quotes
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, expand_institution_query_aliases
+from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, select_trusted_candidate, expand_institution_query_aliases
 from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback, is_region_grounded
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
@@ -1463,6 +1463,7 @@ def run_article(
     *,
     vdb_fn=None,
     bm25_fn=None,
+    item_fn=None,
     raise_on_stage12_error: bool = False,
 ) -> list[dict]:
     """기사 하나를 1~8단계까지 돌리고, 16:30~17:00 결과 검수용 레코드 리스트를 반환한다.
@@ -1549,7 +1550,7 @@ def run_article(
             executor.submit(
                 _process_claim,
                 article, claim, cls_result, table_params, catalog_by_id,
-                client, calculator, embedding_cache, vdb_fn, bm25_fn,
+                client, calculator, embedding_cache, vdb_fn, bm25_fn, item_fn,
             )
             for claim in claims
         ]
@@ -1577,6 +1578,7 @@ def _process_claim(
     embedding_cache: dict,
     vdb_fn,
     bm25_fn,
+    item_fn=None,
 ) -> Optional[dict]:
     """주장 1건의 3~8단계 전체(표매칭→슬롯채우기→계산→판정→설명, DB저장까지)를 처리한다.
     run_article()의 for claim in claims: 루프 본문을 그대로 뽑아온 것 — 스레드풀에
@@ -1642,6 +1644,7 @@ def _process_claim(
             embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
             vdb_fn=vdb_fn,
             bm25_fn=bm25_fn,
+            item_fn=item_fn,
             document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
         )
     except Exception as e:
@@ -1652,7 +1655,7 @@ def _process_claim(
         print("[3단계 매핑] 매칭되는 표 없음 → 스킵")
         return None
 
-    top = candidates[0]
+    top = select_trusted_candidate(candidates)
     return _finish_claim_with_top_candidate(
         article, claim, cls_result, top, table_params, client, calculator, catalog_by_id
     )
@@ -1931,9 +1934,12 @@ def main(
     catalog_by_id = _load_table_catalog_by_id()
     embedding_cache = build_table_embedding_cache()
 
-    vdb_fn = bm25_fn = None
+    vdb_fn = bm25_fn = item_fn = None
     if with_vdb:
-        from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
+        from agent.kosis.query_vdb import (
+            batch_query_vdb, lexical_query_vdb, item_query_vdb,
+            VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K, ITEM_TOP_K,
+        )
 
         print("[배치] Qwen3-Embedding-4B 로딩 중(VDB 쿼리용)...")
         from sentence_transformers import SentenceTransformer
@@ -1948,9 +1954,12 @@ def main(
             base = claim.search_query or claim.sentence
             return expand_institution_query_aliases(base, claim.source_org)
 
+        def _encode_query(text: str):
+            full = f"Instruct: {vdb_instruction}\nQuery: {text}"
+            return vdb_model.encode([full], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
+
         def vdb_fn(claim):
-            text = f"Instruct: {vdb_instruction}\nQuery: {_retrieval_query_text(claim)}"
-            vec = vdb_model.encode([text], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
+            vec = _encode_query(_retrieval_query_text(claim))
             try:
                 return batch_query_vdb([vec], top_k=VDB_TOP_K)[0]
             except VdbUnavailableError as e:
@@ -1962,6 +1971,17 @@ def main(
                 return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
             except VdbUnavailableError as e:
                 print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
+                return []
+
+        def item_fn(claim):
+            # 2026-08-23/24: 다른 3개 채널과 달리 블렌딩된 search_query가 아니라
+            # claim.statistic_expression만 써야 한다(reranker.py의 item_fn 문서 참고 —
+            # 블렌딩 쿼리로 비교하면 항목 단독 유사도가 오히려 떨어짐, 실측 확인됨).
+            narrow = claim.statistic_expression or claim.search_query or claim.sentence
+            try:
+                return item_query_vdb(_encode_query(narrow), top_k=ITEM_TOP_K)
+            except VdbUnavailableError as e:
+                print(f"[item] 조회 실패({e}) — item 채널 없이 계속 진행")
                 return []
 
     if csv_mixed:
@@ -1985,7 +2005,7 @@ def main(
             all_results.extend(
                 run_article(
                     article, client, calculator, table_params, embedding_cache, catalog_by_id,
-                    vdb_fn=vdb_fn, bm25_fn=bm25_fn,
+                    vdb_fn=vdb_fn, bm25_fn=bm25_fn, item_fn=item_fn,
                 )
             )
         except Exception as e:
