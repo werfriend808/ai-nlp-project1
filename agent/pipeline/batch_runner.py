@@ -48,6 +48,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import random
 import re
 import sys
@@ -1567,6 +1568,172 @@ def run_article(
 _CLAIM_WORKERS = 3
 
 
+# ---------------------------------------------------------------------------
+# 실험: 여러 후보를 실제 값으로 검증해서 확정하는 경로 (2026-08-24, Section 5/6 재구축)
+#
+# 기존 경로(_finish_claim_with_top_candidate)는 3단계가 표 1개를 확정하면(유사도·리랭커
+# 기준) 그 표만으로 4~8단계를 쭉 진행한다 — "제목이 그럴듯한가"로 먼저 정하고, 실제
+# 값 확인은 그 표 안에서만 나중에(7단계 judge) 이뤄진다. 다른 LLM 에이전트가 같은 문제를
+# 어떻게 푸는지 비교해보니, 핵심 차이는 "여러 후보의 실제 값을 먼저 계산해보고, claim
+# 숫자가 재현되는 표를 최종 확정"한다는 점이었다(유사도가 아니라 계산 재현 여부가
+# 최종 판단 기준). 이 아래 함수들은 그 방식을 시도한다.
+#
+# MULTI_CANDIDATE_VERIFY=1일 때만 켜진다 — 꺼져 있으면(기본값) 아래 로직은 전혀
+# 안 불리고 기존 경로만 그대로 동작한다(회귀 없음 보장). 3단계(후보 생성)는 GPU가
+# 필요해서 이 코드는 AWS 서버 없이 로컬에서 짰다 — end-to-end 테스트는 아직 못 했고,
+# 서버 켜지면 골든셋으로 검증부터 하고 기본 경로로 바꿀지 결정할 것(TODO).
+# ---------------------------------------------------------------------------
+MULTI_CANDIDATE_VERIFY = os.environ.get("MULTI_CANDIDATE_VERIFY", "").strip().lower() in ("1", "true", "yes")
+MULTI_CANDIDATE_TOP_K = int(os.environ.get("MULTI_CANDIDATE_TOP_K", "5"))
+
+# notebooks/verify_stage3_value_reeval.py(3단계 값 기준 재평가 스크립트)에서 실측 검증한
+# 단위 환산표를 그대로 가져온다 — claim.value(예: "64조6000억원"→64600000000000.0)와
+# KOSIS raw_value(예: 64626963925885, unit="원")를 직접 비교할 수 없어서 반드시 필요하다.
+_UNIT_SCALE = {
+    "천명": 1_000, "천원": 1_000, "천달러": 1_000, "천호": 1_000, "천가구": 1_000, "천세대": 1_000,
+    "백만원": 1_000_000, "백만달러": 1_000_000,
+    "억원": 100_000_000, "억달러": 100_000_000,
+    "조원": 1_000_000_000_000,
+}
+
+
+def _scaled_computed_value(computed: ComputedResult) -> Optional[float]:
+    if computed is None or computed.raw_value is None:
+        return None
+    return computed.raw_value * _UNIT_SCALE.get(computed.unit or "", 1)
+
+
+# claim.value가 이 오차 이내로 재현되면 "이 표가 맞다"고 잠정 판단한다(최종 판정은
+# 여전히 run_stage_7_8의 judge()가 LLM으로 더 정밀하게 내림 — 이건 후보를 거르는
+# 스크리닝 문턱일 뿐). 5%로 시작 — 아직 골든셋 검증 전이라 조정 가능성 있음(TODO).
+_VALUE_MATCH_TOLERANCE = 0.05
+
+
+def _computed_matches_claim(computed: Optional[ComputedResult], claim) -> bool:
+    """5~6단계로 얻은 실제 계산값이 claim이 주장하는 숫자와 근사적으로 일치하는지,
+    LLM 호출(judge()) 없이 빠르게 스크리닝한다 — 여러 후보 표를 돌 때 값 비교 기준으로
+    쓴다. claim.value가 없으면(단순 사실 확인류 claim 등 비교할 숫자 자체가 없는 경우)
+    이 방식으로는 애초에 검증 불가라 항상 False."""
+    if computed is None or claim.value is None:
+        return False
+    scaled = _scaled_computed_value(computed)
+    if scaled is None:
+        return False
+    if claim.value == 0:
+        return abs(scaled) < 1e-6
+    rel_error = abs(scaled - claim.value) / abs(claim.value)
+    return rel_error <= _VALUE_MATCH_TOLERANCE
+
+
+def _try_compute_for_candidate(
+    article: dict, claim, candidate, table_params: dict, catalog_by_id: dict,
+    client: KosisApiClient, calculator: KosisCalculator,
+) -> tuple[Optional[dict], Optional[ComputedResult]]:
+    """후보 표 하나에 대해 4~6단계(슬롯 채우기 → itmId/축 선택 → 값 조회·계산)를
+    시도해서 (slots, computed)를 반환한다. 어느 단계든 실패하면 (None, None).
+
+    _finish_claim_with_top_candidate()의 4~6단계 부분과 호출하는 함수는 완전히
+    동일하다(run_stage_4/route_calc_type/select_itm_id/select_dimension_values/
+    run_stage_5_6 — 전부 이미 있는 함수, 새로 만든 로직 없음). 다른 점은 "후보 1개
+    확정 후 계속 진행"이 아니라 "여러 후보를 번갈아 시도"하는 용도라는 것 뿐이고,
+    그래서 7~8단계(판정·설명, LLM 호출이라 비용이 큼)는 여기서 안 부른다 — 값이
+    맞는 후보를 찾은 뒤 딱 한 번만 부르기 위해서다."""
+    try:
+        slots = run_stage_4(
+            claim.sentence, article.get("clarify_reply"), article["published_date"],
+            table_id=candidate.table_id, table_params=table_params,
+            catalog_by_id=catalog_by_id, claim_region=claim.region,
+        )
+    except Exception as e:
+        print(f"  [검증루프] {candidate.table_id}: 4단계 실패({type(e).__name__}) → 스킵")
+        return None, None
+    if slots is None:
+        return None, None
+
+    routed_calc_type = route_calc_type(claim)
+    if routed_calc_type is None:
+        return None, None
+    slots["calc_type"] = routed_calc_type
+
+    selected_itm = select_itm_id(candidate.table_id, claim, table_params)
+    if selected_itm:
+        slots["itm_id"] = selected_itm
+    dim_values = select_dimension_values(candidate.table_id, claim, table_params, slots)
+    if dim_values:
+        slots.update(dim_values)
+
+    computed = run_stage_5_6(
+        candidate.table_id, slots, table_params, client, calculator,
+        comparison_target=claim.comparison_target, claim_sentence=claim.sentence,
+        article_year=article["published_date"].year, org_id=candidate.org_id, claim=claim,
+    )
+    return slots, computed
+
+
+def _select_candidate_by_value(
+    article: dict, claim, candidates: list, table_params: dict, catalog_by_id: dict,
+    client: KosisApiClient, calculator: KosisCalculator, *, top_k: int = MULTI_CANDIDATE_TOP_K,
+) -> Optional[tuple]:
+    """상위 top_k개 후보를 순서대로 시도해서, 실제 계산값이 claim 숫자를 재현하는 첫
+    후보를 (candidate, slots, computed) 튜플로 반환한다. 하나도 안 맞으면 None —
+    이 경우 호출부는 기존 경로(select_trusted_candidate + _finish_claim_with_top_candidate)로
+    폴백해야 한다(이 함수는 "값으로 확정 가능한 경우"만 다룬다, 전부를 대체하지 않음).
+
+    claim.value가 없으면 애초에 값으로 검증할 방법이 없으므로 즉시 None(비용 낭비 방지 —
+    KOSIS API 호출을 후보 수만큼 낭비하지 않는다)."""
+    if claim.value is None or not candidates:
+        return None
+    for candidate in candidates[:top_k]:
+        slots, computed = _try_compute_for_candidate(
+            article, claim, candidate, table_params, catalog_by_id, client, calculator
+        )
+        if computed is not None and _computed_matches_claim(computed, claim):
+            print(f"  [검증루프] {candidate.table_id}: 값 일치 확인 → 이 표로 확정")
+            return candidate, slots, computed
+        elif computed is not None:
+            scaled = _scaled_computed_value(computed)
+            print(f"  [검증루프] {candidate.table_id}: 값 불일치(계산={scaled}, claim={claim.value}) → 다음 후보")
+    return None
+
+
+def _finish_claim_with_value_verified_candidate(
+    article: dict, claim, cls_result, candidate, slots: dict, computed: ComputedResult,
+    table_params: dict, catalog_by_id: dict,
+) -> Optional[dict]:
+    """_select_candidate_by_value()가 값으로 확정한 후보에 대해 7~8단계(판정·설명)만
+    마저 실행하고 DB에 저장한다. 4~6단계는 이미 끝난 상태로 받아서 재실행하지 않는다.
+
+    is_rrf_trusted() 검사를 안 하는 게 기존 경로(_finish_claim_with_top_candidate)와의
+    핵심 차이다 — 이미 실제 값이 claim과 맞는 걸 확인했으니 유사도 기반 신뢰 검사가
+    불필요하다(오히려 여기서 걸었다가 통과 못 하면, 방금 실측으로 확인한 값 일치를
+    무시하고 버리는 모순이 생긴다)."""
+    outcome = run_stage_7_8(
+        claim, candidate, computed, prd_se=slots.get("prd_se"), article_date=article.get("published_date")
+    )
+    if outcome is None:
+        return None
+    verdict, explanation = outcome
+    try:
+        insert_verification(
+            _build_verification_record(
+                article=article, claim=claim, top=candidate, generic_slots=slots,
+                table_params=table_params, computed=computed, verdict=verdict,
+                explanation=explanation, cls_result=cls_result, catalog_by_id=catalog_by_id,
+                verification_possible="가능", ambiguity_reason=None,
+            )
+        )
+    except Exception as e:
+        print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
+    return {
+        "article": article["label"],
+        "claim_sentence": claim.sentence,
+        "table_name": candidate.table_name,
+        "verdict": verdict.verdict,
+        "gap_type": verdict.gap_type,
+        "classifier_score": cls_result.score,
+    }
+
+
 def _process_claim(
     article: dict,
     claim,
@@ -1654,6 +1821,19 @@ def _process_claim(
     if not candidates:
         print("[3단계 매핑] 매칭되는 표 없음 → 스킵")
         return None
+
+    if MULTI_CANDIDATE_VERIFY:
+        picked = _select_candidate_by_value(
+            article, claim, candidates, table_params, catalog_by_id, client, calculator,
+        )
+        if picked is not None:
+            candidate, slots, computed = picked
+            result = _finish_claim_with_value_verified_candidate(
+                article, claim, cls_result, candidate, slots, computed, table_params, catalog_by_id,
+            )
+            if result is not None:
+                return result
+        print("[검증루프] 값으로 확정된 후보 없음 → 기존 신뢰 게이트 경로로 폴백")
 
     top = select_trusted_candidate(candidates)
     return _finish_claim_with_top_candidate(
