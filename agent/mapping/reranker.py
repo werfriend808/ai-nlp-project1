@@ -195,12 +195,20 @@ def _merge_candidates(
     embedding_candidates: list[TableCandidate],
     vdb_candidates: Optional[list[TableCandidate]] = None,
     bm25_candidates: Optional[list[TableCandidate]] = None,
+    item_candidates: Optional[list[TableCandidate]] = None,
 ) -> list[TableCandidate]:
-    """keyword_search/embedding_search/VDB(dense)/BM25(trigram) 후보를 table_id 기준으로
-    합치면서, 각 소스 안에서의 순위(1부터, 입력 리스트가 이미 점수 내림차순 정렬돼 있다고
-    가정)를 source_meta에 "keyword_rank=N"/"embedding_rank=N"/"vdb_rank=N"/"bm25_rank=N"으로
-    남긴다 — 이후 _rrf_fuse()가 점수 크기가 아니라 이 순위만으로 최종 신뢰도를 계산한다.
-    입력으로 받은 candidate 객체는 변형하지 않고 dataclasses.replace로 복사본만 만든다.
+    """keyword_search/embedding_search/VDB(dense)/BM25(trigram)/항목(item) 후보를 table_id
+    기준으로 합치면서, 각 소스 안에서의 순위(1부터, 입력 리스트가 이미 점수 내림차순
+    정렬돼 있다고 가정)를 source_meta에 "keyword_rank=N"/"embedding_rank=N"/"vdb_rank=N"
+    /"bm25_rank=N"/"item_rank=N"으로 남긴다 — 이후 _rrf_fuse()가 점수 크기가 아니라 이
+    순위만으로 최종 신뢰도를 계산한다. 입력으로 받은 candidate 객체는 변형하지 않고
+    dataclasses.replace로 복사본만 만든다.
+
+    2026-08-23: item_candidates(agent.kosis.query_vdb.item_query_vdb) 추가 — 표 제목이
+    검색어와 전혀 안 겹치지만 표 안의 개별 항목(예: "노동소득")은 겹치는 경우를 보완한다
+    (원인 A, "생애주기적자계정" 표 사례로 실측 확인). bm25_rank와 마찬가지로 자동 신뢰
+    대상은 아니다 — item_query_vdb 자체가 아직 표본이 작아 노이즈 가능성을 보수적으로
+    본다.
 
     2026-08-21: bm25_candidates(agent.kosis.query_vdb.lexical_query_vdb, pg_trgm 기반) 추가.
     keyword_rank와 달리 is_rrf_trusted()에서 자동 신뢰 대상이 아니다 — keyword_search(64개
@@ -226,21 +234,37 @@ def _merge_candidates(
             if existing is None:
                 merged[cand.table_id] = _tag_source_rank(cand, key, i + 1)
             else:
+                # 2026-08-23: item_candidates가 다른 채널(keyword/embedding/vdb/bm25)보다
+                # 뒤에 _add되면 이 분기(existing이 이미 있음)를 타는데, 여기서 cand의
+                # source_meta(예: "kosis_vdb_item(matched='노동소득')")를 안 챙기고
+                # existing.source_meta만 이어붙이면 어떤 항목이 매칭됐는지가 그냥 사라진다.
+                # rerank()가 이 매칭 항목명을 리랭커 입력 텍스트에 동적으로 붙여야 하므로
+                # (아래 _ITEM_MATCH_RE 사용부 참고) cand 쪽에 있으면 같이 이어붙여 보존한다.
+                extra_match = _ITEM_MATCH_RE.search(cand.source_meta or "")
+                extra = f" | {extra_match.group(0)}" if extra_match else ""
                 merged[cand.table_id] = replace(
-                    existing, source_meta=f"{existing.source_meta} | {key}={i + 1}"
+                    existing, source_meta=f"{existing.source_meta} | {key}={i + 1}{extra}"
                 )
 
     _add(keyword_candidates, "keyword_rank")
     _add(embedding_candidates, "embedding_rank")
     _add(vdb_candidates or [], "vdb_rank")
     _add(bm25_candidates or [], "bm25_rank")
+    _add(item_candidates or [], "item_rank")
     return list(merged.values())
 
 
 _RANK_TAG_RE = re.compile(
-    r"\b(keyword_rank|embedding_rank|vdb_rank|bm25_rank|reranker_rank|population_rank"
+    r"\b(keyword_rank|embedding_rank|vdb_rank|bm25_rank|item_rank|reranker_rank|population_rank"
     r"|institution_rank|gender_rank|region_rank)=(\d+)"
 )
+
+# 2026-08-23: agent.kosis.query_vdb.item_query_vdb가 항목 매칭 후보의 source_meta에
+# "kosis_vdb_item(matched='노동소득')" 형태로 남기는 걸 rerank()에서 뽑아 쓴다 — 표
+# 텍스트 전체에 항목명을 다 붙이는 실험(DT_1NTA2002, 되돌림)은 리랭커 성능에 도움이
+# 안 됐지만, item_rank로 실제로 매칭된 그 항목명 하나만 콕 집어 리랭커 입력에 동적으로
+# 붙이는 건 다일루션 없이 정확한 신호만 전달한다는 가설로 시도한다.
+_ITEM_MATCH_RE = re.compile(r"kosis_vdb_item\(matched='([^']*)'\)")
 
 
 def _parse_rrf_ranks(source_meta: Optional[str]) -> dict[str, int]:
@@ -290,11 +314,23 @@ def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     _apply_*_signal 함수들 참고)도 keyword_rank와 동급으로 신뢰한다 — claim에서 직접
     뽑은(또는 화이트리스트로 정규화된) 명시적 규칙 기반 신호라 임베딩/리랭커의 노이즈
     있는 유사도 판단보다 신뢰도가 높다고 보기 때문.
+
+    2026-08-23: item_rank는 위 규칙 신호들과 다르다 — "청년"/"여성" 같은 정확한 단어가
+    표에 그대로 있는지를 보는 게 아니라, 임베딩 코사인 유사도(item_query_vdb)로 판단하는
+    "감으로 말하는" 신호라 bm25_rank/vdb_rank와 같은 부류다(그래서 population_rank
+    화이트리스트에 그냥 끼워 넣지 않는다). 대신 "서로 다른 방식으로 찾은 두 유사도
+    신호가 같은 후보를 가리키면 믿는다"는 교차검증 원칙으로 신뢰한다: item_rank=1이면서
+    bm25_rank/vdb_rank/embedding_rank 중 최소 하나가 같은 후보에 함께 붙어 있을 때만
+    신뢰(DT_1NTA2002 golden set 실측: item_rank=1 + bm25_rank=3 동시 발생 확인). item
+    채널 단독으로만 잡힌 경우는 여전히 안 믿는다 — 아직 표본이 작은 새 채널이라 보수적으로
+    간다.
     """
     ranks = _parse_rrf_ranks(source_meta)
     if "keyword_rank" in ranks:
         return True
     if any(k in ranks for k in ("population_rank", "institution_rank", "gender_rank", "region_rank")):
+        return True
+    if ranks.get("item_rank") == 1 and any(k in ranks for k in ("bm25_rank", "vdb_rank", "embedding_rank")):
         return True
     if ranks.get("reranker_rank") != 1:
         return False
@@ -330,6 +366,20 @@ def _rrf_fuse(reranker_ranked: list[TableCandidate], *, k: int = RRF_K) -> list[
     return fused
 
 
+def _document_text_for(cand: TableCandidate, document_texts: Optional[dict[str, str]]) -> str:
+    """리랭커에 넘길 문서 텍스트를 만든다. document_texts(표 전체 텍스트)가 기본이고,
+    cand가 item_rank 채널로 매칭됐으면(source_meta에 "kosis_vdb_item(matched='...')"
+    존재) 그 매칭된 항목명 하나만 " · 일치 항목: {item_name}"으로 덧붙인다.
+
+    2026-08-23: DB에 저장된 표 텍스트 자체에 항목명을 다 붙이는 건(모든 후보, 모든 검색
+    채널에 항상 영향) 다일루션으로 검증 실패했다(DT_1NTA2002 실험, 되돌림). 이건 그 대신
+    item_rank로 실제 매칭된 후보에 한해서만, 그 요청(claim) 처리 동안만 메모리 상에서
+    텍스트를 늘린다 — DB에는 저장되지 않고, 다른 채널로만 찾은 후보에는 전혀 영향 없다."""
+    base = (document_texts or {}).get(cand.table_id, cand.table_name)
+    m = _ITEM_MATCH_RE.search(cand.source_meta or "")
+    return f"{base} · 일치 항목: {m.group(1)}" if m else base
+
+
 def rerank(
     claim: Claim,
     candidates: list[TableCandidate],
@@ -344,9 +394,7 @@ def rerank(
     if not candidates:
         return []
 
-    documents = [
-        (document_texts or {}).get(c.table_id, c.table_name) for c in candidates
-    ]
+    documents = [_document_text_for(c, document_texts) for c in candidates]
     scores = rerank_scores(claim.sentence, documents)
 
     if scores is None:
@@ -650,11 +698,12 @@ def search_and_rerank(
     embedding_fn,
     vdb_fn=None,
     bm25_fn=None,
+    item_fn=None,
     top_k: int = DEFAULT_TOP_K,
     document_texts: Optional[dict[str, str]] = None,
 ) -> list[TableCandidate]:
-    """3단계 전체 흐름: keyword_search + embedding_search(+ VDB dense +VDB BM25) 결과를 합쳐
-    rerank까지 수행.
+    """3단계 전체 흐름: keyword_search + embedding_search(+ VDB dense +VDB BM25 +VDB 항목)
+    결과를 합쳐 rerank까지 수행.
 
     keyword_fn, embedding_fn: 각각 keyword_search(claim), embedding_search(claim) 함수를 주입.
     vdb_fn: (선택) VDB dense 조회 함수 — 넘기면 KOSIS 표 전체(28만7천여 개)도 후보에 포함시킨다.
@@ -663,6 +712,10 @@ def search_and_rerank(
     dense가 못 잡는 "기관명/지표명이 정확히 일치" 케이스를 보완한다(골든셋 실측: HyDE 스타일
     쿼리 기준 Dense Recall@30 61.0% vs BM25 41.5% — 서로 다른 실패 패턴이라 RRF로 합치면
     상호보완 기대).
+    item_fn: (선택, 2026-08-23 추가) agent.kosis.query_vdb.item_query_vdb를 감싼 클로저 —
+    표 제목이 아니라 표 안의 개별 "항목" 임베딩과 비교한다(원인 A 보완). ⚠️ 이 클로저는
+    다른 4개와 같은 블렌딩 검색어를 쓰면 안 되고, claim.statistic_expression만으로 쿼리
+    벡터를 만들어야 한다(실측: 블렌딩 검색어로는 항목 단독 유사도가 오히려 떨어짐).
     document_texts: table_id -> 임베딩/설명 텍스트. rerank()로 그대로 전달된다(생략 시
     table_name으로 대체되는데, 리랭커가 짧은 제목만 보고 판단하게 되어 성능이 떨어진다).
     """
@@ -675,7 +728,9 @@ def search_and_rerank(
             vdb_results = vdb_fn(claim) if vdb_fn else []
         with Timer() as t_bm25:
             bm25_results = bm25_fn(claim) if bm25_fn else []
-        merged = _merge_candidates(kw_results, emb_results, vdb_results, bm25_results)
+        with Timer() as t_item:
+            item_results = item_fn(claim) if item_fn else []
+        merged = _merge_candidates(kw_results, emb_results, vdb_results, bm25_results, item_results)
         merged = _apply_population_signal(claim, merged, document_texts)
         merged = _apply_institution_signal(claim, merged, document_texts)
         merged = _apply_gender_signal(claim, merged, document_texts)

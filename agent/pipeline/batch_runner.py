@@ -402,6 +402,21 @@ ARTICLES = [
 ]
 
 
+# 2026-08-23 실측 발견(건설업 취업자 claim, DT_1DA7E06S_NEW): KOSIS 산업분류(KSIC) 계열
+# 축은 라벨이 "F 건설업(41~42)"/"C 제조업(10~34)"처럼 "분류기호 한 글자(또는 *) + 공백 +
+# 진짜 이름 + (코드범위)" 형태다. claim.population="건설업 취업자"는 이 라벨과 부분
+# 문자열로 안 겹쳐서(어느 방향으로도 포함 관계가 안 됨) 매칭이 실패했다 — claim 쪽은
+# 안 건드리고, KOSIS 라벨에서 이 기호/범위 잡음만 벗겨내고 비교한다.
+_KOSIS_LABEL_PREFIX_RE = re.compile(r"^[A-Za-z*]\s+")
+_KOSIS_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def _strip_kosis_label_noise(name: str) -> str:
+    stripped = _KOSIS_LABEL_SUFFIX_RE.sub("", name)
+    stripped = _KOSIS_LABEL_PREFIX_RE.sub("", stripped)
+    return stripped or name  # 다 벗겨져서 빈 문자열이 되면(방어적으로) 원래 이름 유지
+
+
 def _match_by_name(name_to_code: dict, texts: tuple) -> Optional[str]:
     """(공용 매칭 로직) name_to_code(예: itmId->이름, 또는 objL 코드->이름을 뒤집은 것)에서
     texts(claim.population, claim.statistic_expression 등)를 순서대로 하나씩 검사해,
@@ -427,9 +442,10 @@ def _match_by_name(name_to_code: dict, texts: tuple) -> Optional[str]:
             return exact
         best_code, best_len = None, 0
         for name, code in name_to_code.items():
-            if name in text or text in name:
-                if len(name) > best_len:
-                    best_code, best_len = code, len(name)
+            clean_name = _strip_kosis_label_noise(name)
+            if clean_name in text or text in clean_name:
+                if len(clean_name) > best_len:
+                    best_code, best_len = code, len(clean_name)
         if best_code is not None:
             return best_code
     return None
