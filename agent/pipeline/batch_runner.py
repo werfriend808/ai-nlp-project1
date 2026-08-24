@@ -64,7 +64,7 @@ from agent.preprocessing.claim_candidate_scanner import _normalize_quotes
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, select_trusted_candidate, expand_institution_query_aliases
+from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, select_trusted_candidate, expand_institution_query_aliases, DEFAULT_TOP_K
 from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback, is_region_grounded
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
@@ -104,8 +104,7 @@ def _table_required_slots(table_id: Optional[str], catalog_by_id: dict) -> list[
     """table_catalog.json의 표별 required_slots/optional_slots(한글 라벨)를 보고, 4단계
     되묻기가 실제로 다뤄야 할 슬롯 목록(clarify_rules.py의 내부 이름 체계)을 정한다.
 
-    2026-08-17: "period"/"calc_type"은 표 구분 없이 항상 필요(계산 자체가 불가능하거나,
-    calc_type은 뒤에서 route_calc_type()이 항상 덮어쓰므로 물어봐도 해는 없음)하지만,
+    2026-08-17: "period"는 표 구분 없이 항상 필요(계산 자체가 불가능)하지만,
     "region"은 표에 지역 축 자체가 없으면 되물을 이유가 없다 — table_catalog.json에
     "지역"이 required_slots든 optional_slots든 아예 안 걸린 표(예: DT_1DA7102S)면 region을
     뺀다. table_catalog.json에 없는 표(아직 B가 안 채웠거나 조회 실패)는 안전하게 기존
@@ -115,12 +114,31 @@ def _table_required_slots(table_id: Optional[str], catalog_by_id: dict) -> list[
     한 번짜리 고정 clarify_reply로는 답할 수 없는 질문이고(배치 파이프라인은 실제 대화가
     아니라 미리 준비된 문구로 재시도하는 구조), 실제로는 select_dimension_values()가
     claim 내용을 보고 이미 채워주고 있다(2026-08-16 작업) — 여기서 또 요구하면 답 못 할
-    질문 때문에 claim이 불필요하게 스킵될 위험만 커진다."""
+    질문 때문에 claim이 불필요하게 스킵될 위험만 커진다.
+
+    2026-08-24 수정(experiment/pipeline-redesign): table_catalog.json(64개 수동
+    카탈로그)에 없는 표는 "안전하게 region을 요구"하던 기존 폴백이, VDB 도입 이후로는
+    오히려 정반대로 위험해졌다 — 이 카탈로그 밖의 표가 이제 28.7만 개 중 대부분이라,
+    "모르면 region 필수"가 사실상 "VDB로 찾은 표는 거의 다 막는다"와 같아졌다(실측
+    확인: DT_1NTA2002에 clarify_reply 없이 "어느 지역 기준인가요?" 되묻기로 막혀 4단계를
+    통과 못 함 — 다중 후보 검증 루프 end-to-end 테스트 중 재현). claim.region이 실제로
+    있으면(grounded) 이 목록과 무관하게 항상 seed_slots로 쓰이므로, 여기서 region을
+    필수 목록에서 뺀다고 명시된 지역 정보를 버리는 게 아니다 — 그냥 "모르면 무조건
+    되묻기로 막는다"는 기본값만 "모르면 일단 진행한다"로 바꾸는 것. table_catalog.json에
+    있는 표는 기존과 동일하게 그 표의 실제 축 정보를 그대로 신뢰한다(변경 없음).
+
+    2026-08-24 수정(experiment/pipeline-redesign): "calc_type"도 필수 목록에서 뺐다 —
+    fill_slots()가 여기서 뭘 채우든 route_calc_type()이 무조건 덮어쓰므로(위 4~6단계
+    호출부 참고) 애초에 이 값이 비어서 되묻는 건 결과에 영향이 없는데, 대화형 환경
+    가정하고 짠 로직("물어봐도 해는 없음" — 누군가 답해줄 거라는 전제)이 배치(무인)
+    모드에서는 clarify_reply가 항상 None이라 그냥 영구 차단으로 바뀌어버린다(실측 재현:
+    DT_1NTA2002 테스트에서 "증감률을 원하시나요, 합계를 원하시나요?" 되묻기로 막힘).
+    결과에 안 쓰이는 값 때문에 claim을 막을 이유가 없어 뺀다."""
     entry = catalog_by_id.get(table_id) if table_id else None
     if entry is None:
-        return ["period", "region", "calc_type"]
+        return ["period"]
     has_region = "지역" in entry.get("required_slots", []) or "지역" in entry.get("optional_slots", [])
-    return ["period", "region", "calc_type"] if has_region else ["period", "calc_type"]
+    return ["period", "region"] if has_region else ["period"]
 
 
 def _normalize_statistic_name(expression: Optional[str]) -> Optional[str]:
@@ -1088,10 +1106,28 @@ def _build_dynamic_kosis_slots(
         print(f"[동적 슬롯매핑] '{table_id}' axis_num_to_name이 캐시에 없음(구버전 캐시?) → 스킵")
         return None
 
+    # 2026-08-24 버그 수정(experiment/pipeline-redesign): VDB 전용 표(table_params.json
+    # 밖)는 run_stage_4가 그 표의 실제 주기(prdSe)를 몰라서(64개 카탈로그에만 있는 정보라)
+    # generic_slots["prd_se"]가 항상 비어있고, period도 fill_slots()가 그냥 연도만("2023")
+    # 뽑아둔 상태로 넘어온다. 근데 get_table_detail()이 이미 그 표의 실제 prd_se를
+    # 알고 있다(KOSIS 메타데이터에서 가져온 값, detail["prd_se"]) — 지금까지 이 값을
+    # 안 쓰고 있어서, 월/분기 단위 표는 전부 "startPrdDe 형식이 안 맞음" API 에러로
+    # 죽고 있었다(다중 후보 검증 루프 end-to-end 테스트 중 DT_1NTA2002로 재현).
+    # generic_slots["prd_se"]가 있으면(=table_params.json에 있는 표) 그게 우선이고,
+    # 없을 때만 detail["prd_se"]로 보강한다.
+    resolved_prd_se = generic_slots.get("prd_se") or detail.get("prd_se")
+    period = generic_slots.get("period")
+    if resolved_prd_se in ("M", "Q") and period and len(str(period)) == 4 and str(period).isdigit():
+        # 연도만 있는데 표는 월/분기 단위를 요구 — "그 연도의 첫 주기"로 정규화한다
+        # (월이든 분기든 KOSIS 표기는 동일하게 "01" — run_stage_5_6의 최댓값검증 분기가
+        # 이미 쓰고 있는 것과 같은 관례, 새로 만든 규칙이 아니다).
+        period = f"{period}01"
+        print(f"[동적 슬롯매핑] '{table_id}' prd_se={resolved_prd_se!r}인데 period가 연도만 있음 → {period!r}로 보정")
+
     dimensions: dict = {}
-    kosis_slots: dict = {"period": generic_slots.get("period")}
-    if generic_slots.get("prd_se"):
-        kosis_slots["prd_se"] = generic_slots["prd_se"]
+    kosis_slots: dict = {"period": period}
+    if resolved_prd_se:
+        kosis_slots["prd_se"] = resolved_prd_se
     if generic_slots.get("itm_id"):
         kosis_slots["itm_id"] = generic_slots["itm_id"]
 
@@ -1812,6 +1848,12 @@ def _process_claim(
             vdb_fn=vdb_fn,
             bm25_fn=bm25_fn,
             item_fn=item_fn,
+            # 2026-08-24: MULTI_CANDIDATE_VERIFY가 켜져 있으면 top_k를 기본값(5)보다
+            # 넓혀서 넘긴다 — 안 넘기면 search_and_rerank 내부 DEFAULT_TOP_K(5)로 잘려서,
+            # _select_candidate_by_value()가 아무리 top_k를 크게 잡아도(예: 10) 애초에
+            # 후보 리스트 자체가 5개뿐이라 의미가 없다(실측 재현: item_rank로 6위인
+            # DT_1NTA2002가 있는데도 후보 목록엔 5개까지만 들어와서 검증 루프가 못 봄).
+            top_k=max(DEFAULT_TOP_K, MULTI_CANDIDATE_TOP_K) if MULTI_CANDIDATE_VERIFY else DEFAULT_TOP_K,
             document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
         )
     except Exception as e:

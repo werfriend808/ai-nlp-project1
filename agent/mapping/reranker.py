@@ -453,6 +453,14 @@ def rerank(
 
     reranked: list[TableCandidate] = []
     for cand, score in zip(candidates, scores):
+        # 2026-08-24 버그 수정(experiment/pipeline-redesign): 여기서 TableCandidate를
+        # 필드 나열로 새로 만들면서 org_id를 안 넣고 있었다 — dataclasses.replace()가
+        # 아니라 생성자를 직접 호출해서, 명시 안 한 필드는 전부 기본값(None)으로 리셋됨.
+        # 이 함수(rerank())는 모든 후보가 예외 없이 거쳐가는 단계라, VDB에서 org_id가
+        # 정상적으로 채워져 온 후보(DB에는 287,498건 전부 org_id 있음, 실측 확인)조차
+        # 여기를 지나가면 org_id가 사라졌다 — _build_dynamic_kosis_slots()(5단계, VDB
+        # 전용 표의 동적 슬롯매핑에 org_id 필수)와 _apply_period_coverage_filter()(org_id
+        # 없으면 그냥 통과시키는 조용한 폴백)가 이 버그 때문에 계속 무력화되고 있었다.
         reranked.append(
             TableCandidate(
                 table_id=cand.table_id,
@@ -460,6 +468,7 @@ def rerank(
                 score=_sigmoid(score),
                 required_slots=cand.required_slots,
                 source_meta=f"{cand.source_meta} | rerank_raw={score:.3f}",
+                org_id=cand.org_id,
             )
         )
 
