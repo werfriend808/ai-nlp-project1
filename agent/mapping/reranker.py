@@ -66,6 +66,7 @@ except ImportError:
 
 from agent.observability import Timer, log_event
 from agent.kosis.enrich_objl import fetch_period_range
+from agent.kosis.detail_cache import get_table_detail, DetailCacheUnavailableError
 
 try:
     from agent.interfaces import Claim, TableCandidate
@@ -242,8 +243,18 @@ def _merge_candidates(
                 # (아래 _ITEM_MATCH_RE 사용부 참고) cand 쪽에 있으면 같이 이어붙여 보존한다.
                 extra_match = _ITEM_MATCH_RE.search(cand.source_meta or "")
                 extra = f" | {extra_match.group(0)}" if extra_match else ""
+                # 2026-08-24 버그 수정: keyword_search/embedding_search(64개 카탈로그
+                # 경로)는 org_id를 아예 안 채운다 — 이 두 채널이 먼저 _add되고 나서
+                # VDB(org_id 있음)가 같은 표를 나중에 찾으면, 이 분기(existing 있음)가
+                # existing.org_id(None)만 유지하고 cand.org_id(VDB가 채운 값)를 버리고
+                # 있었다. _apply_axis_value_signal()이 org_id 없는 후보는 조회를 건너뛰는데,
+                # 실측(건설업/제조업 취업자 claim)에서 keyword_search로 먼저 잡힌
+                # DT_1DA7E06S_NEW가 이 버그 때문에 axis_value_rank를 못 받는 걸 확인했다.
+                # existing에 org_id가 없고 cand엔 있으면 보강한다(반대로 이미 있으면 안 건드림).
+                merged_org_id = existing.org_id or cand.org_id
                 merged[cand.table_id] = replace(
-                    existing, source_meta=f"{existing.source_meta} | {key}={i + 1}{extra}"
+                    existing, org_id=merged_org_id,
+                    source_meta=f"{existing.source_meta} | {key}={i + 1}{extra}"
                 )
 
     _add(keyword_candidates, "keyword_rank")
@@ -696,6 +707,65 @@ def _apply_simplicity_tiebreak(candidates: list[TableCandidate]) -> list[TableCa
     return result
 
 
+# 2026-08-24: AXIS(분류축) "이름"이 아니라 그 축 "안의 실제 값"을 후보 표의 실제
+# KOSIS 코드맵과 정확한 문자열로 비교한다 — "취업자" 3형제 표 충돌 사례로 실측 검증
+# 완료(notebooks 없이 직접 조회): claim에 "건설업"/"제조업"처럼 축 값이 그대로 나오는데,
+# 이걸 AXIS "이름"("산업별") 임베딩과 비교하면 의미적으로 안 이어져서 실패한다
+# (Recall 1/3). 대신 그 값이 후보 표의 code_map 라벨에 그대로 포함되는지 정확한
+# 문자열로 확인하면 성공한다(연령 축만 있는 표는 확실히 배제, 산업 축 있는 표만 남음).
+# AXIS 이름이 아니라 AXIS 값을 봐야 한다는 팀 제안서의 "AXIS VALUE는 FTS/Metadata"
+# 원칙과 정확히 일치.
+#
+# 비용 주의: get_table_detail()은 캐시 미스 시 실제 KOSIS API 호출이라, 후보 전체가
+# 아니라 상위 _AXIS_VALUE_TOP_N개까지만 확인한다(population_rank 등 다른 시그널과
+# 달리 document_texts만으로는 안 되고 반드시 API/캐시 조회가 필요하기 때문).
+_AXIS_VALUE_TOP_N = 20
+_AXIS_LABEL_PREFIX_RE = re.compile(r"^[A-Za-z*]\s+")
+_AXIS_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def _strip_axis_label_noise(label: str) -> str:
+    """KOSIS 분류축 라벨("F 건설업(41~42)")의 기호/코드범위를 벗겨서 순수 이름만
+    남긴다(batch_runner.py의 _strip_kosis_label_noise와 동일한 패턴 — reranker.py가
+    batch_runner.py를 import하면 순환참조가 생겨서 여기 별도로 둔다)."""
+    stripped = _AXIS_LABEL_SUFFIX_RE.sub("", label)
+    stripped = _AXIS_LABEL_PREFIX_RE.sub("", stripped)
+    return stripped or label
+
+
+def _apply_axis_value_signal(claim: Claim, candidates: list[TableCandidate]) -> list[TableCandidate]:
+    """claim.population/statistic_expression의 구체적 값이 후보 표의 실제 분류축 값
+    목록(KOSIS code_map)에 정확히 포함되는지 확인해서, 있으면 axis_value_rank=1을
+    붙인다. org_id가 없거나 표 상세 조회가 실패하면(캐시 미스+API 오류 등) 그냥
+    건너뛴다(fail-open — 다른 후보를 배제하지 않음, population_rank류와 동일 원칙)."""
+    terms = [t.strip() for t in (claim.population, claim.statistic_expression) if t and t.strip()]
+    if not terms or not candidates:
+        return candidates
+
+    tagged = []
+    for i, c in enumerate(candidates):
+        if i >= _AXIS_VALUE_TOP_N or not c.org_id:
+            tagged.append(c)
+            continue
+        try:
+            detail = get_table_detail(c.table_id, c.org_id)
+        except DetailCacheUnavailableError:
+            tagged.append(c)
+            continue
+        if detail.get("status") != "ok":
+            tagged.append(c)
+            continue
+        code_maps = detail.get("code_maps") or {}
+        matched = any(
+            term in _strip_axis_label_noise(label) or _strip_axis_label_noise(label) in term
+            for term in terms
+            for cm in code_maps.values()
+            for label in cm.keys()
+        )
+        tagged.append(_tag_source_rank(c, "axis_value_rank", 1) if matched else c)
+    return tagged
+
+
 _PERIOD_YEAR_RE = re.compile(r"(19|20)\d{2}")
 _PERIOD_COVERAGE_TOP_N = 5  # 상위 몇 개까지만 확인할지 — 매 claim마다 API 호출이 늘어나므로 좁게 잡음
 
@@ -728,12 +798,27 @@ def _covers_year(period_range: dict, year: int) -> Optional[bool]:
 # "최신판을 무조건 우선"이 아니라 "그 표에 실제로 그 연도 데이터가 있는가"만 본다.
 # 기사가 오래된 시점을 다뤄서 오히려 구판에만 있는 데이터가 필요한 경우까지 안전하게
 # 처리된다. 상위 N개만 확인(비용 제한), 조회 실패/판단 불가 시엔 그대로 순위 유지(fail-open).
+#
+# 2026-08-24 수정: 기존엔 "RRF 종합 순위 상위 5개"만 확인했는데, 실측으로 확인된
+# "취업자" 구판/신판 클러스터(30개 후보 중 11개가 산업/성별 취업자 계열 연도별 중복)에서
+# 이 상위 5개 안에 신판이 안 들어있으면 필터가 아예 발동을 안 하는 구멍이 있었다.
+# _apply_axis_value_signal()이 이미 axis_value_rank로 "관련 있는 후보"를 찾아뒀으면,
+# 임의의 "상위 5개" 대신 그 후보 집합을 확인 대상으로 쓴다 — AXIS로 좁혀진 후보 안에서만
+# 최신판을 고르는 것. axis_value_rank가 하나도 없으면(그 신호가 아예 안 켜진 claim)
+# 기존과 동일하게 상위 5개로 폴백한다(하위 호환, 회귀 없음).
 def _apply_period_coverage_filter(claim: Claim, candidates: list[TableCandidate]) -> list[TableCandidate]:
     year = _extract_target_year(claim)
     if year is None or not candidates:
         return candidates
 
-    head, tail = candidates[:_PERIOD_COVERAGE_TOP_N], candidates[_PERIOD_COVERAGE_TOP_N:]
+    axis_matched = [c for c in candidates if _parse_rrf_ranks(c.source_meta).get("axis_value_rank") == 1]
+    if axis_matched:
+        matched_ids = {c.table_id for c in axis_matched}
+        head = [c for c in candidates if c.table_id in matched_ids]
+        tail = [c for c in candidates if c.table_id not in matched_ids]
+    else:
+        head, tail = candidates[:_PERIOD_COVERAGE_TOP_N], candidates[_PERIOD_COVERAGE_TOP_N:]
+
     kept, excluded = [], []
     for c in head:
         if not c.org_id:
@@ -797,6 +882,10 @@ def search_and_rerank(
     # (2026-08-22: _apply_simplicity_tiebreak도 시도했으나 골든셋 70건 재검증에서 효과
     # 없음+1건 순위 악화(7위→9위)로 되돌림 — "월별/연도별" 부스팅 회귀 사례와 같은 종류의
     # 위험한 신호로 판단, 구현은 위에 남겨두되 호출은 뺌.)
+    # 2026-08-24: axis_value_signal이 period_coverage_filter보다 먼저 실행돼야 한다 —
+    # period 필터가 axis_value_rank 태그를 보고 확인 대상을 좁히기 때문(취업자 구판/신판
+    # 클러스터 실측 검증, notebooks 없이 직접 조회로 확인).
+    result = _apply_axis_value_signal(claim, result)
     result = _apply_period_coverage_filter(claim, result)
 
     # 2026-08-22(관측성): 3단계 검색/리랭킹 한 번을 구조화 로그 한 줄로 남긴다 — 소스별
