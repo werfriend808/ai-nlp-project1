@@ -195,12 +195,21 @@ def _merge_candidates(
     embedding_candidates: list[TableCandidate],
     vdb_candidates: Optional[list[TableCandidate]] = None,
     bm25_candidates: Optional[list[TableCandidate]] = None,
+    core_vdb_candidates: Optional[list[TableCandidate]] = None,
+    core_bm25_candidates: Optional[list[TableCandidate]] = None,
 ) -> list[TableCandidate]:
     """keyword_search/embedding_search/VDB(dense)/BM25(trigram) 후보를 table_id 기준으로
     합치면서, 각 소스 안에서의 순위(1부터, 입력 리스트가 이미 점수 내림차순 정렬돼 있다고
     가정)를 source_meta에 "keyword_rank=N"/"embedding_rank=N"/"vdb_rank=N"/"bm25_rank=N"으로
     남긴다 — 이후 _rrf_fuse()가 점수 크기가 아니라 이 순위만으로 최종 신뢰도를 계산한다.
     입력으로 받은 candidate 객체는 변형하지 않고 dataclasses.replace로 복사본만 만든다.
+
+    2026-08-25: core_vdb_candidates/core_bm25_candidates(build_core_query() 참고) 추가 —
+    age/gender/region/population 수식어를 뺀 "핵심 쿼리"로 별도 검색한 결과를
+    "vdb_core_rank"/"bm25_core_rank"로 남긴다. vdb_rank/bm25_rank(전체 search_query 기준)와
+    똑같이 is_rrf_trusted()에서 자동 신뢰 대상은 아니다 — 여전히 임베딩/lexical 유사도
+    기반이라 노이즈 가능성은 남아있고, RRF 융합에서 "여러 소스가 동의하는 표"로 자연스럽게
+    올라오는 걸 노린다.
 
     2026-08-21: bm25_candidates(agent.kosis.query_vdb.lexical_query_vdb, pg_trgm 기반) 추가.
     keyword_rank와 달리 is_rrf_trusted()에서 자동 신뢰 대상이 아니다 — keyword_search(64개
@@ -234,12 +243,14 @@ def _merge_candidates(
     _add(embedding_candidates, "embedding_rank")
     _add(vdb_candidates or [], "vdb_rank")
     _add(bm25_candidates or [], "bm25_rank")
+    _add(core_vdb_candidates or [], "vdb_core_rank")
+    _add(core_bm25_candidates or [], "bm25_core_rank")
     return list(merged.values())
 
 
 _RANK_TAG_RE = re.compile(
-    r"\b(keyword_rank|embedding_rank|vdb_rank|bm25_rank|reranker_rank|population_rank"
-    r"|institution_rank|gender_rank|region_rank)=(\d+)"
+    r"\b(keyword_rank|embedding_rank|vdb_rank|bm25_rank|vdb_core_rank|bm25_core_rank"
+    r"|reranker_rank|population_rank|institution_rank|gender_rank|region_rank)=(\d+)"
 )
 
 
@@ -497,6 +508,40 @@ def expand_institution_query_aliases(query: str, source_org: Optional[str]) -> s
     return f"{query} {extra}".strip() if extra else query
 
 
+# 2026-08-25: search_query 구성 규칙(claim_extractor_prompt.txt) 자체가
+# "[지표명] + [있는 dimension만 이어붙임] + [기관명]"이라, 흔하고 강한 인구통계 용어
+# (예: "65세 이상")가 낀 claim은 그 문자열 전체를 하나의 임베딩으로 인코딩할 때 수식어가
+# 핵심 지표 신호를 밀어내는 문제가 팀원 실측으로 확인됐다(예: "소비 총액 65세 이상"으로
+# 검색하면 top-10이 전부 "65세 이상 고령자 OO" 인구통계 표로 채워지고, 정답표("국민이전계정"
+# 계열)는 후보 풀에 아예 못 들어옴). _apply_population_signal 등 위 신호들은 이미 merge된
+# 후보 중에서 재정렬만 하므로(rerank 단계) 이런 recall 실패(retrieval 단계)는 못 고친다 —
+# 그래서 수식어를 뺀 "핵심 쿼리"로 별도 검색을 하나 더 돌려서(search_and_rerank의
+# vdb_core_rank/bm25_core_rank) RRF 융합 풀에 합류시킨다.
+def build_core_query(claim: Claim) -> Optional[str]:
+    """claim.search_query에서 age/gender/region/population 수식어를 뺀, 핵심 지표
+    (statistic_expression) + 정규화된 기관명만 있는 검색어를 만든다.
+
+    dimension이 하나도 없는 claim은 core query가 기존 search_query와 사실상 같은 문자열이라
+    (지표명+기관명만 있으므로) 중복 검색을 피하려고 None을 반환한다 — 호출부에서 그 경우
+    core 검색 자체를 스킵한다. statistic_expression이 없으면(핵심 지표를 못 뽑은 claim)
+    core query를 만들 근거가 없으므로 마찬가지로 None.
+
+    LLM 프롬프트에 새 필드를 추가하는 대신 이미 추출된 statistic_expression/source_org로
+    파이썬에서 계산한다 — 스키마 변경도, 추가 HCX 호출도 필요 없다. 다만 search_query와
+    달리 statistic_expression은 KOSIS식 정규화가 안 돼 있을 수 있어(step 1 다듬기는
+    search_query 생성 규칙에만 있음) 완벽히 같은 품질의 쿼리는 아니다 — 그래도 수식어에
+    안 밀리는 게 더 중요한 상황(핵심 지표 없이 top-10이 통째로 엉뚱한 표로 채워지는 경우)
+    에서만 보조로 쓰인다."""
+    if not any([claim.age, claim.gender, claim.region, claim.population]):
+        return None
+    if not claim.statistic_expression:
+        return None
+
+    institution = _normalize_institution(claim.source_org)
+    parts = [claim.statistic_expression, institution]
+    return " ".join(p for p in parts if p)
+
+
 _GENDER_TERMS = ["여성", "남성"]
 
 
@@ -665,7 +710,18 @@ def search_and_rerank(
     상호보완 기대).
     document_texts: table_id -> 임베딩/설명 텍스트. rerank()로 그대로 전달된다(생략 시
     table_name으로 대체되는데, 리랭커가 짧은 제목만 보고 판단하게 되어 성능이 떨어진다).
+
+    2026-08-25: vdb_fn/bm25_fn은 claim.search_query(또는 sentence) 전체를 하나의 쿼리로
+    쓰는데, age/gender/region/population 수식어가 낀 claim은 그 수식어가 핵심 지표 신호를
+    밀어내 정답표가 후보 풀에 아예 안 들어오는 경우가 실측 확인됐다(build_core_query() 참고).
+    build_core_query()가 core query를 만들 수 있으면(수식어가 있고 statistic_expression도
+    있으면) claim의 search_query만 그 core query로 바꾼 사본으로 vdb_fn/bm25_fn을 한 번 더
+    호출해서 "vdb_core_rank"/"bm25_core_rank"로 합류시킨다 — vdb_fn/bm25_fn 자체는 그대로
+    재사용(별도 함수 없이 dataclasses.replace로 만든 claim 사본만 넘김).
     """
+    core_query = build_core_query(claim)
+    core_claim = replace(claim, search_query=core_query) if core_query else None
+
     with _SEARCH_LOCK:
         with Timer() as t_kw:
             kw_results = keyword_fn(claim)
@@ -675,7 +731,14 @@ def search_and_rerank(
             vdb_results = vdb_fn(claim) if vdb_fn else []
         with Timer() as t_bm25:
             bm25_results = bm25_fn(claim) if bm25_fn else []
-        merged = _merge_candidates(kw_results, emb_results, vdb_results, bm25_results)
+        with Timer() as t_vdb_core:
+            core_vdb_results = vdb_fn(core_claim) if (vdb_fn and core_claim) else []
+        with Timer() as t_bm25_core:
+            core_bm25_results = bm25_fn(core_claim) if (bm25_fn and core_claim) else []
+        merged = _merge_candidates(
+            kw_results, emb_results, vdb_results, bm25_results,
+            core_vdb_results, core_bm25_results,
+        )
         merged = _apply_population_signal(claim, merged, document_texts)
         merged = _apply_institution_signal(claim, merged, document_texts)
         merged = _apply_gender_signal(claim, merged, document_texts)
@@ -699,14 +762,18 @@ def search_and_rerank(
         "table_matching",
         sentence=claim.sentence[:200],
         search_query=claim.search_query,
+        core_query=core_query,
         kw_count=len(kw_results), emb_count=len(emb_results),
         vdb_count=len(vdb_results), bm25_count=len(bm25_results),
+        vdb_core_count=len(core_vdb_results), bm25_core_count=len(core_bm25_results),
         merged_count=len(merged), result_count=len(result),
         top1_table_id=top1.table_id if top1 else None,
         top1_score=round(top1.score, 4) if top1 else None,
         latency_ms={
             "keyword": round(t_kw.elapsed_ms, 1), "embedding": round(t_emb.elapsed_ms, 1),
             "vdb_dense": round(t_vdb.elapsed_ms, 1), "vdb_bm25": round(t_bm25.elapsed_ms, 1),
+            "vdb_dense_core": round(t_vdb_core.elapsed_ms, 1),
+            "vdb_bm25_core": round(t_bm25_core.elapsed_ms, 1),
             "rerank": round(t_rerank.elapsed_ms, 1),
         },
         reranker_enabled=not _DISABLE_RERANKER,
