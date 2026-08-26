@@ -67,6 +67,7 @@ except ImportError:
 from agent.observability import Timer, log_event
 from agent.kosis.enrich_objl import fetch_period_range
 from agent.kosis.detail_cache import get_table_detail, DetailCacheUnavailableError
+from agent.kosis.version_meta import get_version_meta_batch
 
 try:
     from agent.interfaces import Claim, TableCandidate
@@ -733,11 +734,20 @@ def _strip_axis_label_noise(label: str) -> str:
     return stripped or label
 
 
+# 2026-08-24: 골든셋 회귀 검증용 토글 — 끄면(0) 기존 동작과 완전히 동일(신호 자체가
+# 안 생기니 _apply_period_coverage_filter의 axis 우선 분기도 자동으로 안 탐, 하위
+# 호환 폴백 그대로). 기본값은 켜짐(1) — 검증 스크립트에서 WITH_AXIS_VALUE=0으로
+# 베이스라인을 재현한다.
+_AXIS_VALUE_ENABLED = os.environ.get("WITH_AXIS_VALUE", "1").strip().lower() not in ("0", "false", "no")
+
+
 def _apply_axis_value_signal(claim: Claim, candidates: list[TableCandidate]) -> list[TableCandidate]:
     """claim.population/statistic_expression의 구체적 값이 후보 표의 실제 분류축 값
     목록(KOSIS code_map)에 정확히 포함되는지 확인해서, 있으면 axis_value_rank=1을
     붙인다. org_id가 없거나 표 상세 조회가 실패하면(캐시 미스+API 오류 등) 그냥
     건너뛴다(fail-open — 다른 후보를 배제하지 않음, population_rank류와 동일 원칙)."""
+    if not _AXIS_VALUE_ENABLED:
+        return candidates
     terms = [t.strip() for t in (claim.population, claim.statistic_expression) if t and t.strip()]
     if not terms or not candidates:
         return candidates
@@ -830,6 +840,54 @@ def _apply_period_coverage_filter(claim: Claim, candidates: list[TableCandidate]
     return kept + excluded + tail
 
 
+# 2026-08-25: 원인 C(근접중복·버전분화) 중에서도 _apply_period_coverage_filter가 못
+# 거르는 케이스 — 신판이 구판 기간을 통째로 포함해버리면(예: DT_1DA7E06S_NEW가
+# 2013~2026 전체를 커버) 구판/신판 둘 다 "그 연도 데이터 있음"으로 통과한다. 이럴 땐
+# "그 연도를 커버하는가"가 아니라 "지금도 갱신되는 표인가"로 골라야 한다.
+# (STAT_ID, TBL_NM)이 둘 다 같은 후보들을 같은 시리즈의 다른 버전으로 보고, 그 중
+# SEND_DE(마지막 자료 제공일)가 가장 최근인 것만 남기고 나머지는 순위 밖으로 민다 —
+# KOSIS 자체 크롤 메타데이터로 이미 확인된 값이라 API 호출이 추가로 들지 않는다
+# (agent/kosis/version_meta.py 참고). fail-open: 메타 조회 실패/클러스터 없음이면 그대로.
+_VERSION_FRESHNESS_ENABLED = os.environ.get("WITH_VERSION_FRESHNESS", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _apply_version_freshness_signal(candidates: list[TableCandidate]) -> list[TableCandidate]:
+    if not _VERSION_FRESHNESS_ENABLED or not candidates:
+        return candidates
+    meta = get_version_meta_batch([c.table_id for c in candidates])
+    if not meta:
+        return candidates
+
+    clusters: dict[tuple, list[TableCandidate]] = {}
+    for c in candidates:
+        m = meta.get(c.table_id)
+        if not m:
+            continue
+        key = (m["stat_id"], m["tbl_nm"])
+        clusters.setdefault(key, []).append(c)
+
+    stale_ids: set[str] = set()
+    fresh_ids: set[str] = set()
+    for members in clusters.values():
+        with_date = [c for c in members if meta[c.table_id].get("send_de")]
+        if len(with_date) < 2:
+            continue  # 클러스터가 진짜 2개 이상이고 날짜 비교가 가능할 때만 판단
+        freshest = max(with_date, key=lambda c: meta[c.table_id]["send_de"])
+        fresh_ids.add(freshest.table_id)
+        stale_ids.update(c.table_id for c in with_date if c.table_id != freshest.table_id)
+
+    if not stale_ids:
+        return candidates
+
+    tagged = [
+        _tag_source_rank(c, "version_fresh_rank", 1) if c.table_id in fresh_ids else c
+        for c in candidates
+    ]
+    kept = [c for c in tagged if c.table_id not in stale_ids]
+    demoted = [c for c in tagged if c.table_id in stale_ids]
+    return kept + demoted
+
+
 def search_and_rerank(
     claim: Claim,
     *,
@@ -887,6 +945,7 @@ def search_and_rerank(
     # 클러스터 실측 검증, notebooks 없이 직접 조회로 확인).
     result = _apply_axis_value_signal(claim, result)
     result = _apply_period_coverage_filter(claim, result)
+    result = _apply_version_freshness_signal(result)
 
     # 2026-08-22(관측성): 3단계 검색/리랭킹 한 번을 구조화 로그 한 줄로 남긴다 — 소스별
     # 후보 수·지연시간, 최종 1등 후보/점수를 나중에 집계할 수 있게(예: "이번 배치에서
