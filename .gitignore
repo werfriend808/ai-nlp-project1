@@ -29,3 +29,24 @@ agent/kosis/chroma_db/
 
 # 관측성 로그(agent/observability.py) — 실행할 때마다 쌓이는 런타임 산출물, 소스 아님
 logs/*.jsonl
+
+# 재구축 중 생성되는 DB 덤프/로그 (2026-08-27) — 덤프 1개가 5.3GB라 GitHub 100MB 한도를
+# 훨씬 넘고, DB 자체가 EBS에 있어 재생성 가능하다. 다만 excluded_too_large_ALL.jsonl은
+# "40,000셀 초과로 제외한 7,839개 표 목록"이라 나중에 재처리하려면 필요해서 예외로 둔다.
+backup/*.dump
+backup/*.log
+backup/*.tar.gz
+backup/excluded_too_large_SERVER_*.jsonl
+backup/excluded_too_large_COLAB*.jsonl
+
+# 검색 실험 산출물 (2026-08-27) — 재생성 가능하거나 GitHub 한도 초과.
+# bm25_index/matrix.npz는 320MB로 파일당 100MB 한도를 넘어 푸시 자체가 거부된다
+# (build_bm25.py로 2분 재생성). runs.json은 검색기 22종 재실행(약 20분, DB 필요),
+# fused.json은 runs.json만 있으면 fuse.py로 몇 초면 다시 만들어진다.
+benchmark/search_experiment2/bm25_index/
+benchmark/search_experiment2/runs.json
+benchmark/search_experiment2/fused.json
+
+# 40,000셀 초과 제외 표 목록 — 2026-08-27 복구 작업으로 상당수가 이미 복구돼 스냅샷 가치가
+# 떨어졌고, KOSIS API로 재생성 가능하다.
+backup/excluded_too_large_ALL.jsonl

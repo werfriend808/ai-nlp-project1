@@ -36,7 +36,12 @@ try:
 except ImportError:
     pass
 
-VDB_TABLE_NAME = "kosis_vdb_tables"
+# [DEPRECATED] 2026-08-27: 이 상수를 쓰는 enrich_table()/enrich_candidates()는 현재
+# 아무 데서도 호출되지 않는다(실제 사용되는 건 fetch_period_range/fetch_table_detail뿐).
+# 가리키는 kosis_vdb_tables 테이블은 데이터 소실 후 재구축에서 없어졌고(지금은
+# kosis_vdb_tables_qwen), objl_enriched 컬럼도 새 스키마엔 없다. 되살리려면
+# 테이블명/컬럼명(tbl_id->table_id, text->embedding_text)을 함께 고쳐야 한다.
+VDB_TABLE_NAME = "kosis_vdb_tables"  # 존재하지 않는 테이블 -- 위 주석 참고
 _META_URL = "https://kosis.kr/openapi/Param/statisticsParameterData.do"
 
 # 표마다 유효한 주기(prdSe)가 다르다(연간만 되는 표, 월별만 되는 표 등) — 실측(체크·
