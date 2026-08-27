@@ -1,0 +1,4 @@
+문서 287,498개 로드
+  vectorize 56s  shape=(287498, 234351)  nnz=93,722,694
+  BM25 가중치 계산 완료 61s
+저장 완료: /home/ubuntu/ai-nlp-project-reembedding/benchmark/search_experiment2/bm25_index  (336MB)
