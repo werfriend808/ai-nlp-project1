@@ -5,8 +5,13 @@ agent/preprocessing/classifier.py — 1단계 기사 관련도 분류
     입력: 기사 본문(str)
     출력: ClassificationResult (label, score, reason)
 
-모델: HCX-DASH-002
+모델: HCX-007
 프롬프트: prompts/classifier_prompt.txt (few-shot 8개 포함, {article_text} 자리에 본문을 채워 넣음)
+
+2026-08-22 실측: HCX-DASH-002가 골든셋 50건 중 34%(17건)를 틀려서(민간기업/해외통계/
+1회성 행정조치를 True로 오판) HCX-007로 재검증했더니 정답률이 66.0% -> 90.0%로 개선됨
+(notebooks/stage1_verify_report.md vs notebooks/stage1_verify_report_hcx007.md 참고).
+그래서 기본 모델을 HCX-007로 교체함.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ except ImportError:
             reason: str
 
 
-MODEL = "HCX-DASH-002"
+MODEL = "HCX-007"
 PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "classifier_prompt.txt"
 SYSTEM_PROMPT = "아래 지시사항을 정확히 따르고, 반드시 지정된 JSON 형식으로만 응답하세요."
 
