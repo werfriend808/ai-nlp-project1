@@ -20,9 +20,13 @@ claim 쿼리도 코랩에서 같은 모델·같은 truncate_dim으로 임베딩�
 from __future__ import annotations
 
 import os
+import pickle
 from typing import Optional
 
+import numpy as np
 import psycopg2
+import scipy.sparse as sp
+from sklearn.feature_extraction.text import CountVectorizer
 
 try:
     from dotenv import find_dotenv, load_dotenv
@@ -231,3 +235,94 @@ def lexical_query_vdb(query_text: str, *, top_k: int = LEXICAL_TOP_K) -> list[Ta
         )
         for tbl_id, org_id, text, sim in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# BM25 (2026-08-28) — lexical_query_vdb(pg_trgm) 대체.
+#
+# pg_trgm은 embedding_text가 길어지면서(ITEM/AXIS/VALUE 포함) GIN 인덱스 선택도가
+# 무너져 287,498건 전체를 ORDER BY similarity()로 스캔하게 됐다(쿼리당 6.9초,
+# 2026-08-27 EXPLAIN ANALYZE 실측). agent/kosis/build_bm25_index.py로 디스크에
+# 미리 계산해 둔 희소행렬(char 2-3gram BM25 가중치)과의 내적 한 번으로 대체하면
+# 쿼리당 ~2ms(약 3,000배). 파라미터(K1=1.5, B=0.75)는 튜닝 전 기본값 그대로다
+# (튜닝은 별도 작업 — benchmark/search_experiment2에서 검증된 값을 그대로 옮김).
+# ---------------------------------------------------------------------------
+
+BM25_INDEX_DIR = os.path.join(os.path.dirname(__file__), "bm25_index")
+
+_bm25_index = None  # 프로세스당 한 번만 로드(행렬 336MB) — 재사용
+
+
+class _Bm25Index:
+    def __init__(self, path: str):
+        self.X = sp.load_npz(os.path.join(path, "matrix.npz")).tocsc()
+        with open(os.path.join(path, "meta.pkl"), "rb") as f:
+            meta = pickle.load(f)
+        self.ids = np.array(meta["ids"])
+        self.vocab = meta["vocabulary"]
+        params = meta["analyzer_params"]
+        self._analyzer = CountVectorizer(
+            analyzer=params["analyzer"], ngram_range=params["ngram_range"], lowercase=True
+        ).build_analyzer()
+
+    def search(self, text: str, top_k: int) -> list[tuple[str, float]]:
+        cols = {self.vocab[g] for g in set(self._analyzer(text)) if g in self.vocab}
+        if not cols:
+            return []
+        scores = np.zeros(self.X.shape[0], dtype=np.float32)
+        for c in cols:
+            s, e = self.X.indptr[c], self.X.indptr[c + 1]
+            np.add.at(scores, self.X.indices[s:e], self.X.data[s:e])
+        k = min(top_k, len(scores))
+        idx = np.argpartition(-scores, k - 1)[:k]
+        idx = idx[np.argsort(-scores[idx])]
+        idx = idx[scores[idx] > 0]
+        return [(str(self.ids[i]), float(scores[i])) for i in idx]
+
+
+def _get_bm25_index() -> "_Bm25Index":
+    global _bm25_index
+    if _bm25_index is None:
+        if not os.path.exists(os.path.join(BM25_INDEX_DIR, "matrix.npz")):
+            raise VdbUnavailableError(
+                f"BM25 인덱스가 없습니다({BM25_INDEX_DIR}). "
+                "먼저 `python -m agent.kosis.build_bm25_index`로 생성하세요."
+            )
+        _bm25_index = _Bm25Index(BM25_INDEX_DIR)
+    return _bm25_index
+
+
+def bm25_query_vdb(query_text: str, *, top_k: int = LEXICAL_TOP_K) -> list[TableCandidate]:
+    """BM25(char 2-3gram, 디스크 캐시 희소행렬)로 VDB를 텍스트 검색한다.
+    lexical_query_vdb와 동일한 반환 계약(list[TableCandidate])이라 호출부에서
+    그대로 맞바꿀 수 있다. 인덱스가 없으면(빌드 전) VdbUnavailableError를 올린다 —
+    이때 호출부는 기존 lexical_query_vdb(pg_trgm)나 빈 리스트로 폴백해야 한다."""
+    if not query_text or not query_text.strip():
+        return []
+
+    index = _get_bm25_index()
+    hits = index.search(query_text, top_k)
+    if not hits:
+        return []
+
+    ids = [tid for tid, _ in hits]
+    scores = dict(hits)
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"select {TBL_ID_COL}, org_id, {TEXT_COL} from {TABLE_NAME} where {TBL_ID_COL} = any(%s);",
+                (ids,),
+            )
+            rows = {tid: (org_id, text) for tid, org_id, text in cur.fetchall()}
+    except psycopg2.OperationalError as e:
+        raise VdbUnavailableError(f"Supabase(pgvector)에 연결 못 했습니다: {e}") from e
+
+    out = []
+    for tid in ids:
+        org_id, text = rows.get(tid, (None, ""))
+        out.append(TableCandidate(
+            table_id=tid, table_name=text, score=scores[tid],
+            required_slots=[], source_meta="kosis_vdb_lexical(bm25)", org_id=org_id or None,
+        ))
+    return out

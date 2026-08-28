@@ -44,7 +44,10 @@ except ImportError:
 from db.fetch_article_text import fetch_article_for_verification
 from agent.kosis.api_client import KosisApiClient
 from agent.kosis.calculator import KosisCalculator
-from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
+from agent.interfaces import dense_query_text
+from agent.kosis.query_vdb import (
+    batch_query_vdb, bm25_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K,
+)
 from agent.mapping.embedding_search import build_table_embedding_cache
 from agent.mapping.reranker import expand_institution_query_aliases
 from agent.pipeline.batch_runner import (
@@ -132,8 +135,11 @@ print("[서버 시작] 준비 완료")
 # 있으면 그걸 쓰고, 없으면(옛 데이터·추출 실패 등) claim.sentence로 안전하게 폴백한다.
 # 골든셋 실측: raw 문장 대비 이 스타일 쿼리가 Dense Recall@30 29.3%→61.0%, BM25는
 # 2.4%→41.5%로 개선 확인(HyDE 검증 로그 참고) — dense/bm25 둘 다 같은 쿼리를 쓴다.
+# 2026-08-28: search_query가 없어 sentence로 폴백하는 경우(옛 데이터/추출 실패)엔
+# sentence 단독 대신 Context D2(dense_query_text, prev_sentence+sentence)를 쓴다 —
+# search_query 자체는 이미 검증된 최적 경로라 건드리지 않는다.
 def _retrieval_query_text(claim) -> str:
-    base = claim.search_query or claim.sentence
+    base = claim.search_query or dense_query_text(claim)
     return expand_institution_query_aliases(base, claim.source_org)
 
 
@@ -152,15 +158,24 @@ def _vdb_fn(claim):
 
 
 def _bm25_fn(claim):
-    """run_article()에 주입할 VDB BM25(trigram) 조회 함수 — dense와 같은 search_query를
-    쓴다. VDB 연결이 안 되면 조용히 빈 리스트(dense/keyword만으로 계속 진행).
+    """run_article()에 주입할 VDB BM25 조회 함수 — dense와 같은 search_query를 쓴다.
 
-    2026-08-21 버그 수정: 지금까지 dense용 상수(VDB_TOP_K)를 그대로 재사용하고 있었다 —
-    query_vdb.py가 BM25 전용 LEXICAL_TOP_K를 따로 정의해뒀는데도 여기서 안 쓰고 있어서,
+    2026-08-28: pg_trgm(부분일치 스캔, 쿼리당 6.9초 실측)에서 디스크 캐시 BM25(내적 한 번,
+    쿼리당 ~2ms)로 교체했다 — agent/kosis/build_bm25_index.py로 미리 만든 인덱스를 쓴다.
+    이 서버에 아직 인덱스를 안 만들었으면(VdbUnavailableError) 예전 pg_trgm으로 자동
+    폴백한다 — 그것도 실패하면(VDB 자체가 안 됨) 빈 리스트로 dense/keyword만 계속 진행.
+
+    2026-08-21 버그 수정 이력: 한때 dense용 상수(VDB_TOP_K)를 잘못 재사용하고 있었다 —
+    query_vdb.py가 BM25 전용 LEXICAL_TOP_K를 따로 정의해뒀는데도 여기서 안 써서,
     DENSE_TOP_K와 BM25_TOP_K를 환경변수로 따로 조정해도(PHASE 8) BM25 쪽은 실제로는
-    dense 값을 따라갔다."""
+    dense 값을 따라갔었다."""
+    query_text = _retrieval_query_text(claim)
     try:
-        return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
+        return bm25_query_vdb(query_text, top_k=LEXICAL_TOP_K)
+    except VdbUnavailableError as e:
+        print(f"[BM25] 인덱스 사용 불가({e}) — pg_trgm으로 폴백")
+    try:
+        return lexical_query_vdb(query_text, top_k=LEXICAL_TOP_K)
     except VdbUnavailableError as e:
         print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
         return []

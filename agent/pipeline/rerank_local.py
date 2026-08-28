@@ -40,7 +40,7 @@ try:
 except ImportError:
     pass
 
-from agent.interfaces import Claim, TableCandidate
+from agent.interfaces import Claim, TableCandidate, dense_query_text
 from agent.kosis.query_vdb import VDB_TOP_K, VdbUnavailableError, batch_query_vdb
 from agent.mapping.reranker import load_document_texts, rerank
 
@@ -194,7 +194,7 @@ def main() -> None:
         merged = [_dict_to_candidate(d) for d in item.get("merged_candidates", [])]
 
         try:
-            query_vec = _vdb_query_vec_for(claim.sentence)
+            query_vec = _vdb_query_vec_for(dense_query_text(claim))
             vdb_candidates = batch_query_vdb([query_vec], top_k=VDB_TOP_K)[0]
             merged = _merge_vdb_candidates(merged, vdb_candidates)
         except VdbUnavailableError as e:

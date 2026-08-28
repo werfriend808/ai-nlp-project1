@@ -67,7 +67,7 @@ except ImportError:
     pass
 
 try:
-    from agent.interfaces import Claim, TableCandidate
+    from agent.interfaces import Claim, TableCandidate, dense_query_text
 except ImportError:
     from dataclasses import dataclass, field
 
@@ -78,6 +78,7 @@ except ImportError:
         period: Optional[str] = None
         unit: Optional[str] = None
         population: Optional[str] = None
+        prev_sentence: Optional[str] = None
 
     @dataclass
     class TableCandidate:  # type: ignore[no-redef]
@@ -86,6 +87,11 @@ except ImportError:
         score: float
         required_slots: list = field(default_factory=list)
         source_meta: Optional[str] = None
+
+    def dense_query_text(claim) -> str:  # type: ignore[no-redef]
+        """agent.interfaces.dense_query_text의 단독 실행용 폴백(로직 동일, Context D2)."""
+        prev = getattr(claim, "prev_sentence", None)
+        return f"{prev} {claim.sentence}".strip() if prev else claim.sentence
 
 CATALOG_PATH = Path(__file__).parent / "table_catalog.json"
 EMBEDDING_CACHE_PATH = Path(__file__).parent / "table_embeddings_cache.json"
@@ -214,7 +220,7 @@ def embedding_search(
 ) -> list[TableCandidate]:
     """Claim 1건을 임베딩해서 캐시된 표 벡터들과 코사인 유사도로 top-k를 반환한다."""
     cache = cache or build_table_embedding_cache()
-    query_vec = embed_texts([claim.sentence], is_query=True)[0]
+    query_vec = embed_texts([dense_query_text(claim)], is_query=True)[0]
 
     scored: list[TableCandidate] = []
     for entry in cache["entries"]:

@@ -47,6 +47,21 @@ benchmark/search_experiment2/bm25_index/
 benchmark/search_experiment2/runs.json
 benchmark/search_experiment2/fused.json
 
+# 운영 BM25 인덱스 (2026-08-28) — agent/kosis/build_bm25_index.py로 재생성 가능,
+# matrix.npz가 320MB라 GitHub 100MB 파일 한도 초과. DB의 embedding_text가 바뀔 때마다
+# (재임베딩 등) 다시 빌드해야 한다.
+agent/kosis/bm25_index/
+
 # 40,000셀 초과 제외 표 목록 — 2026-08-27 복구 작업으로 상당수가 이미 복구돼 스냅샷 가치가
 # 떨어졌고, KOSIS API로 재생성 가능하다.
 backup/excluded_too_large_ALL.jsonl
+
+# BM25 토크나이저/하이퍼파라미터 실험 (2026-08-28) — benchmark/bm25_experiment/lib.py로
+# 재생성 가능한 대용량 캐시/인덱스. 코퍼스 캐시(~100MB), kiwi 토큰 캐시, 실험용 BM25
+# 인덱스(토크나이저×조합마다 300MB+)는 GitHub 100MB 한도를 넘거나 재생성이 더 저렴하다.
+# summary.md/README.md/progress.md/*.csv/*.json 등 결과·보고서는 커밋 대상.
+benchmark/bm25_experiment/index_*/
+benchmark/bm25_experiment/corpus_cache.pkl
+benchmark/bm25_experiment/kiwi_tokens_cache.pkl
+benchmark/bm25_experiment/golden_claims_cache.pkl
+benchmark/bm25_experiment/dense_query_vecs.pkl

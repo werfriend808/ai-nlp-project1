@@ -44,7 +44,7 @@ from agent.mapping.keyword_search import keyword_search
 from agent.mapping.embedding_search import batch_embedding_search, build_table_embedding_cache
 from agent.mapping.reranker import _merge_candidates
 from agent.orchestrator.calc_type_router import _mentions_foreign_country
-from agent.interfaces import Claim, TableCandidate, Verdict
+from agent.interfaces import Claim, TableCandidate, Verdict, dense_query_text
 from db.store import insert_verification
 
 from agent.pipeline.batch_runner import (
@@ -174,7 +174,7 @@ def _merge_all_candidates(pending_items: list[dict]) -> None:
     if not pending_items:
         return
 
-    sentences = [item["claim_obj"].sentence for item in pending_items]
+    sentences = [dense_query_text(item["claim_obj"]) for item in pending_items]
 
     print(f"\n[배치 임베딩] claim {len(sentences)}건을 한 번에 인코딩 중(64개 카탈로그 비교용)...")
     cache = build_table_embedding_cache()

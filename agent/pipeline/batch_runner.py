@@ -78,7 +78,7 @@ from agent.kosis.detail_cache import get_table_detail, DetailCacheUnavailableErr
 from agent.kosis.dynamic_slot_mapping import map_claim_slots
 from agent.verdict.judge import judge, JudgeError
 from agent.explain.explainer import explain, ExplainerError
-from agent.interfaces import ComputedResult, Explanation, Verdict, KosisApiResponse
+from agent.interfaces import ComputedResult, Explanation, Verdict, KosisApiResponse, dense_query_text
 from db.store import insert_verification, make_result_id
 
 TABLE_PARAMS_PATH = Path(__file__).parent.parent / "kosis" / "table_params.json"
@@ -1917,7 +1917,9 @@ def main(
 
     vdb_fn = bm25_fn = None
     if with_vdb:
-        from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
+        from agent.kosis.query_vdb import (
+            batch_query_vdb, bm25_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K,
+        )
 
         print("[배치] Qwen3-Embedding-4B 로딩 중(VDB 쿼리용)...")
         from sentence_transformers import SentenceTransformer
@@ -1931,7 +1933,9 @@ def main(
         )
 
         def _retrieval_query_text(claim) -> str:
-            base = claim.search_query or claim.sentence
+            # 2026-08-28: search_query가 없어 sentence로 폴백하는 경우엔 Context D2
+            # (prev_sentence+sentence)를 쓴다 — server.py의 동일 함수와 맞춤.
+            base = claim.search_query or dense_query_text(claim)
             return expand_institution_query_aliases(base, claim.source_org)
 
         def vdb_fn(claim):
@@ -1944,8 +1948,15 @@ def main(
                 return []
 
         def bm25_fn(claim):
+            # 2026-08-28: pg_trgm(쿼리당 6.9초) -> 디스크 캐시 BM25(쿼리당 ~2ms) 교체.
+            # 이 서버에 인덱스가 없으면 pg_trgm으로 자동 폴백(server.py의 _bm25_fn과 동일).
+            query_text = _retrieval_query_text(claim)
             try:
-                return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
+                return bm25_query_vdb(query_text, top_k=LEXICAL_TOP_K)
+            except VdbUnavailableError as e:
+                print(f"[BM25] 인덱스 사용 불가({e}) — pg_trgm으로 폴백")
+            try:
+                return lexical_query_vdb(query_text, top_k=LEXICAL_TOP_K)
             except VdbUnavailableError as e:
                 print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
                 return []

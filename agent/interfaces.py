@@ -76,6 +76,24 @@ class Claim:
     # 절대 포함하지 않는다(VDB 문서의 "(연월)"이 claim의 대상 시점이 아니라 크롤링 시점이라
     # 넣으면 오히려 노이즈가 됨, 2026-08-21 실측).
     search_query: Optional[str] = None
+    # --- 2026-08-28 추가(검색 정확도 개선, Context D2) ---
+    # 기사 본문에서 이 claim.sentence 바로 앞 문장. 검색 질의를 "prev_sentence + sentence"로
+    # 구성하면 골든셋 70건 실험(benchmark/search_experiment2/queries.py의 D2)에서
+    # Recall@100 +17.1%p, R@1 5.7%→14.3%로 가장 크게 개선됨(문맥 없이 sentence만 쓰면
+    # 주어/지표명이 앞 문장에만 있는 경우를 놓침). 앞 문장을 못 찾으면(claim_extractor가
+    # sentence를 원문과 다르게 뱉었거나 첫 문장인 경우) None — 이때는 자동으로 sentence
+    # 단독 질의와 동일해져 손해가 없다(D2 실험과 동일한 폴백 규칙).
+    prev_sentence: Optional[str] = None
+
+
+def dense_query_text(claim: Claim) -> str:
+    """3단계 Dense/VDB 검색에 넘길 질의 텍스트 — Context D2 방식(prev_sentence + sentence).
+    rerank_local.py/embedding_search.py 양쪽에서 이 함수 하나로 통일해서 쓴다(따로
+    concat하면 나중에 두 곳이 슬쩍 달라질 위험이 있음). prev_sentence가 없으면 sentence
+    단독(D2 실험의 폴백과 동일)."""
+    if claim.prev_sentence:
+        return f"{claim.prev_sentence} {claim.sentence}".strip()
+    return claim.sentence
 
 
 # ---------------------------------------------------------------------------

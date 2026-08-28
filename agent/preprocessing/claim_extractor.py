@@ -423,6 +423,45 @@ def _extract_claims_single(
     raise ClaimExtractorError(f"응답 파싱 실패(재시도+구제 포함): {last_reply!r}")
 
 
+# 2026-08-28 추가(Context D2, 검색 정확도 개선) — claim.sentence 바로 앞 문장을 찾아
+# claim.prev_sentence에 채운다. benchmark/search_experiment2/queries.py의
+# split_sentences()/locate()와 동일한 규칙(문장부호 뒤 공백으로 분리, claim 앞 20자를
+# 접두어로 원문에서 탐색)을 그대로 재사용한다 — 골든셋 70건 실험에서 이 방식으로 찾은
+# 앞 문장을 붙였을 때 Recall@100 +17.1%p가 검증됐다(3단계 rerank_local.py/
+# embedding_search.py가 prev_sentence+sentence로 질의를 구성). 못 찾으면 None으로
+# 남기고(claim_type 파싱 실패와 달리 여기서는 에러를 올리지 않는다), 3단계는 그 경우
+# sentence 단독 질의로 자동 폴백하므로 손해가 없다.
+_SENT_END_RE = re.compile(r"(?<=[.!?다])\s+")
+
+
+def _split_sentences(article_text: str) -> list[str]:
+    return [s.strip() for s in _SENT_END_RE.split(article_text) if s.strip()]
+
+
+def _locate_sentence(sentences: list[str], claim_sentence: str) -> int:
+    """claim_sentence가 sentences에서 몇 번째인지. LLM이 원문을 살짝 다르게 재현할 수
+    있어(공백/구두점 등) 앞 20자 접두어로 찾는다."""
+    head = claim_sentence.strip()[:20]
+    if not head:
+        return -1
+    for i, s in enumerate(sentences):
+        if head in s:
+            return i
+    return -1
+
+
+def attach_prev_sentence(article_text: str, claims: list[Claim]) -> list[Claim]:
+    """claims 각각에 article_text 안에서의 바로 앞 문장을 채운다(제자리 수정 + 반환).
+    이미 채워져 있어도 다시 계산해서 덮어쓴다 — 결정적 연산이라 여러 번 불러도 안전하다."""
+    if not claims:
+        return claims
+    sentences = _split_sentences(article_text)
+    for claim in claims:
+        i = _locate_sentence(sentences, claim.sentence)
+        claim.prev_sentence = sentences[i - 1] if i > 0 else None
+    return claims
+
+
 def extract_claims(
     article_text: str, *, model: str = MODEL, max_tokens: int = 4096, temperature: float = 0.0
 ) -> list[Claim]:
@@ -461,7 +500,7 @@ def extract_claims(
     if not all_claims and errors:
         raise errors[0]
 
-    return all_claims
+    return attach_prev_sentence(article_text, all_claims)
 
 
 # 2026-08-17 실측: claim_extractor는 temperature=0에서도 같은 기사를 다시 돌리면 1차 추출
@@ -508,7 +547,7 @@ def recover_missed_claims(
         )
         if len(claims) == before:
             break  # 이번 회차에서 놓친 게 없었거나(스캔 결과 0건) 하나도 못 건졌으면 종료
-    return claims
+    return attach_prev_sentence(article_text, claims)
 
 
 # 2026-08-22 실측(batch_size_experiment, 밀집 문단 기사 2건 대상): 놓친 후보를 한 번에 다
