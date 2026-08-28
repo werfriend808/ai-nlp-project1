@@ -1922,7 +1922,9 @@ def main(
         print("[배치] Qwen3-Embedding-4B 로딩 중(VDB 쿼리용)...")
         from sentence_transformers import SentenceTransformer
 
-        vdb_model = SentenceTransformer("Qwen/Qwen3-Embedding-4B", truncate_dim=1024)
+        # 2026-08-27: VDB 재구축으로 문서 벡터가 2560차원이 됐다 -- 쿼리도 같은 차원이어야
+        # pgvector 연산이 성립한다(1024로 두면 차원 불일치 오류).
+        vdb_model = SentenceTransformer("Qwen/Qwen3-Embedding-4B", truncate_dim=2560)
         vdb_instruction = (
             "Given a Korean news claim sentence, retrieve the KOSIS statistical table "
             "description that best matches it"

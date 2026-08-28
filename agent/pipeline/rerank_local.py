@@ -50,7 +50,9 @@ RESULTS_PATH = Path(__file__).parent.parent.parent / "data" / "rerank_results.js
 # vdb_embedding_colab.ipynb가 만든 VDB(문서 쪽)와 짝이 맞아야 하는 쿼리 쪽 모델·설정 —
 # reranker_colab.ipynb 셀 e2921b28과 반드시 동일하게 유지한다.
 VDB_EMBED_MODEL_NAME = os.environ.get("KOSIS_VDB_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
-VDB_EMBED_DIM = 1024
+VDB_EMBED_DIM = 2560
+# 2026-08-27: 재구축된 VDB(kosis_vdb_tables_qwen)가 2560차원이라 쿼리 벡터도 2560으로
+# 맞춰야 한다. 1024는 소실 이전 VDB 기준이며, 그대로 두면 차원 불일치로 검색이 실패한다.
 VDB_QUERY_INSTRUCTION = (
     "Given a Korean news claim sentence, retrieve the KOSIS statistical table "
     "description that best matches it"

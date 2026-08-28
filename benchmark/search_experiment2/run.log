@@ -1,0 +1,38 @@
+임베딩이 필요한 질의 변형 12종 × 70건
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights:  23%|██▎       | 92/398 [00:00<00:00, 861.72it/s]Loading weights:  45%|████▍     | 179/398 [00:00<00:00, 840.77it/s]Loading weights:  66%|██████▋   | 264/398 [00:00<00:00, 834.66it/s]Loading weights:  89%|████████▉ | 356/398 [00:00<00:00, 857.42it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 900.91it/s]
+  condition: 58건 인코딩
+  ctx_D2: 70건 인코딩
+  ctx_D3: 70건 인코딩
+  ctx_D4: 70건 인코딩
+  ctx_D5: 70건 인코딩
+  expanded: 70건 인코딩
+  expanded_struct: 70건 인코딩
+  full: 70건 인코딩
+  measurement: 70건 인코딩
+  population: 58건 인코딩
+  region: 5건 인코딩
+  struct: 70건 인코딩
+  [dense_full] 완료 26s  평균 378ms
+  [dense_measurement] 완료 9s  평균 127ms
+  [dense_population] 완료 16s  평균 226ms
+  [dense_region] 완료 0s  평균 3ms
+  [dense_condition] 완료 1s  평균 20ms
+  [dense_struct] 완료 6s  평균 82ms
+  [dense_ctxD2] 완료 4s  평균 54ms
+  [dense_ctxD3] 완료 2s  평균 31ms
+  [dense_ctxD4] 완료 1s  평균 15ms
+  [dense_ctxD5] 완료 1s  평균 19ms
+  [dense_expanded] 완료 2s  평균 23ms
+  [dense_expstruct] 완료 1s  평균 20ms
+  [item_measurement] 완료 102s  평균 1456ms
+  [item_full] 완료 95s  평균 1359ms
+  [axis_condition] 완료 106s  평균 1508ms
+  [axis_full] 완료 101s  평균 1448ms
+  [bm25_full] 완료 0s  평균 4ms
+  [bm25_struct] 완료 0s  평균 2ms
+  [bm25_measurement] 완료 0s  평균 1ms
+  [bm25_expstruct] 완료 0s  평균 2ms
+  [bm25_ctxD4] 완료 1s  평균 8ms
+  [trgm_struct] 완료 395s  평균 5649ms
+
+저장 완료: runs.json (22개 검색기)

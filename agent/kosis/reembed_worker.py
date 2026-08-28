@@ -1,5 +1,18 @@
 """agent/kosis/reembed_worker.py — KOSIS 전체 재임베딩(TABLE/ITEM/AXIS/AXIS VALUE) 워커.
 
+2026-08-26~27 전체 재구축(28.7만 건)을 거치며 다음이 실측 검증되어 반영돼 있다:
+  1) requests.Session() 재사용 -- 호출마다 TCP+TLS 핸드셰이크를 새로 맺던 것이 실측
+     호출당 2.01초(레이트리밋 하한 0.32초의 6.3배)의 진짜 병목이었다. 20~50건 대조에서
+     1.69~2.37배 개선, 결과 데이터 10/10 완전 일치.
+  2) err=31(40,000셀 초과) 시 기간 분할 재시도 없이 즉시 excluded_too_large 처리 --
+     대형 표에 API 호출을 더 쓰지 않는다(정책 결정). 제외 목록은 JSONL로 따로 남긴다.
+  3) n_axes 탐색을 (2,1,3..) 순으로 -- 처리 완료 11.8만 건 전수에서 축 2개가 61.7%,
+     1개가 30.4%였다. 표당 축 탐색 호출이 1.86 -> 1.46회로 준다(약 19% 절감).
+     축을 많거나 적게 요청하면 KOSIS가 err20/21로 거부하고 기존 fallback이 재시도하므로
+     저장되는 내용은 순서 변경 전후가 동일하다(축1/축2 표 각 4~10건 대조 검증, 불일치 0).
+  4) TABLE embedding_text를 수집 시점에 바로 item_axis_value_capped 포맷으로 생성 --
+     ITEM/AXIS/AXIS VALUE가 이미 메모리에 있으므로 별도 2단계 재임베딩이 필요 없다.
+
 담당 partition(SERVER_A=앞쪽 절반 / SERVER_B=뒤쪽 절반, tables.jsonl 실제 줄 수 기준)의
 표를 순서대로 처리한다: KOSIS API 메타데이터 enrichment -> Qwen3-Embedding-4B(2560d)
 임베딩 -> PostgreSQL(kosis_db, 로컬 pgvector) upsert -> checkpoint 갱신.
@@ -22,11 +35,14 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 import psycopg2
 import psycopg2.extras
 import requests
 import torch
+
+from agent.kosis.embedding_text import build_experimental_text
 
 TABLES_PATH = "agent/kosis/crawl_output/tables.jsonl"
 ORG_WHITELIST_PATH = "agent/preprocessing/kosis_org_whitelist.json"
@@ -43,7 +59,8 @@ META_URL = "https://kosis.kr/openapi/Param/statisticsParameterData.do"
 # 단일 직렬 게이트(min-interval)로 교체한다. 모든 스레드가 이 락 하나를 공유해서
 # 호출이 항상 균등한 간격으로만 나가므로 버스트 자체가 발생하지 않는다.
 KOSIS_RATE_LIMIT_ERR_CODE = "40"
-KOSIS_MIN_CALL_INTERVAL_SEC = 0.32  # ~3.1건/초 = ~187건/분 (200/분 한도보다 여유, 0.35초보다 살짝 타이트)
+KOSIS_MIN_CALL_INTERVAL_SEC = 60.0 / 195  # ~3.25건/초 = 195건/분 (2026-08-26 250건 실측:
+# concurrency=6, err=40 0건, key당 122콜/분으로 195/200 한도에 여유 확인 후 상향)
 
 
 class MinIntervalRateLimiter:
@@ -82,9 +99,16 @@ def _get_rate_limiter(api_key: str) -> MinIntervalRateLimiter:
     return limiter
 
 
+# 2026-08-26: 매 호출마다 requests.get()으로 새 TCP+TLS 연결을 맺던 게 실측
+# 호출당 2.01초(rate-limit 최소간격 0.32초의 6.3배)의 진짜 병목이었다(20~50건 실험).
+# 프로세스 전역 Session 하나를 모든 스레드가 공유(requests.Session은 스레드 세이프,
+# 내부 커넥션 풀이 락으로 보호됨) -- URL/params/timeout/파싱/에러분류는 전혀 안 바꾼다.
+_session = requests.Session()
+
+
 def _rate_limited_get(url: str, params: dict, timeout: int, api_key: str) -> requests.Response:
     _get_rate_limiter(api_key).acquire()
-    return requests.get(url, params=params, timeout=timeout)
+    return _session.get(url, params=params, timeout=timeout)
 
 EMBED_MODEL_NAME = "Qwen/Qwen3-Embedding-4B"
 EMBED_DIM = 2560
@@ -256,7 +280,12 @@ def fetch_table_enrichment(org_id: str, tbl_id: str, api_key: str) -> dict:
         # 이 경우 조용히 오답 처리될 뻔했다, 70건 대조 검증으로 확인)까지 재시도
         # 대상에 포함시키면 표당 평균 호출이 5.93→1.67회로 준다(3.55배). 70건 old/new
         # 대조 검증에서 axis_names/item_count/unit 불일치 0건 — 추출 결과는 동일.
-        for n_axes in (1, 2, 3, 4, 5, 6, 7, 8):
+        # 2026-08-27 실측(처리 완료 11.8만 건 전수): 축 개수 분포가 2개 61.7% / 1개 30.4%
+        # / 3개 7.5%라, 1부터 올라가면 표 대부분이 첫 호출을 헛되이 쓴다. 2를 먼저 시도하면
+        # 표당 축 탐색 호출이 1.86 -> 1.46회로 준다(약 19% 절감). 축이 실제보다 많이 요청되면
+        # KOSIS가 err21로 거부하고 아래 is_axis_issue 분기가 그대로 재시도하므로 결과는
+        # 동일하다(축 1개 표 4건 대조 검증: 축/항목/분류값 전부 일치, 위험 0건).
+        for n_axes in (2, 1, 3, 4, 5, 6, 7, 8):
             params = {
                 "method": "getList", "apiKey": api_key, "format": "json", "jsonVD": "Y",
                 "orgId": org_id, "tblId": tbl_id, "prdSe": prd_se,
@@ -295,10 +324,11 @@ def fetch_table_enrichment(org_id: str, tbl_id: str, api_key: str) -> dict:
                     saw_no_data = True
                     break  # 이 prd_se만 포기 — 바깥 루프가 다음 prd_se로 계속 진행
                 if err_code == CELL_LIMIT_ERR_CODE:
-                    split_data = _fetch_rows_with_cell_split(org_id, tbl_id, api_key, prd_se, start, end, n_axes)
-                    if not split_data:
-                        return {"status": "error_other", "error": last_error}
-                    data = split_data
+                    # 2026-08-26: 기간 분할 재시도(최대 4096조각) 대신 즉시 제외한다 --
+                    # 사용자 정책 결정: 40,000셀 초과 대형 표는 이번 재구축에서 처리하지
+                    # 않는다(추가 API 호출 자체를 만들지 않는 게 목적). err=20/21/30 등
+                    # 다른 에러의 기존 fallback은 아래에서 전혀 안 바꿨다.
+                    return {"status": "excluded_too_large", "error": last_error}
                 elif not is_axis_issue:
                     return {"status": "error_other", "error": last_error}
                 else:
@@ -366,11 +396,12 @@ def fetch_table_enrichment(org_id: str, tbl_id: str, api_key: str) -> dict:
 
 
 def process_one(line_no: int, org_id: str, tbl_id: str, stat_id: str, tbl_nm: str,
-                 send_de: str, api_key: str) -> dict:
+                 send_de: str, api_key: str, rec_tbl_se: str = None, vw_cd: str = None) -> dict:
     enrichment = fetch_table_enrichment(org_id, tbl_id, api_key)
     return {
         "line_no": line_no, "org_id": org_id, "tbl_id": tbl_id, "stat_id": stat_id,
         "tbl_nm": tbl_nm, "send_de": send_de, "enrichment": enrichment,
+        "rec_tbl_se": rec_tbl_se, "vw_cd": vw_cd,
     }
 
 
@@ -540,6 +571,33 @@ def insert_axis_value_rows(cur, rows: list[dict]):
 # Main
 # ------------------------------------------------------------------
 
+EXCLUDED_LOG_LOCK = threading.Lock()
+
+
+def log_excluded_too_large(role: str, r: dict, enrichment: dict):
+    """excluded_too_large 표를 서버별 JSONL에 append한다(재처리 대비 보존, DB에는 안 남는
+    ITEM/AXIS/AXIS_VALUE/embedding 대신 최소한의 원본 식별정보만). 서버당 파일이 분리돼
+    있어 SERVER_A/SERVER_B가 같은 파일에 동시에 쓰다 깨질 일은 없다(단일 프로세스 내에서도
+    여러 스레드가 flush_batch를 겹쳐 부르지 않으므로 -- flush는 메인 스레드에서만 호출됨 --
+    락은 방어적으로만 건다)."""
+    # 2026-08-27: 7-1 절대경로를 하드코딩했더니 Colab(디렉토리 없음)에서 첫 대형표를
+    # 만나는 순간 FileNotFoundError로 워커가 죽었다 -- 실행 위치 기준 상대경로로 바꾸고
+    # 디렉토리가 없으면 만든다(어느 환경에서도 동작).
+    backup_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    path = os.path.join(backup_dir, f"excluded_too_large_{role}.jsonl")
+    entry = {
+        "TBL_ID": r["tbl_id"], "ORG_ID": r["org_id"], "TBL_NM": r["tbl_nm"],
+        "STAT_ID": r["stat_id"], "SEND_DE": r["send_de"],
+        "REC_TBL_SE": r.get("rec_tbl_se"), "VW_CD": r.get("vw_cd"),
+        "reason": "excluded_too_large", "reason_detail": enrichment.get("error"),
+        "detected_at": datetime.now(timezone.utc).isoformat(), "server": role,
+    }
+    with EXCLUDED_LOG_LOCK:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
 def flush_batch(conn, model, org_whitelist, results, role):
     """모아둔 결과(results)를 embed + DB insert + checkpoint까지 한 번에 처리한다.
     (n_success, n_failed) 반환. producer(API 호출 스레드)와 독립적으로 동작 — 이 함수가
@@ -555,7 +613,33 @@ def flush_batch(conn, model, org_whitelist, results, role):
         enrichment = r["enrichment"]
         status = enrichment["status"]
 
-        table_text = build_table_text(institution, tbl_nm)
+        if status == "excluded_too_large":
+            log_excluded_too_large(role, r, enrichment)
+
+        if status == "success":
+            # 2026-08-26: enrichment 시점에 ITEM/AXIS/AXIS_VALUE가 이미 메모리에 있으므로
+            # 별도 2단계(reembed_v2_worker.py) 없이 검증된 build_experimental_text(mode=
+            # "item_axis_value_capped")를 바로 호출한다 -- 새 포맷 설계 아님, 기존
+            # benchmark/metadata_embedding_experiment.py 함수를 그대로 재사용. dedup 방식도
+            # reembed_v2_worker.fetch_metadata_batch와 동일하게(이름 기준, 처음 등장 순서
+            # 유지) 맞춘다.
+            items_dedup = []
+            for _iid, _iname in enrichment["item_pairs"].items():
+                if _iname and _iname not in items_dedup:
+                    items_dedup.append(_iname)
+            values_dedup = []
+            for _axis_name in enrichment["axis_names"]:
+                for _label in enrichment["code_maps"].get(_axis_name, {}).keys():
+                    if _label and _label not in values_dedup:
+                        values_dedup.append(_label)
+            exp_meta = {
+                "institution_name": institution, "table_name": tbl_nm,
+                "items": items_dedup, "axes": enrichment["axis_names"], "values_dedup": values_dedup,
+            }
+            table_text = build_experimental_text(exp_meta, "item_axis_value_capped", None)
+        else:
+            table_text = build_table_text(institution, tbl_nm)
+
         table_texts.append(table_text)
         table_meta.append({
             "table_id": tbl_id, "stat_id": r["stat_id"], "org_id": org_id,
@@ -592,14 +676,25 @@ def flush_batch(conn, model, org_whitelist, results, role):
 
     all_texts = table_texts + item_texts + axis_texts
     if all_texts:
-        try:
-            vecs = model.encode(all_texts, batch_size=32, convert_to_numpy=True,
-                                 normalize_embeddings=True, show_progress_bar=False)
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            print("  [경고] batch_size=32에서 CUDA OOM — batch_size=16으로 낮춰 재시도", flush=True)
-            vecs = model.encode(all_texts, batch_size=16, convert_to_numpy=True,
-                                 normalize_embeddings=True, show_progress_bar=False)
+        vecs = None
+        for bs in (32, 16, 8, 4):
+            try:
+                vecs = model.encode(
+                    all_texts,
+                    batch_size=bs,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
+                if bs != 32:
+                    print(f"  [정보] embedding batch_size={bs} 사용", flush=True)
+                break
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                print(f"  [경고] batch_size={bs} CUDA OOM", flush=True)
+
+        if vecs is None:
+            raise RuntimeError("CUDA OOM: batch_size=32/16/8/4 모두 실패")
     else:
         vecs = []
 
@@ -635,7 +730,9 @@ def flush_batch(conn, model, org_whitelist, results, role):
 def main():
     _load_env()
     ap = argparse.ArgumentParser()
-    ap.add_argument("role", choices=["SERVER_A", "SERVER_B"])
+    # role은 checkpoint의 server_role과 맞기만 하면 되므로 값을 고정하지 않는다
+    # (SERVER_A/SERVER_B 외에 COLAB_A100 등을 파일 복제 없이 그대로 쓸 수 있게).
+    ap.add_argument("role", help="checkpoint의 server_role (예: SERVER_A, SERVER_B, COLAB_A100)")
     ap.add_argument("--limit", type=int, default=None, help="처리할 표 개수 상한(테스트/sanity용)")
     ap.add_argument("--concurrency", type=int, default=10)
     ap.add_argument("--api-keys", type=str, default=None,
@@ -694,7 +791,8 @@ def main():
             rec = json.loads(all_lines[line_no])
             key_for_table = api_keys[i % len(api_keys)]  # 라운드로빈 — 표마다 키가 고정되므로 재시도도 같은 키로 간다
             fut = ex.submit(process_one, line_no, rec.get("ORG_ID"), rec.get("TBL_ID"),
-                             rec.get("STAT_ID"), rec.get("TBL_NM"), rec.get("SEND_DE"), key_for_table)
+                             rec.get("STAT_ID"), rec.get("TBL_NM"), rec.get("SEND_DE"), key_for_table,
+                             rec.get("REC_TBL_SE"), rec.get("VW_CD"))
             futs[fut] = table_id
 
         n_fetched = 0
@@ -705,7 +803,7 @@ def main():
             except Exception as e:
                 batch.append({"tbl_id": table_id, "enrichment": {"status": "error_other", "error": str(e)},
                                "line_no": None, "org_id": None, "stat_id": None,
-                               "tbl_nm": None, "send_de": None})
+                               "tbl_nm": None, "send_de": None, "rec_tbl_se": None, "vw_cd": None})
 
             n_fetched += 1
             if n_fetched % 200 == 0:

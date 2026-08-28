@@ -110,7 +110,8 @@ def _require_api_key(x_api_key: str = Header(default=None)) -> None:
 print("[서버 시작] Qwen3-Embedding-4B 로딩 중...")
 from sentence_transformers import SentenceTransformer  # noqa: E402
 
-_VDB_EMBED_MODEL = SentenceTransformer("Qwen/Qwen3-Embedding-4B", truncate_dim=1024)
+# 2026-08-27: VDB 재구축으로 문서 벡터가 2560차원 -- 쿼리도 2560이어야 한다.
+_VDB_EMBED_MODEL = SentenceTransformer("Qwen/Qwen3-Embedding-4B", truncate_dim=2560)
 _VDB_QUERY_INSTRUCTION = (
     "Given a Korean news claim sentence, retrieve the KOSIS statistical table "
     "description that best matches it"
@@ -138,7 +139,7 @@ def _retrieval_query_text(claim) -> str:
 
 def _vdb_fn(claim):
     """run_article()에 주입할 VDB dense 조회 함수 — search_query(또는 폴백으로 sentence)를
-    Qwen으로 임베딩해서 Supabase(kosis_vdb_tables, 28만7천여 개)를 조회한다. VDB 연결
+    Qwen으로 임베딩해서 PostgreSQL(kosis_vdb_tables_qwen, 28만7천여 개)를 조회한다. VDB 연결
     자체가 안 되면(일시적 장애 등) 조용히 빈 리스트를 반환해서 keyword+64개 카탈로그만으로도
     계속 진행되게 한다."""
     text = f"Instruct: {_VDB_QUERY_INSTRUCTION}\nQuery: {_retrieval_query_text(claim)}"

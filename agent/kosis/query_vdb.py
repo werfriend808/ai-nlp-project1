@@ -10,7 +10,7 @@ agent/kosis/query_vdb.py — KOSIS 표 28만7천여 개 VDB(Supabase/pgvector)�
 것을 받기만 한다. 쿼리 벡터의 모델과 VDB에 적재된 벡터의 모델(vdb_embedding_colab.ipynb)이
 반드시 같아야 한다 — 다르면 벡터 공간이 안 맞아서 유사도 값 자체가 무의미해진다.
 
-⚠️ 2026-08-19: VDB를 Qwen3-Embedding-4B(truncate_dim=1024)로 바꾸면서, 쿼리 벡터도
+⚠️ 2026-08-19: VDB를 Qwen3-Embedding-4B로 바꾸면서, 쿼리 벡터도
 더 이상 embedding_search.embed_sentences_batch()(로컬, e5 계열 — 64개 카탈로그 매칭
 전용으로 남음)로 만들면 안 된다. Qwen3-Embedding-4B는 로컬(RAM 7.4GB)에서 못 돌아가서,
 claim 쿼리도 코랩에서 같은 모델·같은 truncate_dim으로 임베딩해야 한다 — 이 부분은
@@ -45,7 +45,12 @@ except ImportError:
         source_meta: Optional[str] = None
         org_id: Optional[str] = None
 
-TABLE_NAME = "kosis_vdb_tables"
+# 2026-08-27: 데이터 소실 후 재구축하면서 VDB가 kosis_vdb_tables_qwen(2560차원)으로
+# 바뀌었다. 옛 테이블(kosis_vdb_tables, 1024차원)은 더 이상 존재하지 않는다. 컬럼명도
+# 달라져서(tbl_id -> table_id, text -> embedding_text) 아래 쿼리들도 함께 고쳤다.
+TABLE_NAME = "kosis_vdb_tables_qwen"
+TBL_ID_COL = "table_id"
+TEXT_COL = "embedding_text"
 
 # 28만여 개 중 상위 몇 개까지 후보로 볼지.
 # 2026-08-17 변경(3 -> 10): 근사 최근접 이웃 검색(HNSW)이 실제로 진짜 정답을 상위 3등
@@ -62,8 +67,13 @@ VDB_TOP_K = int(os.environ.get("DENSE_TOP_K", "10"))
 # 코랩 경로의 판정 기준이 갈라지면 안 되므로 동일하게 맞춘다).
 VDB_MIN_SIMILARITY = 0.5
 
+# HNSW 탐색 후보 수. 2026-08-27 실측(표본 25건, 전수 스캔 top-10을 정답으로):
+# 기본값 40 -> 98.0%, 100 -> 98.4%, 400 -> 99.2%. 100 이상은 얻는 게 거의 없고
+# 지연만 늘어서 100으로 둔다(전수 스캔 5.2초 대비 약 40ms).
+HNSW_EF_SEARCH = int(os.environ.get("HNSW_EF_SEARCH", "100"))
+
 # 2026-08-19: VDB 전용 임베딩 모델은 64개 카탈로그용(KOSIS_EMBEDDING_MODEL, e5 계열)과
-# 별개다 — VDB만 Qwen3-Embedding-4B(truncate_dim=1024)로 바꿨다. 용도가 완전히 분리돼
+# 별개다 — VDB만 Qwen3-Embedding-4B(truncate_dim=2560)로 바꿨다. 용도가 완전히 분리돼
 # 있어서(서로 비교되는 벡터쌍이 아님) 같은 환경변수를 재사용하면 안 된다.
 _SOURCE_MODEL = os.environ.get("KOSIS_VDB_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B")
 
@@ -86,6 +96,10 @@ def _get_connection():
         _conn.autocommit = True
         with _conn.cursor() as cur:
             cur.execute("set pg_trgm.similarity_threshold = 0.1;")
+            # HNSW는 근사 탐색이라 그래프를 전부 훑지 않는다. ef_search는 탐색 중
+            # 유지할 후보 개수(기본 40)로, 키울수록 정확 top-k에 가까워지지만 느려진다.
+            # 세션 단위 설정이라 커넥션 재사용 내내 살아있다.
+            cur.execute(f"set hnsw.ef_search = {HNSW_EF_SEARCH};")
     return _conn
 
 
@@ -116,9 +130,10 @@ def batch_query_vdb(
                 # 벡터 기준) — Chroma 때와 같은 변환식(유사도 = 1 - 거리)을 그대로 쓴다.
                 cur.execute(
                     f"""
-                    select tbl_id, org_id, text, embedding <=> %s::vector as distance
+                    select {TBL_ID_COL}, org_id, {TEXT_COL},
+                           embedding::halfvec(2560) <=> %s::halfvec(2560) as distance
                     from {TABLE_NAME}
-                    order by embedding <=> %s::vector
+                    order by embedding::halfvec(2560) <=> %s::halfvec(2560)
                     limit %s;
                     """,
                     (query_vec, query_vec, top_k),
@@ -187,9 +202,9 @@ def lexical_query_vdb(query_text: str, *, top_k: int = LEXICAL_TOP_K) -> list[Ta
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                select tbl_id, org_id, text, similarity(text, %s) as sim
+                select {TBL_ID_COL}, org_id, {TEXT_COL}, similarity({TEXT_COL}, %s) as sim
                 from {TABLE_NAME}
-                where text %% %s
+                where {TEXT_COL} %% %s
                 order by sim desc
                 limit %s;
                 """,

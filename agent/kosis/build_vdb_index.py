@@ -1,4 +1,11 @@
 """
+[DEPRECATED] 2026-08-27 -- 이 스크립트는 더 이상 쓰지 않는다.
+입력 파일(data/vdb_embeddings.npy, data/vdb_metadata.jsonl)이 존재하지 않고,
+만들려는 테이블(kosis_vdb_tables, 1024차원)도 재구축 과정에서 없어졌다.
+VDB 구축은 이제 agent/kosis/reembed_worker.py가 담당한다
+(KOSIS API -> ITEM/AXIS/AXIS VALUE -> item_axis_value_capped -> 2560차원 임베딩
+ -> kosis_vdb_tables_qwen). 아래 원본 설명은 이력 참고용으로 남겨둔다.
+
 agent/kosis/build_vdb_index.py — 코랩에서 만든 KOSIS 표 28만여 개 임베딩을 Supabase(pgvector)에 적재한다.
 
 vdb_embedding_colab.ipynb가 만든 두 파일(data/vdb_embeddings.npy, data/vdb_metadata.jsonl)을

@@ -1,0 +1,14 @@
+후보 표 메타 3,828건 로드
+Loading weights:   0%|          | 0/393 [00:00<?, ?it/s]Loading weights: 100%|██████████| 393/393 [00:00<00:00, 4276.60it/s]
+  [A (dense_full + 리랭커)] 완료 144s
+  [B (Context D2 + 리랭커)] 완료 139s
+  [C (Context D2, 리랭커 X)] 완료 0s
+  [D (dense_full, 리랭커 X)] 완료 0s
+
+조합                             R@1     R@3     R@5     MRR   NDCG@10
+  A (dense_full + 리랭커)        5.7%   18.6%   22.9%   0.149     0.189
+  B (Context D2 + 리랭커)       14.3%   28.6%   37.9%   0.248     0.286
+  C (Context D2, 리랭커 X)       7.1%   23.6%   33.6%   0.200     0.258
+  D (dense_full, 리랭커 X)       5.7%   18.6%   26.4%   0.152     0.185
+
+저장: e2e_rerank_check.json
