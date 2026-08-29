@@ -1,0 +1,33 @@
+claim 70건 / 문맥 있는 claim 64건
+Qwen3-Embedding-4B 로딩 중...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights:  32%|███▏      | 126/398 [00:00<00:00, 1248.35it/s]Loading weights:  63%|██████▎   | 251/398 [00:00<00:00, 977.78it/s] Loading weights:  89%|████████▊ | 353/398 [00:00<00:00, 955.49it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 1077.06it/s]
+질의 인코딩...
+
+=== 리랭커 질의 = 문장만 (현재) ===
+Loading weights:   0%|          | 0/391 [00:00<?, ?it/s]Loading weights:  39%|███▉      | 153/391 [00:00<00:00, 1484.08it/s]Loading weights:  77%|███████▋  | 302/391 [00:00<00:00, 1482.12it/s]Loading weights: 100%|██████████| 391/391 [00:00<00:00, 1487.01it/s]
+Loading weights:   0%|          | 0/393 [00:00<?, ?it/s]Loading weights:  37%|███▋      | 144/393 [00:00<00:00, 1415.52it/s]Loading weights:  75%|███████▍  | 293/393 [00:00<00:00, 1434.56it/s]Loading weights: 100%|██████████| 393/393 [00:00<00:00, 1498.02it/s]
+  35/70 (61s)
+  70/70 (79s)
+  완료 79s
+
+=== 리랭커 질의 = 문맥+문장 ===
+  35/70 (14s)
+  70/70 (28s)
+  완료 28s
+
+설정                              top-1    top-5   top-10      MRR
+리랭커 질의 = 문장만 (현재)              25.7%    44.3%    47.1%    0.329
+리랭커 질의 = 문맥+문장                 27.1%    44.3%    45.7%    0.328
+
+top-1: +2 / -1 → 순증 +1
+  이득: ['5-07a', '5-07b']
+  손해: ['5-03']
+
+top-5: +1 / -1 → 순증 +0
+  이득: ['36-03']
+  손해: ['36-08']
+
+top-10: +1 / -2 → 순증 -1
+  이득: ['36-03']
+  손해: ['5-12a', '36-08']

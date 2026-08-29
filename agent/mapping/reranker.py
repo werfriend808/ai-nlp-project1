@@ -348,7 +348,7 @@ def rerank(
     documents = [
         (document_texts or {}).get(c.table_id, c.table_name) for c in candidates
     ]
-    scores = rerank_scores(claim.sentence, documents)
+    scores = rerank_scores(build_rerank_query(claim), documents)
 
     if scores is None:
         # 리랭커 모델을 못 쓰는 상황(의존성 미설치 등) — 항등 폴백.
@@ -523,6 +523,34 @@ def build_retrieval_query(claim: Claim) -> str:
     if claim.context_before and query_context_enabled():
         base = f"{claim.context_before} {base}".strip()
     return expand_institution_query_aliases(base, claim.source_org)
+
+
+# ── 리랭커용 질의 ─────────────────────────────────────────────────────────
+# rerank()가 cross-encoder에 넣는 질의. 지금까지 claim.sentence 원문만 넣어 왔는데,
+# 2026-08-28에 검색기 쪽에는 문맥(앞 문장)을 붙였으므로 검색기와 리랭커가 서로 다른
+# 것을 보고 있다. 이게 문제가 되는 실제 사례:
+#
+#   "지난 3·4월 2개월 연속 줄었는데, 5월 1일 국회를 통과한 1차 추경 집행에도
+#    반등에 실패했다."
+#
+# 이 문장에는 "소매 판매"라는 지표명이 없다(앞 문장에 있다). 검색기는 이제 앞 문장을
+# 받아 정답표를 후보에 올리는데, 리랭커는 여전히 이 문장만 보고 "소매판매액지수" 표가
+# 맞는지 판단해야 한다.
+#
+# 다만 문맥을 붙이면 claim과 무관한 단어도 같이 들어가 희석될 수 있어, 검색기 쪽처럼
+# 자동으로 켜지 않는다. KOSIS_RERANK_CONTEXT=1일 때만 켜지는 기본 꺼짐 상태다.
+def rerank_context_enabled() -> bool:
+    return os.environ.get("KOSIS_RERANK_CONTEXT", "0").strip().lower() not in ("0", "false", "no")
+
+
+def build_rerank_query(claim: Claim) -> str:
+    """리랭커(cross-encoder)에 넣을 질의 문자열.
+
+    기본값은 claim.sentence 원문 — 도입 이전과 글자 단위로 동일하다.
+    """
+    if claim.context_before and rerank_context_enabled():
+        return f"{claim.context_before} {claim.sentence}".strip()
+    return claim.sentence
 
 
 # ── BM25(lexical)용 질의 ──────────────────────────────────────────────────

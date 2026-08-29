@@ -24,7 +24,9 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from agent.kosis.query_vdb import VdbUnavailableError
+from agent.kosis.query_vdb import TABLE_NAME as _VDB_TABLE
+from agent.kosis.query_vdb import TEXT_COL as _VDB_TEXT_COL
+from agent.kosis.query_vdb import VdbUnavailableError, _get_connection
 
 try:
     from agent.interfaces import TableCandidate
@@ -135,6 +137,35 @@ def _get_index() -> "_Bm25Index":
         return _index
 
 
+def _fetch_embedding_texts(table_ids: list[str]) -> dict[str, str]:
+    """반환할 후보들의 embedding_text를 DB에서 한 번에 가져온다.
+
+    리랭커(reranker.rerank)는 document_texts에 없는 후보를 candidate.table_name으로
+    판단한다. dense 경로(query_vdb.batch_query_vdb)와 옛 trigram 경로는 그 필드에
+    embedding_text(평균 303자)를 담아 보내므로, BM25만 짧은 표명(평균 16자)을 담으면
+    같은 리랭커 앞에서 BM25 후보만 불리해진다 — 후보 풀의 과반이 BM25 몫이라 영향이 크다.
+
+    인덱스에 텍스트를 통째로 넣지 않고 조회 시점에 가져오는 이유: 인덱스 크기가 27MB에서
+    110MB대로 커지는 걸 피하고, embedding_text가 갱신되면(excluded 표 복구 등) 인덱스를
+    다시 만들지 않아도 최신 텍스트가 따라오게 하기 위함이다. 기본키 조회라 비용은 작다.
+
+    실패하면 빈 dict를 돌려준다 — 호출부가 인덱스에 저장된 표명으로 폴백한다.
+    """
+    if not table_ids:
+        return {}
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"select {'table_id'}, {_VDB_TEXT_COL} from {_VDB_TABLE} where table_id = any(%s)",
+                (table_ids,),
+            )
+            return {tid: txt for tid, txt in cur.fetchall() if txt}
+    except Exception as e:  # noqa: BLE001 - 조회 실패는 폴백 대상, BM25 자체는 살린다
+        print(f"[BM25] embedding_text 조회 실패({type(e).__name__}) — 표명으로 폴백")
+        return {}
+
+
 def bm25_query_vdb(query_text: str, *, top_k: int = BM25_TOP_K) -> list[TableCandidate]:
     """BM25로 표를 검색한다. query_vdb.lexical_query_vdb와 같은 자리에 꽂히는 대체품.
 
@@ -148,10 +179,12 @@ def bm25_query_vdb(query_text: str, *, top_k: int = BM25_TOP_K) -> list[TableCan
     if not query_text or not query_text.strip():
         return []
     rows = _get_index().search(query_text, top_k)
+    # 리랭커가 판단 근거로 쓰는 텍스트 — dense 경로와 같은 embedding_text를 담는다.
+    texts = _fetch_embedding_texts([tid for tid, _, _, _ in rows])
     return [
         TableCandidate(
             table_id=tid,
-            table_name=name,
+            table_name=texts.get(tid) or name,
             score=score,
             required_slots=[],
             source_meta="kosis_vdb_lexical(bm25)",
