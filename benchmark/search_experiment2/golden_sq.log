@@ -1,0 +1,13 @@
+기사 8건 / claim 70건
+  [1/8] 기사 11: 추출 6건, 골든 1건 중 search_query 확보 0건 (17s)
+  [2/8] 기사 19: 추출 8건, 골든 18건 중 search_query 확보 0건 (23s)
+  [3/8] 기사 27: 추출 1건, 골든 1건 중 search_query 확보 0건 (14s)
+  [4/8] 기사 30: 추출 8건, 골든 13건 중 search_query 확보 0건 (38s)
+  [5/8] 기사 35: 추출 1건, 골든 4건 중 search_query 확보 0건 (19s)
+  [6/8] 기사 36: 추출 5건, 골든 11건 중 search_query 확보 0건 (18s)
+  [7/8] 기사 42: 추출 1건, 골든 1건 중 search_query 확보 0건 (6s)
+  [8/8] 기사 5: 추출 1건, 골든 21건 중 search_query 확보 0건 (17s)
+
+총 70건 중 search_query 확보 0건 (0.0%)
+
+저장: /home/ubuntu/ai-nlp-project-reembedding/benchmark/search_experiment2/golden_search_query.json
