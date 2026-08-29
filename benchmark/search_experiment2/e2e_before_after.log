@@ -1,0 +1,30 @@
+Qwen3-Embedding-4B 로딩 중...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights:  69%|██████▉   | 275/398 [00:00<00:00, 2733.79it/s]Loading weights: 100%|██████████| 398/398 [00:00<00:00, 3011.17it/s]
+
+=== OLD (문맥없음+trigram) ===
+Loading weights:   0%|          | 0/391 [00:00<?, ?it/s]Loading weights:  35%|███▍      | 135/391 [00:00<00:00, 1347.98it/s]Loading weights:  69%|██████▉   | 270/391 [00:00<00:00, 1334.39it/s]Loading weights: 100%|██████████| 391/391 [00:00<00:00, 1355.12it/s]
+Loading weights:   0%|          | 0/393 [00:00<?, ?it/s]Loading weights:  30%|███       | 119/393 [00:00<00:00, 1189.54it/s]Loading weights:  62%|██████▏   | 243/393 [00:00<00:00, 1193.60it/s]Loading weights:  93%|█████████▎| 364/393 [00:00<00:00, 1178.73it/s]Loading weights: 100%|██████████| 393/393 [00:00<00:00, 1211.29it/s]
+  20/70 (227s)
+  40/70 (372s)
+  60/70 (543s)
+  완료 622s
+
+=== NEW (문맥+BM25) ===
+  20/70 (13s)
+  40/70 (22s)
+  60/70 (30s)
+  완료 35s
+
+설정                            top-1    top-5   top-10      MRR
+OLD (문맥없음+trigram)           22.9%    31.4%    37.1%    0.265
+NEW (문맥+BM25)                24.3%    40.0%    48.6%    0.307
+
+top-1: +2 / -1 → 순증 +1
+  손해: ['36-09']
+
+top-5: +8 / -2 → 순증 +6
+  손해: ['36-02', '36-09']
+
+top-10: +10 / -2 → 순증 +8
+  손해: ['5-13', '36-09']

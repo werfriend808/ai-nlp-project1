@@ -1,0 +1,38 @@
+Qwen3-Embedding-4B 로딩 중...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/398 [00:00<?, ?it/s]Loading weights:  33%|███▎      | 132/398 [00:00<00:00, 1296.53it/s]Loading weights:  66%|██████▌   | 262/398 [00:00<00:00, 966.80it/s] Loading weights: 100%|██████████| 398/398 [00:00<00:00, 1172.87it/s]
+질의 인코딩...
+
+=== DENSE_TOP_K=10 ===
+Loading weights:   0%|          | 0/391 [00:00<?, ?it/s]Loading weights:  39%|███▉      | 153/391 [00:00<00:00, 1513.93it/s]Loading weights:  78%|███████▊  | 305/391 [00:00<00:00, 1434.93it/s]Loading weights: 100%|██████████| 391/391 [00:00<00:00, 1466.06it/s]
+Loading weights:   0%|          | 0/393 [00:00<?, ?it/s]Loading weights:  38%|███▊      | 149/393 [00:00<00:00, 1464.03it/s]Loading weights:  75%|███████▌  | 296/393 [00:00<00:00, 1370.94it/s]Loading weights: 100%|██████████| 393/393 [00:00<00:00, 1413.59it/s]
+  35/70 (62s)
+  70/70 (80s)
+  완료 80s
+
+=== DENSE_TOP_K=30 ===
+  35/70 (21s)
+  70/70 (40s)
+  완료 40s
+
+=== DENSE_TOP_K=50 ===
+  35/70 (27s)
+  70/70 (54s)
+  완료 54s
+
+=== DENSE_TOP_K=100 ===
+  35/70 (48s)
+  70/70 (92s)
+  완료 92s
+
+DENSE_TOP_K       top-1    top-5   top-10      MRR    claim당
+10               24.3%    40.0%    48.6%    0.307     1.14s
+30               24.3%    38.6%    47.1%    0.303     0.57s
+50               25.7%    41.4%    47.1%    0.316     0.77s
+100              27.1%    40.0%    47.1%    0.322     1.32s
+
+TOP_K=30 vs 10 (top-1): +0 / -0 → 순증 +0
+
+TOP_K=50 vs 10 (top-1): +1 / -0 → 순증 +1
+
+TOP_K=100 vs 10 (top-1): +2 / -0 → 순증 +2
