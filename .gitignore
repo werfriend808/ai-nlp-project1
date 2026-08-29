@@ -50,3 +50,6 @@ benchmark/search_experiment2/fused.json
 # 40,000셀 초과 제외 표 목록 — 2026-08-27 복구 작업으로 상당수가 이미 복구돼 스냅샷 가치가
 # 떨어졌고, KOSIS API로 재생성 가능하다.
 backup/excluded_too_large_ALL.jsonl
+
+# BM25 인덱스(약 340MB) — build_bm25_index.py로 2분 재생성, 푸시 대상 아님
+data/bm25_index/

@@ -50,6 +50,8 @@ except ImportError:
             age: Optional[str] = None
             gender: Optional[str] = None
             search_query: Optional[str] = None
+            context_before: Optional[str] = None
+            sentence_index: Optional[int] = None
 
 
 MODEL = "HCX-DASH-002"
@@ -423,6 +425,62 @@ def _extract_claims_single(
     raise ClaimExtractorError(f"응답 파싱 실패(재시도+구제 포함): {last_reply!r}")
 
 
+# ── 문맥 보강 (2026-08-28) ────────────────────────────────────────────────
+# 3단계 검색 질의 앞에 claim 문장의 "앞 문장"을 붙이면 Recall@100이 오른다는 실험 결과
+# (benchmark/search_experiment2/REPORT.md 실험 D2)를 운영에 연결하기 위한 부분.
+# 문장 분리·탐색 규칙은 실험 코드(benchmark/search_experiment2/queries.py)에서 그대로
+# 옮겨왔다 — 규칙이 달라지면 실험에서 측정한 수치가 재현된다는 보장이 없어진다.
+#
+# 추출 시점에 채우는 이유: 나중에 claim.sentence만 들고 본문에서 위치를 되찾으려 하면
+# dedupe_repeated_sentences()가 이미 본문을 바꿔놓은 뒤라 어긋난다(실험에서도 원본 본문을
+# 그대로 쓰고도 70건 중 4건이 매칭에 실패했다). extract_claims()와 recover_missed_claims()는
+# 정제된 본문을 그 자리에서 들고 있으므로 여기가 어긋남 없이 기록할 수 있는 지점이다.
+_SENT_END = re.compile(r"(?<=[.!?다])\s+")
+
+# LLM이 돌려주는 sentence는 본문과 글자 단위로 같지 않을 수 있어(스마트 쿼트 정규화, 공백
+# 정리 등) 완전 일치 대신 앞부분 일부로 찾는다. 실험에서 쓴 값과 같은 20자.
+_LOCATE_HEAD_LEN = 20
+
+
+def split_sentences(body: str) -> list[str]:
+    """본문을 문장 리스트로 자른다(실험 D와 동일 규칙)."""
+    return [s.strip() for s in _SENT_END.split(body) if s.strip()]
+
+
+def _locate_sentence(sentences: list[str], sentence: str) -> int:
+    """sentence가 본문의 몇 번째 문장인지 돌려준다. 못 찾으면 -1."""
+    head = sentence.strip()[:_LOCATE_HEAD_LEN]
+    if not head:
+        return -1
+    for i, s in enumerate(sentences):
+        if head in s:
+            return i
+    return -1
+
+
+def attach_sentence_context(article_text: str, claims: list[Claim]) -> list[Claim]:
+    """각 claim에 기사 내 위치(sentence_index)와 앞 문장(context_before)을 채운다.
+
+    claims를 제자리에서 수정하고 같은 리스트를 그대로 반환한다. 본문에서 위치를 못 찾은
+    claim은 두 필드가 None으로 남고, 그런 claim의 검색 질의는 문맥 보강 이전과 완전히
+    동일해진다 — 즉 실패해도 손해가 없다.
+
+    article_text는 dedupe_repeated_sentences()를 거친 본문이어야 한다(호출부가 그 상태로
+    넘긴다). 같은 리스트에 여러 번 걸어도 결과가 같은 멱등 연산이다.
+    """
+    sentences = split_sentences(article_text)
+    if not sentences:
+        return claims
+    for claim in claims:
+        i = _locate_sentence(sentences, claim.sentence)
+        if i < 0:
+            continue
+        claim.sentence_index = i
+        # 기사 첫 문장이면 앞 문장이 없다 — None으로 두면 질의가 기존과 같아진다.
+        claim.context_before = sentences[i - 1] if i > 0 else None
+    return claims
+
+
 def extract_claims(
     article_text: str, *, model: str = MODEL, max_tokens: int = 4096, temperature: float = 0.0
 ) -> list[Claim]:
@@ -461,7 +519,7 @@ def extract_claims(
     if not all_claims and errors:
         raise errors[0]
 
-    return all_claims
+    return attach_sentence_context(article_text, all_claims)
 
 
 # 2026-08-17 실측: claim_extractor는 temperature=0에서도 같은 기사를 다시 돌리면 1차 추출
@@ -508,7 +566,9 @@ def recover_missed_claims(
         )
         if len(claims) == before:
             break  # 이번 회차에서 놓친 게 없었거나(스캔 결과 0건) 하나도 못 건졌으면 종료
-    return claims
+    # 복구로 새로 들어온 claim에도 문맥을 채운다 — extract_claims()가 이미 채운 것들은
+    # 같은 값으로 다시 계산될 뿐이라 덮어써도 무해하다(멱등).
+    return attach_sentence_context(article_text, claims)
 
 
 # 2026-08-22 실측(batch_size_experiment, 밀집 문단 기사 2건 대상): 놓친 후보를 한 번에 다

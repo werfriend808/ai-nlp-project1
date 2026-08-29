@@ -42,7 +42,7 @@ except ImportError:
 
 from agent.interfaces import Claim, TableCandidate
 from agent.kosis.query_vdb import VDB_TOP_K, VdbUnavailableError, batch_query_vdb
-from agent.mapping.reranker import load_document_texts, rerank
+from agent.mapping.reranker import build_retrieval_query, load_document_texts, rerank
 
 PENDING_PATH = Path(__file__).parent.parent.parent / "data" / "rerank_pending.json"
 RESULTS_PATH = Path(__file__).parent.parent.parent / "data" / "rerank_results.json"
@@ -124,11 +124,11 @@ def _get_vdb_embed_model():
     return _vdb_embed_model
 
 
-def _vdb_query_vec_for(claim_sentence: str) -> list[float]:
+def _vdb_query_vec_for(query_text: str) -> list[float]:
     # Qwen3-Embedding 공식 권장 사용법: 쿼리 쪽에만 instruction prefix를 붙인다(문서 쪽은
     # vdb_embedding_colab.ipynb에서 prefix 없이 인코딩했음) — reranker_colab.ipynb와 동일.
     model = _get_vdb_embed_model()
-    text = f"Instruct: {VDB_QUERY_INSTRUCTION}\nQuery: {claim_sentence}"
+    text = f"Instruct: {VDB_QUERY_INSTRUCTION}\nQuery: {query_text}"
     return model.encode([text], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
 
 
@@ -194,7 +194,10 @@ def main() -> None:
         merged = [_dict_to_candidate(d) for d in item.get("merged_candidates", [])]
 
         try:
-            query_vec = _vdb_query_vec_for(claim.sentence)
+            # 2026-08-28: 문맥 보강(앞 문장)·기관 별칭까지 붙인 질의를 쓴다 —
+            # 운영 경로(batch_runner)와 같은 build_retrieval_query()를 공유해서
+            # 로컬/코랩/운영 어디로 돌리든 같은 질의가 나가게 한다.
+            query_vec = _vdb_query_vec_for(build_retrieval_query(claim))
             vdb_candidates = batch_query_vdb([query_vec], top_k=VDB_TOP_K)[0]
             merged = _merge_vdb_candidates(merged, vdb_candidates)
         except VdbUnavailableError as e:

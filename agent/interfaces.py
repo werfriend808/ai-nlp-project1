@@ -76,6 +76,16 @@ class Claim:
     # 절대 포함하지 않는다(VDB 문서의 "(연월)"이 claim의 대상 시점이 아니라 크롤링 시점이라
     # 넣으면 오히려 노이즈가 됨, 2026-08-21 실측).
     search_query: Optional[str] = None
+    # --- 2026-08-28 추가(문맥 보강 검색) ---
+    # context_before: 이 claim 문장 바로 앞 문장(기사 본문 기준). 3단계 검색 질의 앞에 붙이면
+    # Recall@100이 크게 오른다(benchmark/search_experiment2/REPORT.md — 70건 전체 기준
+    # 57.9%→75.0%, 손해 보는 claim 0건. 단 dev/test 분할 기준으로는 이득이 더 작다).
+    # claim_extractor가 추출 시점에 채운다 — 나중에 문장으로 되찾는 방식은
+    # dedupe_repeated_sentences()가 본문을 미리 바꿔놔서 어긋난다.
+    # 앞 문장을 못 찾았거나 기사 첫 문장이면 None이고, 그러면 질의는 문맥 없이
+    # 기존과 완전히 동일해진다(불이익 없음).
+    context_before: Optional[str] = None
+    sentence_index: Optional[int] = None        # 정제된 본문에서 이 문장이 몇 번째인지(진단용)
 
 
 # ---------------------------------------------------------------------------

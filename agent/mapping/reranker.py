@@ -202,12 +202,13 @@ def _merge_candidates(
     남긴다 — 이후 _rrf_fuse()가 점수 크기가 아니라 이 순위만으로 최종 신뢰도를 계산한다.
     입력으로 받은 candidate 객체는 변형하지 않고 dataclasses.replace로 복사본만 만든다.
 
-    2026-08-21: bm25_candidates(agent.kosis.query_vdb.lexical_query_vdb, pg_trgm 기반) 추가.
-    keyword_rank와 달리 is_rrf_trusted()에서 자동 신뢰 대상이 아니다 — keyword_search(64개
-    수동 카탈로그, 정확한 규칙 매칭)와 달리 trigram 유사도는 raw 문장 기준 실측 Recall이
-    거의 0%였고(짧은 search_query를 줘야 의미 있는 신호가 됨, golden set 실측: Recall@30
-    2.4%→41.5%), 노이즈 가능성이 여전히 embedding_rank/vdb_rank와 비슷한 수준이라 보수적으로
-    취급한다.
+    2026-08-21: bm25_candidates 추가. keyword_rank와 달리 is_rrf_trusted()에서 자동 신뢰
+    대상이 아니다 — keyword_search(64개 수동 카탈로그, 정확한 규칙 매칭)와 달리 노이즈
+    가능성이 embedding_rank/vdb_rank와 비슷한 수준이라 보수적으로 취급한다.
+
+    2026-08-28: 이 자리의 구현이 trigram(pg_trgm)에서 BM25(agent.kosis.bm25_search)로
+    바뀌었다. 위 "짧은 질의를 줘야 신호가 된다"는 성질은 BM25에서도 그대로라(실측
+    구조화 47.1% vs 문장 전체 17.9%) 질의는 build_lexical_query()로 따로 만든다.
 
     2026-08-18: "keyword=신뢰 / embedding·vdb=unverified" 이분법(그리고 그로 인한
     _promote_verified_within_top_ranks 승격 로직)을 RRF(Reciprocal Rank Fusion)로
@@ -497,6 +498,113 @@ def expand_institution_query_aliases(query: str, source_org: Optional[str]) -> s
     return f"{query} {extra}".strip() if extra else query
 
 
+# 2026-08-28: 검색 질의 앞에 claim 문장의 "앞 문장"을 붙인다(실험 D2).
+# 근거: benchmark/search_experiment2/REPORT.md — 70건 전체 기준 Recall@100 57.9%→75.0%이고
+# Baseline이 찾던 걸 새로 놓치는 claim은 0건이었다.
+# 다만 그 수치를 그대로 기대하면 안 되는 이유가 두 가지 있어서 끌 수 있게 해 둔다:
+#   (1) dev/test로 나누면 이득이 훨씬 작다 — dev 97.1% / test 52.9%(baseline test 47.1%).
+#       골든셋이 70건뿐이라 분할 자체가 무의미하다는 게 실험의 결론이지만, 그렇다고
+#       전체 기준 +17.1%p를 그대로 믿을 근거도 못 된다.
+#   (2) 실험의 baseline 질의는 claim 문장 원문(full)인데, 운영은 search_query(HyDE 문구)를
+#       우선 쓴다. "앞 문장 + search_query" 조합은 아직 한 번도 측정된 적이 없다.
+# KOSIS_QUERY_CONTEXT=0으로 두면 이 함수는 이전 동작과 완전히 같아진다(A/B 측정용).
+def query_context_enabled() -> bool:
+    return os.environ.get("KOSIS_QUERY_CONTEXT", "1").strip().lower() not in ("0", "false", "no")
+
+
+def build_retrieval_query(claim: Claim) -> str:
+    """VDB dense/BM25에 보낼 최종 검색 질의 문자열.
+
+    앞 문장(claim.context_before) → 기본 질의(search_query 우선) → 기관 별칭 순으로 붙인다.
+    context_before가 None이면(기사 첫 문장이거나 본문에서 위치를 못 찾은 경우) 결과는
+    문맥 보강 도입 이전과 글자 단위로 동일하다.
+    """
+    base = claim.search_query or claim.sentence
+    if claim.context_before and query_context_enabled():
+        base = f"{claim.context_before} {base}".strip()
+    return expand_institution_query_aliases(base, claim.source_org)
+
+
+# ── BM25(lexical)용 질의 ──────────────────────────────────────────────────
+# dense와 lexical은 원하는 질의 형태가 정반대다(골든셋 70건 실측, REPORT.md):
+#
+#     dense_ctxD2   (문맥+문장)      75.0%      bm25_expstruct (구조화+확장) 47.1%
+#     dense_full    (문장 전체)      57.9%      bm25_struct    (구조화)      32.1%
+#                                              bm25_full      (문장 전체)   17.9%
+#                                              bm25_ctxD4     (문맥+문장)   12.1%
+#
+# dense는 길고 서술적인 질의에서, BM25는 짧은 키워드 질의에서 잘한다. 특히 BM25에
+# 문맥을 붙이면 오히려 나빠진다(17.9% -> 12.1%) — 그래서 build_retrieval_query()를
+# 그대로 쓰면 안 되고 여기서 따로 만든다.
+#
+# 원래는 claim.search_query(HyDE 스타일 짧은 문구)가 이 역할을 하도록 2026-08-21에
+# 설계됐는데, 2026-08-28 확인 결과 HCX-DASH-002가 프롬프트 스키마의 마지막 세 필드
+# (age/gender/search_query)를 아예 출력하지 않아서 그 필드는 항상 None이다. 그래서
+# 실제로 채워지는 필드(statistic_expression/population/region)로 같은 모양을 만든다.
+# search_query가 되살아나면 그걸 우선 쓰도록 아래 첫 줄이 이미 준비돼 있다.
+
+# KOSIS 표명에서 실제로 쓰이는 표현으로만 구성한 규칙 사전 — 새 통계 개념을 지어내지
+# 않는다. 실험에서 이 확장이 BM25 Recall@100을 32.1% -> 47.1%로 올렸다.
+_LEXICAL_SYNONYMS = {
+    "취업자": ["경제활동인구", "고용"],
+    "실업": ["실업률", "실업자"],
+    "쉬었음": ["비경제활동인구"],
+    "소비자물가": ["물가지수"],
+    "소매판매": ["소매판매액지수", "서비스업동향"],
+    "산업생산": ["광공업생산지수", "전산업생산지수"],
+    "설비투자": ["설비투자지수"],
+    "건설기성": ["건설업"],
+    "자살률": ["사망원인", "사망률"],
+    "출생": ["출생아수", "인구동향"],
+    "혼인": ["혼인건수"],
+    "주택": ["주택가격", "주택보급률"],
+    "전세": ["전세가격지수", "주택가격동향"],
+    "수출": ["수출입", "무역"],
+    "경기": ["경기종합지수"],
+    "고령": ["고령자", "연령별"],
+    "가구": ["가구원수", "가구주"],
+    "소득": ["가계동향", "가계소득"],
+}
+
+# population/region에 자주 들어오지만 검색어로는 변별력이 없는 값들 — 넣으면 "전국"이
+# 들어간 무관한 표들이 딸려온다. 실험 queries.fields()의 _STOP과 같은 목록.
+_LEXICAL_STOPWORDS = {"전국", "전체", "국내", "없음", "nan", "", "-"}
+
+
+def _lexical_clean(value: Optional[str]) -> str:
+    v = (value or "").strip()
+    return "" if v.lower() in _LEXICAL_STOPWORDS else v
+
+
+def expand_lexical_synonyms(text: str) -> str:
+    """질의에 등장한 지표 표현의 KOSIS식 동의어를 덧붙인다(대체 아님, 추가만)."""
+    extra: list[str] = []
+    for key, values in _LEXICAL_SYNONYMS.items():
+        if key in text:
+            extra.extend(values)
+    if not extra:
+        return text
+    return (text + " " + " ".join(dict.fromkeys(extra))).strip()
+
+
+def build_lexical_query(claim: Claim) -> str:
+    """BM25에 보낼 짧은 구조화 질의.
+
+    [지표명 + 대상 + 지역]을 이어붙이고 동의어를 확장한다. 세 필드가 모두 비면
+    문장 원문으로 폴백한다 — 그래도 BM25가 아무것도 못 받는 것보다는 낫다(17.9%).
+    문맥(context_before)은 일부러 넣지 않는다(위 표 참고).
+    """
+    if claim.search_query:
+        return expand_lexical_synonyms(claim.search_query)
+    parts = [
+        _lexical_clean(claim.statistic_expression),
+        _lexical_clean(claim.population),
+        _lexical_clean(claim.region),
+    ]
+    struct = " ".join(p for p in parts if p).strip()
+    return expand_lexical_synonyms(struct or claim.sentence)
+
+
 _GENDER_TERMS = ["여성", "남성"]
 
 
@@ -658,11 +766,10 @@ def search_and_rerank(
 
     keyword_fn, embedding_fn: 각각 keyword_search(claim), embedding_search(claim) 함수를 주입.
     vdb_fn: (선택) VDB dense 조회 함수 — 넘기면 KOSIS 표 전체(28만7천여 개)도 후보에 포함시킨다.
-    bm25_fn: (선택, 2026-08-21 추가) VDB에 trigram(pg_trgm) 기반 텍스트 검색을 하는 함수 —
-    agent.kosis.query_vdb.lexical_query_vdb를 claim의 search_query로 감싼 클로저를 넘긴다.
-    dense가 못 잡는 "기관명/지표명이 정확히 일치" 케이스를 보완한다(골든셋 실측: HyDE 스타일
-    쿼리 기준 Dense Recall@30 61.0% vs BM25 41.5% — 서로 다른 실패 패턴이라 RRF로 합치면
-    상호보완 기대).
+    bm25_fn: (선택, 2026-08-21 추가 / 2026-08-28 BM25로 교체) 어휘 검색 함수 —
+    agent.kosis.bm25_search.bm25_query_vdb를 build_lexical_query(claim)로 감싼 클로저를
+    넘긴다. dense가 못 잡는 "기관명/지표명이 정확히 일치" 케이스를 보완한다 — 서로 다른
+    실패 패턴이라 RRF로 합치면 상호보완이 기대되는 자리다.
     document_texts: table_id -> 임베딩/설명 텍스트. rerank()로 그대로 전달된다(생략 시
     table_name으로 대체되는데, 리랭커가 짧은 제목만 보고 판단하게 되어 성능이 떨어진다).
     """

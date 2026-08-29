@@ -63,7 +63,7 @@ from agent.preprocessing.claim_candidate_scanner import _normalize_quotes
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, expand_institution_query_aliases
+from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, build_retrieval_query, build_lexical_query
 from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback, is_region_grounded
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
@@ -1917,7 +1917,8 @@ def main(
 
     vdb_fn = bm25_fn = None
     if with_vdb:
-        from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
+        from agent.kosis.query_vdb import batch_query_vdb, VdbUnavailableError, VDB_TOP_K
+        from agent.kosis.bm25_search import bm25_query_vdb, BM25_TOP_K
 
         print("[배치] Qwen3-Embedding-4B 로딩 중(VDB 쿼리용)...")
         from sentence_transformers import SentenceTransformer
@@ -1931,8 +1932,10 @@ def main(
         )
 
         def _retrieval_query_text(claim) -> str:
-            base = claim.search_query or claim.sentence
-            return expand_institution_query_aliases(base, claim.source_org)
+            # 2026-08-28: 기관 별칭 확장에 더해 claim 앞 문장(문맥)까지 붙인다 —
+            # 조립 규칙은 reranker.build_retrieval_query()로 옮겨서 rerank_local.py와
+            # 한 곳에서 공유한다(두 경로의 질의가 갈리면 실험 재현이 안 됨).
+            return build_retrieval_query(claim)
 
         def vdb_fn(claim):
             text = f"Instruct: {vdb_instruction}\nQuery: {_retrieval_query_text(claim)}"
@@ -1944,8 +1947,11 @@ def main(
                 return []
 
         def bm25_fn(claim):
+            # 2026-08-28: trigram(pg_trgm) -> BM25로 교체. 질의도 dense와 분리한다 —
+            # BM25는 짧은 구조화 질의에서 훨씬 잘하고 문맥을 붙이면 오히려 나빠진다
+            # (build_lexical_query() 주석의 실측표 참고).
             try:
-                return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
+                return bm25_query_vdb(build_lexical_query(claim), top_k=BM25_TOP_K)
             except VdbUnavailableError as e:
                 print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
                 return []

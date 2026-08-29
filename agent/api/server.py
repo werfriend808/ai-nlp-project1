@@ -44,9 +44,10 @@ except ImportError:
 from db.fetch_article_text import fetch_article_for_verification
 from agent.kosis.api_client import KosisApiClient
 from agent.kosis.calculator import KosisCalculator
-from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
+from agent.kosis.query_vdb import batch_query_vdb, VdbUnavailableError, VDB_TOP_K
+from agent.kosis.bm25_search import bm25_query_vdb, BM25_TOP_K
 from agent.mapping.embedding_search import build_table_embedding_cache
-from agent.mapping.reranker import expand_institution_query_aliases
+from agent.mapping.reranker import build_retrieval_query, build_lexical_query
 from agent.pipeline.batch_runner import (
     DEFAULT_CLARIFY_REPLY,
     TABLE_PARAMS_PATH,
@@ -133,8 +134,9 @@ print("[서버 시작] 준비 완료")
 # 골든셋 실측: raw 문장 대비 이 스타일 쿼리가 Dense Recall@30 29.3%→61.0%, BM25는
 # 2.4%→41.5%로 개선 확인(HyDE 검증 로그 참고) — dense/bm25 둘 다 같은 쿼리를 쓴다.
 def _retrieval_query_text(claim) -> str:
-    base = claim.search_query or claim.sentence
-    return expand_institution_query_aliases(base, claim.source_org)
+    # 2026-08-28: 문맥 보강·기관 별칭 조립을 reranker.build_retrieval_query()로 통합했다 —
+    # batch_runner/rerank_local과 질의가 갈리면 실험 수치가 재현되지 않는다.
+    return build_retrieval_query(claim)
 
 
 def _vdb_fn(claim):
@@ -152,15 +154,18 @@ def _vdb_fn(claim):
 
 
 def _bm25_fn(claim):
-    """run_article()에 주입할 VDB BM25(trigram) 조회 함수 — dense와 같은 search_query를
-    쓴다. VDB 연결이 안 되면 조용히 빈 리스트(dense/keyword만으로 계속 진행).
+    """run_article()에 주입할 어휘 검색 함수. 인덱스가 없으면 조용히 빈 리스트를 반환해서
+    dense/keyword만으로 계속 진행한다.
+
+    2026-08-28: trigram(pg_trgm) -> BM25로 교체했다(실측 Recall@100 4.3% -> 32.1%,
+    지연 5,649ms -> 2ms). 질의도 dense와 분리한다 — BM25는 짧은 구조화 질의를 원하고
+    문맥을 붙이면 오히려 나빠진다(build_lexical_query() 주석의 실측표 참고).
 
     2026-08-21 버그 수정: 지금까지 dense용 상수(VDB_TOP_K)를 그대로 재사용하고 있었다 —
-    query_vdb.py가 BM25 전용 LEXICAL_TOP_K를 따로 정의해뒀는데도 여기서 안 쓰고 있어서,
-    DENSE_TOP_K와 BM25_TOP_K를 환경변수로 따로 조정해도(PHASE 8) BM25 쪽은 실제로는
-    dense 값을 따라갔다."""
+    BM25 전용 상수가 따로 있는데도 안 써서, DENSE_TOP_K와 BM25_TOP_K를 환경변수로 따로
+    조정해도(PHASE 8) BM25 쪽은 실제로는 dense 값을 따라갔다."""
     try:
-        return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
+        return bm25_query_vdb(build_lexical_query(claim), top_k=BM25_TOP_K)
     except VdbUnavailableError as e:
         print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
         return []
