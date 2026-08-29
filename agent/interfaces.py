@@ -86,6 +86,11 @@ class Claim:
     # 기존과 완전히 동일해진다(불이익 없음).
     context_before: Optional[str] = None
     sentence_index: Optional[int] = None        # 정제된 본문에서 이 문장이 몇 번째인지(진단용)
+    # article_title: 이 claim이 나온 기사의 제목. claim 문장에 지표명이 없어서 검색이
+    # 실패하는 경우가 많은데(REPORT.md 실패 유형 1번, 29건 중 9건), 제목에는 기자가
+    # 기사 주제를 한 줄로 압축해 놓아 지표명이 들어 있는 경우가 많다.
+    # strip_title_prefix_from_claims()가 이미 제목을 받고 있으므로 거기서 채운다.
+    article_title: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

@@ -522,7 +522,22 @@ def build_retrieval_query(claim: Claim) -> str:
     base = claim.search_query or claim.sentence
     if claim.context_before and query_context_enabled():
         base = f"{claim.context_before} {base}".strip()
+    if claim.article_title and query_title_enabled():
+        base = f"{claim.article_title} {base}".strip()
     return expand_institution_query_aliases(base, claim.source_org)
+
+
+# 2026-08-29: 기사 제목을 질의 앞에 붙인다. claim 문장에 지표명이 없어 검색이 실패하는
+# 사례(REPORT.md 실패 유형 1번)에서 제목에는 그 지표명이 들어 있는 것이 확인됐다:
+#
+#   문장 "전년 대비 12.0% 증가한 수준으로 사상 최대다."     <- 무엇의 증가인지 없음
+#   제목 "껑충 뛴 노년층 소비 증가율… 청·장년층 2배 육박"    <- 여기 있음
+#
+# 앞 문장(context_before)은 운에 맡기는 신호지만 제목은 항상 기사 주제를 담는다는 점에서
+# 더 안정적일 수 있다. 다만 낚시성 수사("2년 전 악몽 또 터지나")가 섞이면 문맥 실험에서
+# 본 희석이 그대로 재현될 수 있어 기본 꺼짐으로 두고 측정 결과를 보고 정한다.
+def query_title_enabled() -> bool:
+    return os.environ.get("KOSIS_QUERY_TITLE", "0").strip().lower() not in ("0", "false", "no")
 
 
 # ── 리랭커용 질의 ─────────────────────────────────────────────────────────
@@ -547,9 +562,27 @@ def build_rerank_query(claim: Claim) -> str:
     """리랭커(cross-encoder)에 넣을 질의 문자열.
 
     기본값은 claim.sentence 원문 — 도입 이전과 글자 단위로 동일하다.
+
+    KOSIS_RERANK_QUERY로 형태를 바꿀 수 있다(측정용):
+      sentence         claim 문장 원문 (기본)
+      context          앞 문장 + 문장
+      struct           2단계 구조화 필드로 만든 짧은 질의(build_lexical_query와 동일 규칙)
+      struct_sentence  구조화 질의 + 문장
+
+    struct 계열이 있는 이유: 리랭커는 뉴스 문장(수치·날짜·서술어)을 KOSIS 표 설명문
+    (기관명/표명/항목/분류축/분류값)과 맞춰야 하는데 둘은 장르가 다른 텍스트다.
+    2단계가 이미 뽑아둔 구조화 필드가 표 쪽 언어에 더 가까울 수 있어서 비교 대상으로 둔다.
     """
-    if claim.context_before and rerank_context_enabled():
-        return f"{claim.context_before} {claim.sentence}".strip()
+    mode = os.environ.get("KOSIS_RERANK_QUERY", "").strip().lower()
+    if not mode:
+        mode = "context" if (claim.context_before and rerank_context_enabled()) else "sentence"
+
+    if mode == "context":
+        return f"{claim.context_before} {claim.sentence}".strip() if claim.context_before else claim.sentence
+    if mode == "struct":
+        return build_lexical_query(claim)
+    if mode == "struct_sentence":
+        return f"{build_lexical_query(claim)} {claim.sentence}".strip()
     return claim.sentence
 
 

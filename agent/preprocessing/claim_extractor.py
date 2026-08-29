@@ -661,6 +661,10 @@ def strip_title_prefix_from_claims(claims: list[Claim], article_title: Optional[
     strip_title_prefix()를 적용한다 — run_article()에서 두 호출 직후 한 번만 부르면 됨."""
     for claim in claims:
         claim.sentence = strip_title_prefix(claim.sentence, article_title)
+        # 제목을 claim에 실어둔다 — 3단계 질의 보강에 쓸 수 있는 유일한 지점이다(여기 말고는
+        # 파이프라인에서 claim과 기사 제목이 같이 있는 곳이 없다). 실제로 질의에 붙일지는
+        # reranker.query_title_enabled()가 정하며 기본은 꺼짐이라 동작은 그대로다.
+        claim.article_title = article_title or None
     return claims
 
 

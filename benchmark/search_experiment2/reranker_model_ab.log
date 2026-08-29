@@ -1,0 +1,55 @@
+### 후보 풀 생성
+Qwen3-Embedding-4B 로딩...
+후보 풀 생성 중...
+  35/70 (44s)
+  70/70 (65s)
+완료 65s — 후보 평균 44.5개 (최소 36/최대 48)
+후보 풀에 정답이 있는 claim: 43/70 (61.4%)  <- 리랭커 상한
+### 리랭커없음(항등)
+  리랭커없음(항등): top-1 8/70 (11.4%), 0s
+   exit=0
+### bge-reranker-v2-m3(현재)
+  bge-reranker-v2-m3(현재): top-1 18/70 (25.7%), 36s
+   exit=0
+### ko-reranker
+  ko-reranker: top-1 18/70 (25.7%), 36s
+   exit=0
+### ko-reranker-8k
+  ko-reranker-8k: top-1 18/70 (25.7%), 36s
+   exit=0
+### bge-reranker-large
+  bge-reranker-large: top-1 16/70 (22.9%), 45s
+   exit=0
+### jina-reranker-v2
+
+Do you wish to run the custom code? [y/N] [transformers] Encountered exception while importing einops: No module named 'einops'
+[reranker] jinaai/jina-reranker-v2-base-multilingual 사용 불가(ImportError('This modeling file requires the following packages that were not found in your environment: einops. Run `pip install einops`')) - 항등(identity) 정렬로 폴백합니다.
+  jina-reranker-v2: top-1 8/70 (11.4%), 200s
+   exit=0
+### gte-multilingual-base
+[reranker] Alibaba-NLP/gte-multilingual-reranker-base 사용 불가(AcceleratorError("CUDA error: device-side assert triggered\nSearch for `cudaErrorAssert' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\n")) - 항등(identity) 정렬로 폴백합니다.
+[reranker] Alibaba-NLP/gte-multilingual-reranker-base 사용 불가(AcceleratorError("CUDA error: device-side assert triggered\nSearch for `cudaErrorAssert' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\n")) - 항등(identity) 정렬로 폴백합니다.
+[reranker] Alibaba-NLP/gte-multilingual-reranker-base 사용 불가(AcceleratorError("CUDA error: device-side assert triggered\nSearch for `cudaErrorAssert' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\n")) - 항등(identity) 정렬로 폴백합니다.
+  gte-multilingual-base: top-1 8/70 (11.4%), 9s
+   exit=0
+### 최종 비교
+
+후보 풀에 정답이 있는 claim: 43/70 (61.4%)  <- 리랭커 상한
+
+모델                            top-1    top-5   top-10      MRR    claim당
+bge-reranker-v2-m3(현재)       25.7%    44.3%    47.1%    0.329     0.52s
+ko-reranker                  25.7%    42.9%    48.6%    0.319     0.51s
+ko-reranker-8k               25.7%    37.1%    45.7%    0.305     0.52s
+bge-reranker-large           22.9%    41.4%    50.0%    0.302     0.64s
+gte-multilingual-base        11.4%    25.7%    27.1%    0.167     0.13s
+jina-reranker-v2             11.4%    25.7%    27.1%    0.167     2.86s
+리랭커없음(항등)                    11.4%    25.7%    27.1%    0.167     0.00s
+
+후보에 정답이 있던 43건 중 1등으로 올린 비율
+  bge-reranker-v2-m3(현재)      18/43  (41.9%)
+  ko-reranker                 18/43  (41.9%)
+  ko-reranker-8k              18/43  (41.9%)
+  bge-reranker-large          16/43  (37.2%)
+  gte-multilingual-base        8/43  (18.6%)
+  jina-reranker-v2             8/43  (18.6%)
+  리랭커없음(항등)                    8/43  (18.6%)
