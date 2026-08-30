@@ -34,7 +34,7 @@
   "period": "2025-06",
   "unit": "명",
   "gold": [
-   "DT_1DA7E06S"
+   "DT_1DA7E06S_NEW"
   ],
   "gold_status": [
    "success"
@@ -48,7 +48,7 @@
   "period": "2025-06",
   "unit": "%",
   "gold": [
-   "DT_1DA7E06S"
+   "DT_1DA7E06S_NEW"
   ],
   "gold_status": [
    "success"
@@ -62,7 +62,7 @@
   "period": "2025-06",
   "unit": "개월",
   "gold": [
-   "DT_1DA7E06S"
+   "DT_1DA7E06S_NEW"
   ],
   "gold_status": [
    "success"
@@ -76,7 +76,7 @@
   "period": "2025-06",
   "unit": "개월",
   "gold": [
-   "DT_1DA7E06S"
+   "DT_1DA7E06S_NEW"
   ],
   "gold_status": [
    "success"
@@ -90,7 +90,7 @@
   "period": "2025-06",
   "unit": "명",
   "gold": [
-   "DT_1DA7E06S"
+   "DT_1DA7E06S_NEW"
   ],
   "gold_status": [
    "success"
@@ -104,7 +104,7 @@
   "period": "2025-06",
   "unit": "개월",
   "gold": [
-   "DT_1DA7E06S"
+   "DT_1DA7E06S_NEW"
   ],
   "gold_status": [
    "success"
@@ -188,7 +188,7 @@
   "period": "2025-06",
   "unit": "명",
   "gold": [
-   "DT_1DA7E06S"
+   "DT_1DA7E06S_NEW"
   ],
   "gold_status": [
    "success"
