@@ -792,9 +792,11 @@
   "period": "2025-04-01 00:00:00",
   "unit": "명",
   "gold": [
-   "DT_1DA7E26S"
+   "DT_1DA7E26S",
+   "DT_1DA7E26S_NEW"
   ],
   "gold_status": [
+   "success",
    "success"
   ],
   "gold_missing": []
@@ -806,9 +808,11 @@
   "period": "2025-04-01 00:00:00",
   "unit": "명",
   "gold": [
-   "DT_1DA7E26S"
+   "DT_1DA7E26S",
+   "DT_1DA7E26S_NEW"
   ],
   "gold_status": [
+   "success",
    "success"
   ],
   "gold_missing": []
