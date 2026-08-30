@@ -26,19 +26,19 @@ export function ArticleDetail({ group, articleText, tableOrgIds, articleDates, o
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1fr_320px]">
       <div className="flex flex-col gap-4">
         <div>
-          <nav className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+          <nav className="flex items-center gap-2 text-xs text-stone-400 dark:text-stone-500">
             <button
               type="button"
               onClick={onBack}
-              className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1 font-medium text-gray-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-indigo-800 dark:hover:bg-indigo-900/30 dark:hover:text-indigo-400"
+              className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white px-3 py-1 font-medium text-stone-600 hover:border-stone-300 hover:bg-stone-100 hover:text-stone-700 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300 dark:hover:border-stone-600 dark:hover:bg-stone-800/50 dark:hover:text-stone-300"
             >
-              검증 기사 목록
+              ← 처음으로
             </button>
             <span>/</span>
             <span className="max-w-xs truncate">{group.articleTitle}</span>
           </nav>
 
-          <h2 className="mt-2 text-2xl font-bold text-gray-950 dark:text-gray-50">
+          <h2 className="mt-2 text-2xl font-bold text-stone-950 dark:text-stone-50">
             {group.articleTitle}
           </h2>
 
@@ -48,7 +48,7 @@ export function ArticleDetail({ group, articleText, tableOrgIds, articleDates, o
                 href={group.articleUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300"
+                className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-700 hover:bg-stone-200 dark:bg-stone-800/50 dark:text-stone-300"
               >
                 🔗 원문 보기
               </a>
@@ -87,22 +87,22 @@ function ClaimTableFallback({ group }: { group: ArticleGroup }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200 shadow-sm dark:border-gray-700">
-      <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
-        <thead className="bg-gray-50 dark:bg-gray-800">
+    <div className="overflow-hidden rounded-2xl border border-stone-200 shadow-sm dark:border-stone-700">
+      <table className="min-w-full divide-y divide-stone-200 text-sm dark:divide-stone-700">
+        <thead className="bg-stone-50 dark:bg-stone-800">
           <tr>
-            <th className="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400">
+            <th className="px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400">
               수치 주장
             </th>
-            <th className="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400">
+            <th className="px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400">
               매칭된 통계표
             </th>
-            <th className="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400">
+            <th className="px-3 py-2 text-left font-medium text-stone-500 dark:text-stone-400">
               판정
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-700 dark:bg-gray-900">
+        <tbody className="divide-y divide-stone-200 bg-white dark:divide-stone-700 dark:bg-stone-900">
           {group.records.map((record) => {
             const isExpanded = expandedId === record.result_id;
             const detailText = record.evidence ?? record.ambiguity_reason;
@@ -115,10 +115,10 @@ function ClaimTableFallback({ group }: { group: ArticleGroup }) {
                     detailText && setExpandedId(isExpanded ? null : record.result_id)
                   }
                 >
-                  <td className="max-w-md px-3 py-2 text-gray-900 dark:text-gray-100">
+                  <td className="max-w-md px-3 py-2 text-stone-900 dark:text-stone-100">
                     {record.claim_sentence}
                   </td>
-                  <td className="px-3 py-2 text-gray-500 dark:text-gray-400">
+                  <td className="px-3 py-2 text-stone-500 dark:text-stone-400">
                     {record.kosis_table ?? "—"}
                   </td>
                   <td className="px-3 py-2">
@@ -126,8 +126,8 @@ function ClaimTableFallback({ group }: { group: ArticleGroup }) {
                   </td>
                 </tr>
                 {isExpanded && detailText && (
-                  <tr className="bg-gray-50 dark:bg-gray-800">
-                    <td colSpan={3} className="px-3 py-3 text-sm text-gray-700 dark:text-gray-300">
+                  <tr className="bg-stone-50 dark:bg-stone-800">
+                    <td colSpan={3} className="px-3 py-3 text-sm text-stone-700 dark:text-stone-300">
                       {detailText}
                     </td>
                   </tr>
