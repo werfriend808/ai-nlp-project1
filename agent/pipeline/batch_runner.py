@@ -58,7 +58,12 @@ from pathlib import Path
 from typing import Optional
 
 from agent.preprocessing.classifier import classify
-from agent.preprocessing.claim_extractor import extract_claims, recover_missed_claims, strip_title_prefix_from_claims
+from agent.preprocessing.claim_extractor import (
+    extract_claims,
+    recover_missed_claims,
+    strip_title_prefix_from_claims,
+    correct_scale_errors,
+)
 from agent.preprocessing.claim_candidate_scanner import _normalize_quotes
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
@@ -1515,6 +1520,12 @@ def run_article(
     # 대신 infer_org_from_reason 자체에 "발표/집계/공표/통계/조사"류 키워드가 reason에
     # 같이 있어야만 발동하는 안전장치를 달아서 재활성화했다(source_filter.py 참고) —
     # 통계 발표 reason은 복구하고, 일반 인용문 오탐은 계속 차단.
+    # 2026-08-31: value/comparison_value의 한글 조/억/만 단위 계산 실수(코드가 직접
+    # 문장에서 재계산해서 검증 — claim_extractor.correct_scale_errors 참고)를 출처
+    # 필터보다 먼저 교정한다 — 교정을 먼저 해야 filter_verifiable_claims의
+    # value_mismatch 체크가 교정된(정확한) 값을 보고 판단한다.
+    claims = correct_scale_errors(claims)
+
     claims = resolve_claim_sources(claims, cls_result.reason)
     before_filter = len(claims)
     claims = filter_verifiable_claims(claims)

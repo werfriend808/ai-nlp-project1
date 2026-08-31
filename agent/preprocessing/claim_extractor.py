@@ -15,6 +15,7 @@ agent/preprocessing/claim_extractor.py — 2단계 수치 주장 문장 추출
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Optional
@@ -604,8 +605,147 @@ def strip_title_prefix_from_claims(claims: list[Claim], article_title: Optional[
     return claims
 
 
+# ── 한글 조/억/만/천 복합 단위 표기 계산 검증 ────────────────────────────────
+#
+# 2026-08-22에 "1조2000억원을 1200억원으로 자릿수를 하나 줄여 잘못 계산하는" 실수를
+# 발견해서 시스템 프롬프트(prompts/claim_extractor_prompt.txt)에 지시문을 추가했었다.
+# 그런데 2026-08-31 실측(benchmark/diagnose_source_exclusions.py, 무작위 50건)에서
+# 같은 종류의 자릿수 오류가 또 재현됐다 — "1조6132억원"이 value=16132(1만배 축소),
+# "1조4700억원"이 value=14700, "187조970억원"이 value=187970(단위를 통째로 지우고
+# 숫자만 이어붙임)처럼. 프롬프트 지시만으로는 LLM의 산술 계산 실수를 안정적으로 막을
+# 수 없다는 뜻이라, 코드가 직접 문장에서 "N조M억K만" 표기를 정확한 정수로 환산해서
+# LLM이 뽑은 value/comparison_value와 대조한다.
+#
+# 두 가지 알려진 실수 패턴만 좁게 교정한다(애매하면 손대지 않는다 — source_filter.py와
+# 같은 원칙, 잘못된 확신으로 엉뚱하게 고치는 게 안 고치는 것보다 위험하다):
+#   1) 배수 오류: value가 정답의 정확히 10의 거듭제곱 배수(100배, 1만배 등)만큼만 다름
+#      — 단위 하나를 통째로 빼먹거나 자릿수를 줄인 경우.
+#   2) 자릿수 이어붙이기 오류: value가 각 단위 앞 숫자를 단위 없이 그대로 이어붙인
+#      값과 정확히 같음(예: "187조970억" -> "187"+"970" -> 187970).
+# 문장에 이런 복합 표기가 여러 개 있어서 어느 쪽이 정답인지 애매하면(교정 후보가
+# 2개 이상이면) 손대지 않는다.
+
+_KOREAN_SCALE_UNITS: dict[str, int] = {"조": 10**12, "억": 10**8, "만": 10**4, "천": 10**3}
+
+# "1조6132억", "6만1200", "54억", "7억1000만"처럼 조/억/만/천 단위가 하나 이상 붙은
+# 복합 숫자 표기 전체를 한 덩어리로 잡는다. 마지막 단위 뒤에 단위 없는 나머지 숫자
+# (예: "6만1200"의 "1200")까지 포함한다.
+_KOREAN_AMOUNT_RE = re.compile(
+    r"\d+(?:\.\d+)?(?:조|억|만|천)(?:\d+(?:\.\d+)?(?:조|억|만|천))*\d*"
+)
+_KOREAN_AMOUNT_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)(조|억|만|천)")
+
+
+def _parse_korean_amount(expr: str) -> Optional[float]:
+    """"1조6132억"처럼 조/억/만/천이 섞인 복합 표기 하나를 정확한 숫자로 환산한다."""
+    matches = list(_KOREAN_AMOUNT_UNIT_RE.finditer(expr))
+    if not matches:
+        return None
+    total = sum(float(m.group(1)) * _KOREAN_SCALE_UNITS[m.group(2)] for m in matches)
+    trailing = expr[matches[-1].end():]
+    if trailing.isdigit():
+        total += int(trailing)
+    return total
+
+
+def _digit_concatenation_value(expr: str) -> Optional[int]:
+    """"187조970억"처럼 단위 글자만 지우고 남은 숫자 그룹을 그대로 이어붙이면 나오는 값
+    (LLM이 단위 환산 없이 숫자만 옮겨 적는 실수 패턴). 단위가 하나뿐이면(자릿수를 지울
+    다른 그룹이 없어서) 이 패턴 자체가 성립하지 않고, 소수점 낀 그룹이 있으면 이어붙이기
+    자체가 의미가 없어서 둘 다 None을 돌려준다."""
+    matches = list(_KOREAN_AMOUNT_UNIT_RE.finditer(expr))
+    if len(matches) < 2 or any("." in m.group(1) for m in matches):
+        return None
+    digits = "".join(m.group(1) for m in matches)
+    trailing = expr[matches[-1].end():]
+    if trailing.isdigit():
+        digits += trailing
+    return int(digits) if digits else None
+
+
+def _is_clean_power_of_ten_ratio(ratio: float) -> bool:
+    """ratio가 10/100/1000/...처럼 10의 거듭제곱과 사실상 같은지(부동소수점 오차 감안)
+    확인한다. 1(=값이 이미 같음, 교정 대상 아님)은 제외."""
+    if ratio <= 0:
+        return False
+    log10 = math.log10(ratio)
+    return abs(log10 - round(log10)) < 1e-6 and round(log10) != 0
+
+
+def _scale_corrected_value(value: Optional[float], sentence: str) -> Optional[float]:
+    """value가 문장 속 한글 복합 단위 표기와 자릿수만 다른, 전형적인 계산 실수 패턴이면
+    정답으로 보이는 값을 돌려준다. 애매하면(교정 후보가 2개 이상이거나 하나도 없으면)
+    None(교정 안 함)을 돌려준다."""
+    if not value:
+        return None
+    candidates: set[float] = set()
+    for m in _KOREAN_AMOUNT_RE.finditer(sentence):
+        expr = m.group()
+        parsed = _parse_korean_amount(expr)
+        if parsed is None or parsed == value:
+            continue
+        if _is_clean_power_of_ten_ratio(parsed / value):
+            candidates.add(parsed)
+        elif _digit_concatenation_value(expr) == value:
+            candidates.add(parsed)
+    if len(candidates) == 1:
+        return candidates.pop()
+    return None
+
+
+def correct_scale_errors(claims: list[Claim]) -> list[Claim]:
+    """claim.value/comparison_value가 문장 속 한글 복합 단위 표기와 자릿수만 다르면
+    (전형적인 "조/억 단위 계산 실수") 문장에서 직접 계산한 정확한 값으로 교정한다.
+    LLM(HCX)의 산술 계산에 의존하지 않고 코드가 직접 검증하는 안전장치."""
+    for claim in claims:
+        corrected = _scale_corrected_value(getattr(claim, "value", None), claim.sentence)
+        if corrected is not None:
+            print(f"[단위 자동교정] value {claim.value!r} -> {corrected!r} (\"{claim.sentence[:50]}\")")
+            claim.value = corrected
+        corrected_cmp = _scale_corrected_value(getattr(claim, "comparison_value", None), claim.sentence)
+        if corrected_cmp is not None:
+            print(
+                f"[단위 자동교정] comparison_value {claim.comparison_value!r} -> {corrected_cmp!r} "
+                f"(\"{claim.sentence[:50]}\")"
+            )
+            claim.comparison_value = corrected_cmp
+    return claims
+
+
 if __name__ == "__main__":
     #   python -m agent.preprocessing.claim_extractor
+
+    # 2026-08-31 회귀 테스트: correct_scale_errors — benchmark/diagnose_source_exclusions.py
+    # 무작위 50건 실측에서 재현된 실제 자릿수 오류 사례들(한국거래소/산업통상자원부/
+    # 농림축산식품부 관련 기사)로 검증. 배수 오류(단위 하나 축소)와 자릿수 이어붙이기
+    # 오류(단위 삭제) 둘 다 확인.
+    _scale_error_samples = [
+        # (문장, 잘못된 value, 기대하는 교정값) — 배수 오류(10의 거듭제곱 배수)
+        ("26일 한국거래소에 따르면 국민연금 등 연기금은 연초 이후 지난 24일까지 유가증권시장(코스피)에서 1조6132억원을 순매수했다.", 16132.0, 1_613_200_000_000.0),
+        ("연기금이 올 1월 유가증권시장에서 1조6000억원어치를 순매수하며 코스피지수 상승을 이끈 것으로 나타났다.", 16_000_000_000.0, 1_600_000_000_000.0),
+        ("구체적으로 한화투자증권(시총 1조4700억원)...", 14700.0, 1_470_000_000_000.0),
+        ("李, 대선 때 54억원 썼다...", 540_000_000.0, 5_400_000_000.0),
+        ("3년 치 일감(수주 잔량 약 3조원)이 쌓인 상황...", 30_000_000.0, 3_000_000_000_000.0),
+        # 자릿수 이어붙이기 오류(단위를 통째로 지우고 숫자만 이어붙임)
+        ("SK하이닉스는 시총이 지난해 말 126조6000억원에서 이달 20일 187조970억원으로 60조원 늘어난 가운데...", 187970.0, 187_097_000_000_000.0),
+    ]
+    for sentence, wrong_value, expected in _scale_error_samples:
+        corrected = _scale_corrected_value(wrong_value, sentence)
+        assert corrected == expected, (
+            f"❌ 교정 실패: value={wrong_value!r}, 문장=\"{sentence[:40]}...\" "
+            f"기대={expected!r}, 실제={corrected!r}"
+        )
+    # 정상 값은 손대지 않아야 한다(이미 맞는 값을 건드리면 오히려 회귀).
+    assert _scale_corrected_value(1_600_000_000_000.0, "연기금이 1조6000억원어치를 순매수했다.") is None, (
+        "❌ 이미 정확한 값을 잘못 건드림"
+    )
+    # 문장에 단위 표기가 아예 없으면 교정 대상이 아니다(오탐 방지).
+    assert _scale_corrected_value(83.5, "울릉군은 10년간 왕좌를 차지했다.") is None, (
+        "❌ 단위 표기 없는 문장에서 잘못 교정함"
+    )
+    print(f"[회귀 테스트 통과] correct_scale_errors — 배수 오류 {len(_scale_error_samples) - 1}건 + "
+          f"자릿수 이어붙이기 오류 1건 정확히 교정, 정상 값/무관 문장은 안 건드림 확인\n")
+
     sample = (
         "통계청이 23일 발표한 '2024년 양곡소비량조사 결과'에 따르면, "
         "작년 국민 1인당 쌀 소비량은 1년 전보다 1.1%(0.6kg) 감소한 55.8kg을 기록했다. "

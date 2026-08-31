@@ -55,6 +55,7 @@ from agent.preprocessing.claim_extractor import (
     extract_claims,
     recover_missed_claims,
     strip_title_prefix_from_claims,
+    correct_scale_errors,
 )
 from agent.preprocessing.classifier import classify
 from agent.preprocessing.source_filter import (
@@ -211,6 +212,7 @@ def main() -> None:
             skipped_articles += 1
             continue
 
+        claims = correct_scale_errors(claims)
         claims = resolve_claim_sources(claims, cls_result.reason)
         print(f"→ claim {len(claims)}개")
 
