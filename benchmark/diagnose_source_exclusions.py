@@ -185,7 +185,8 @@ def main() -> None:
 
     buckets: Counter[str] = Counter()
     unmatched_examples: list[tuple[str, str]] = []  # (source_org, sentence)
-    no_source_examples: list[str] = []  # sentence만
+    no_source_examples: list[tuple[str, str]] = []  # (article_label, sentence) — 기사 단위로 몰려있는지 보려고
+    value_mismatch_examples: list[tuple[str, object, object, str]] = []  # (source_org, value, comparison_value, sentence)
     skipped_articles = 0
 
     for i, article in enumerate(articles, 1):
@@ -219,7 +220,11 @@ def main() -> None:
             if reason == "unmatched_org":
                 unmatched_examples.append((c.source_org, c.sentence))
             elif reason == "no_source_org":
-                no_source_examples.append(c.sentence)
+                no_source_examples.append((article["label"], c.sentence))
+            elif reason == "value_mismatch":
+                value_mismatch_examples.append(
+                    (c.source_org, getattr(c, "value", None), getattr(c, "comparison_value", None), c.sentence)
+                )
 
     total = sum(buckets.values())
     print(f"\n{'=' * 70}")
@@ -239,12 +244,29 @@ def main() -> None:
         print(f"  [{org!r}] {sentence[:80]}")
 
     print(f"\n{'=' * 70}")
-    print(f"no_source_org 예시 (source_org 완전히 못 채움, {len(no_source_examples)}건, 최대 15개) —")
-    print("resolve_claim_sources(backfill+reason fallback)까지 거치고도 못 채운 것들이라,")
-    print("여기 손대려면 claim_extractor 자체나 infer_org_from_reason 트리거 확장이 필요합니다:")
+    print(f"no_source_org 예시 (source_org 완전히 못 채움, {len(no_source_examples)}건) — 기사별로 묶음.")
+    print("한 기사에서 여러 건이 몰려 나오면, 그 기사 claim 전체가 source_org=None이라")
+    print("backfill_source_org 자체가 채울 소스가 없었다는 뜻(→ infer_org_from_reason이나")
+    print("claim_extractor 프롬프트 쪽을 봐야 함). 문장 내용상 통계청류 통계가 명백한데도")
+    print("여기 있으면 그게 진짜 버그입니다:")
     print(f"{'=' * 70}")
-    for sentence in no_source_examples[:15]:
-        print(f"  {sentence[:90]}")
+    no_source_by_article: dict[str, list[str]] = {}
+    for label, sentence in no_source_examples:
+        no_source_by_article.setdefault(label, []).append(sentence)
+    for label, sentences in sorted(no_source_by_article.items(), key=lambda kv: -len(kv[1])):
+        print(f"\n  {label}  ({len(sentences)}건)")
+        for s in sentences:
+            print(f"    - {s[:90]}")
+
+    print(f"\n{'=' * 70}")
+    print(f"value_mismatch 예시 (문장 속 숫자와 value/comparison_value가 안 맞음, {len(value_mismatch_examples)}건) —")
+    print("정말 오귀속(다른 문장 값이 잘못 붙음)인지, 아니면 한글 표기 변형을 필터가 못 알아본")
+    print("오탐(false positive)인지 눈으로 확인이 필요합니다. 오탐이면 _korean_number_variants를")
+    print("보강해야 하고, 진짜 오귀속이면 필터가 맞게 일하고 있는 겁니다:")
+    print(f"{'=' * 70}")
+    for org, value, comparison_value, sentence in value_mismatch_examples:
+        print(f"  [{org}] value={value!r} comparison_value={comparison_value!r}")
+        print(f"    {sentence[:100]}")
 
 
 if __name__ == "__main__":
