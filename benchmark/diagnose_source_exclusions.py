@@ -213,7 +213,7 @@ def main() -> None:
             continue
 
         claims = correct_scale_errors(claims)
-        claims = resolve_claim_sources(claims, cls_result.reason)
+        claims = resolve_claim_sources(claims, cls_result.reason, article["article_text"])
         print(f"→ claim {len(claims)}개")
 
         for c in claims:

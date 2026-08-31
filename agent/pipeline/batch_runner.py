@@ -1526,7 +1526,7 @@ def run_article(
     # value_mismatch 체크가 교정된(정확한) 값을 보고 판단한다.
     claims = correct_scale_errors(claims)
 
-    claims = resolve_claim_sources(claims, cls_result.reason)
+    claims = resolve_claim_sources(claims, cls_result.reason, article["article_text"])
     before_filter = len(claims)
     claims = filter_verifiable_claims(claims)
     if before_filter != len(claims):

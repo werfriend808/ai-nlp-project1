@@ -176,16 +176,68 @@ def infer_org_from_reason(reason: Optional[str]) -> Optional[str]:
     return None
 
 
-def resolve_claim_sources(claims: list[Claim], classifier_reason: Optional[str] = None) -> list[Claim]:
-    """한 기사에서 나온 claim들의 source_org를 최대한 채운다 (backfill → reason fallback 순).
+# infer_org_from_reason과 달리 "밝히다"/"말하다"류 범용 인용 동사도 트리거로 인정한다.
+# 2026-08-13에 이 동사들을 뺀 이유("OO 관계자는 ~라고 말했다"처럼 스포크스퍼슨 개인
+# 발언에 기관명이 스치는 오탐)는, infer_org_from_article_text에서는 "기관명 뒤에 조사
+# (는/은/이/가)가 곧장 붙어야 한다"는 조건 자체로 이미 막힌다 — "국세청 관계자는"처럼
+# 기관명과 조사 사이에 "관계자"/"담당자" 등이 끼면 기관명 바로 뒤가 조사가 아니라서
+# 애초에 매칭이 안 된다. "산업통상자원부는 5일 이같이 밝히고..."처럼 기관 자체가 문장의
+# 주어로 직접 등장하는 공식 발표만 좁게 잡아낸다.
+_BROAD_ATTRIBUTION_RE = re.compile(r"(발표|집계|공표|통계|조사|밝히|말하|전하)")
+_ORG_SUBJECT_PARTICLES = ("는", "은", "이", "가")
+
+
+def infer_org_from_article_text(article_text: Optional[str]) -> Optional[str]:
+    """resolve_claim_sources가 backfill/reason fallback 둘 다 실패했을 때(기사의 모든
+    claim이 source_org=None인 경우) 쓰는 마지막 폴백. infer_org_from_reason은 1단계
+    classifier가 만든 짧은 reason 텍스트만 보는데, reason은 요약이라 원문의 정확한
+    인용 표현이 그대로 안 남는 경우가 많다(2026-08-31 실측: "트럼프 한국 관세 발언"
+    팩트체크 기사 — 본문엔 "산업통상자원부는 5일 이같이 밝히고..."가 명확히 있는데,
+    이 기사의 claim 문장들(관세율 수치)엔 기관명이 없고, 기관명이 있는 문장은 숫자가
+    없어 애초에 claim으로 안 뽑혀서 8건 전부 source_org=None으로 남았음). 그래서 기사
+    본문 전체에서 직접 "기관명이 주어로 등장 + 발표성 동사"를 찾는다."""
+    if not article_text:
+        return None
+    normalized = _normalize_whitespace(article_text)
+    for org in sorted(KOSIS_VERIFIED_ORGS, key=len, reverse=True):
+        norm_org = _normalize_whitespace(org)
+        for particle in _ORG_SUBJECT_PARTICLES:
+            idx = 0
+            needle = norm_org + particle
+            while True:
+                pos = normalized.find(needle, idx)
+                if pos == -1:
+                    break
+                window = normalized[pos + len(needle): pos + len(needle) + 60]
+                if _BROAD_ATTRIBUTION_RE.search(window):
+                    return org
+                idx = pos + 1
+    return None
+
+
+def resolve_claim_sources(
+    claims: list[Claim],
+    classifier_reason: Optional[str] = None,
+    article_text: Optional[str] = None,
+) -> list[Claim]:
+    """한 기사에서 나온 claim들의 source_org를 최대한 채운다
+    (backfill → reason fallback → 본문 fallback 순).
 
     1) 같은 기사 내 다른 claim에 채워진 org로 역채움(backfill_source_org)
     2) 그래도 비어있으면(같은 기사의 모든 claim이 원래 다 비어있던 경우), 1단계
        classifier의 reason 텍스트에서 기관명을 찾아 채움(infer_org_from_reason)
+    3) 그래도 비어있으면, 기사 본문 전체에서 "기관명이 주어로 직접 등장하는 공식
+       발표" 패턴을 찾아 채움(infer_org_from_article_text) — article_text를 안 넘기면
+       이 단계는 건너뛴다(하위 호환).
     """
     filled = backfill_source_org(claims)
     if classifier_reason:
         inferred = infer_org_from_reason(classifier_reason)
+        if inferred:
+            from dataclasses import replace
+            filled = [c if c.source_org else replace(c, source_org=inferred) for c in filled]
+    if article_text and any(not c.source_org for c in filled):
+        inferred = infer_org_from_article_text(article_text)
         if inferred:
             from dataclasses import replace
             filled = [c if c.source_org else replace(c, source_org=inferred) for c in filled]
@@ -532,3 +584,30 @@ if __name__ == "__main__":
     )
 
     print("\n최종 통과:", [c.source_org for c in filter_verifiable_claims(backfill_source_org(samples))])
+
+    # 2026-08-31 회귀 테스트: infer_org_from_article_text — "트럼프 한국 관세 발언"
+    # 팩트체크 기사(2026-08-31 실측, 8건 전부 source_org=None으로 빠졌던 실제 사례)로
+    # 검증. (a) 기관명이 문장의 주어로 직접 등장하면("산업통상자원부는 ... 밝히고")
+    # "밝히다"만 있어도 복구돼야 한다.
+    trump_tariff_article = (
+        "도널드 트럼프 미국 대통령이 5일 의회 연설에서 \"한국이 미국에 4배 높은 관세를 "
+        "부과하고 있다\"고 언급한 것과 관련해 우리 정부는 \"사실과 다르다\"며 \"미국 측에 "
+        "이를 설명하겠다\"고 밝혔다. 산업통상자원부는 5일 이같이 밝히고, \"주미한국대사관과 "
+        "다양한 통상 채널을 통해 사실관계를 미국 측에 설명하겠다\"고 했다. 우리나라는 2007년 "
+        "미국과 자유무역협정(FTA)을 체결하고 대부분의 상품을 무관세로 수입하고 있다."
+    )
+    assert infer_org_from_article_text(trump_tariff_article) == "산업통상자원부", (
+        f"기대: 산업통상자원부, 실제: {infer_org_from_article_text(trump_tariff_article)!r} — "
+        f"기관 주어 + '밝히다' 복구가 깨졌습니다."
+    )
+    # (b) 반대로 "OO 관계자는 ~라고 말했다"처럼 기관명과 조사 사이에 "관계자"가 끼면(사람이
+    #     주어) 여전히 오탐이 나면 안 된다 — infer_org_from_reason이 막던 것과 동일한 안전장치.
+    spokesperson_article = "국세청 관계자는 유튜버들의 수퍼챗 등 후원금이 과세 대상이라고 말했다."
+    assert infer_org_from_article_text(spokesperson_article) is None, (
+        f"기대: None, 실제: {infer_org_from_article_text(spokesperson_article)!r} — "
+        f"'관계자' 낀 개인 발언 오탐이 재발했습니다."
+    )
+    print(
+        "[회귀 테스트 통과] infer_org_from_article_text — 기관 주어 + '밝히다' 공식 발표는 "
+        "복구되고, '관계자' 낀 개인 발언 인용은 계속 차단됨 확인"
+    )
