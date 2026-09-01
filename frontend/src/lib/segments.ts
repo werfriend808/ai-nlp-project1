@@ -58,6 +58,29 @@ function stripTitlePrefix(sentence: string, articleTitle: string | undefined): s
   return sentence;
 }
 
+const REGEX_SPECIAL_RE = /[.*+?^${}()|[\]\\]/g;
+
+// claim_sentence와 원문 사이의 공백 표기 차이(괄호 앞뒤 띄어쓰기, "60kg선" vs "60kg 선"
+// 등)만으로 매칭에 실패하는 사례가 실측 확인됐다(2026-08-31, 데모 프리셋 row294에서
+// 재현 — "8.6kg로 1년 전 대비 4.9%(0.4kg)증가했다"(원문, 공백 없음) vs claim_sentence의
+// "...4.9%(0.4kg) 증가했다"(공백 있음)). 예전엔 indexOf로 완전 일치만 찾아서 이런 사소한
+// 공백 차이도 "원문에서 못 찾음"으로 빠졌다. sentence를 정규식으로 변환하되 공백 연속
+// 구간만 "\s*"(0개 이상 허용)로 느슨하게 바꿔서, 나머지 글자는 원문과 정확히 같은 것만
+// 찾는다 — 오탐(엉뚱한 자리 매칭) 위험 없이 공백 차이만 흡수한다.
+function buildFlexibleRegex(sentence: string): RegExp {
+  const escaped = sentence.replace(REGEX_SPECIAL_RE, "\\$&").replace(/\s+/g, "\\s*");
+  return new RegExp(escaped);
+}
+
+function findFlexible(article: string, sentence: string): { index: number; length: number } | null {
+  const exact = article.indexOf(sentence);
+  if (exact !== -1) return { index: exact, length: sentence.length };
+
+  const match = buildFlexibleRegex(sentence).exec(article);
+  if (!match) return null;
+  return { index: match.index, length: match[0].length };
+}
+
 export function buildArticleSegments(
   articleText: string,
   claims: VerificationRecord[],
@@ -74,8 +97,8 @@ export function buildArticleSegments(
   const located = claims
     .map((record) => {
       const stripped = stripTitlePrefix(record.claim_sentence, articleTitle);
-      const index = normalizedArticle.indexOf(normalizeQuotes(stripped));
-      return { record, index, matchedText: index === -1 ? record.claim_sentence : stripped };
+      const found = findFlexible(normalizedArticle, normalizeQuotes(stripped));
+      return { record, index: found ? found.index : -1, length: found ? found.length : 0 };
     })
     .filter((m) => m.index !== -1)
     .sort((a, b) => a.index - b.index);
@@ -91,7 +114,7 @@ export function buildArticleSegments(
   // 시작 위치는 같은데 판정이 다르면(진짜 의견 차이) 계속 보여준다.
   const renderedByIndex = new Map<number, VerificationRecord["verification_result"]>(); // index -> verification_result
   let cursor = 0;
-  for (const { record, index, matchedText } of located) {
+  for (const { record, index, length } of located) {
     if (index < cursor) {
       const sameSpotVerdict = renderedByIndex.get(index);
       if (sameSpotVerdict !== undefined && sameSpotVerdict === record.verification_result) {
@@ -103,7 +126,7 @@ export function buildArticleSegments(
     if (index > cursor) {
       segments.push({ type: "text", content: articleText.slice(cursor, index) });
     }
-    const end = index + matchedText.length;
+    const end = index + length;
     segments.push({ type: "claim", content: articleText.slice(index, end), record });
     cursor = end;
     rendered.push(record);

@@ -63,12 +63,12 @@ export function InsightsPanel({ group, tableOrgIds }: InsightsPanelProps) {
         <div>
           <p className="mb-3 text-xs font-medium text-gray-500 dark:text-gray-400">핵심 지표</p>
           <div className="flex flex-col gap-4">
+            {/* 게이지는 중앙 배치 유지(사용자 확인, 2026-09-01) — 대신 안에 들어가는
+                숫자/라벨 자체의 줄간격이 안 맞아 보이는 문제를 ScoreGauge 내부에서 고침. */}
             <div className="flex justify-center">
               <ScoreGauge value={matchRate} colorClass={scoreColorClass} />
             </div>
-            <div className="flex justify-start">
-              <ConfidenceDots filled={confidenceFilled} label={confidenceLabel} />
-            </div>
+            <ConfidenceDots filled={confidenceFilled} label={confidenceLabel} />
           </div>
         </div>
 

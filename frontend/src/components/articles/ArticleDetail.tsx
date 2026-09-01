@@ -13,7 +13,7 @@ interface ArticleDetailProps {
   onBack: () => void;
 }
 
-const VERDICT_ORDER = ["불일치", "애매", "일치"] as const;
+const VERDICT_ORDER = ["일치", "불일치", "애매"] as const;
 
 export function ArticleDetail({ group, articleText, tableOrgIds, articleDates, onBack }: ArticleDetailProps) {
   const counts = new Map<(typeof VERDICT_ORDER)[number], number>();

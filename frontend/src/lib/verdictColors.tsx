@@ -51,10 +51,14 @@ export const VERDICT_COUNT_BOX_CLASS: Record<"일치" | "불일치" | "애매", 
   애매: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
 };
 
+// ArticleDetail.tsx의 text-xs 요약 pill(px-2.5 py-1) 안에 들어가는 아이콘이라 h-6(24px)은
+// 텍스트 크기에 비해 너무 커서 pill 세로 패딩이 아이콘에 맞춰 늘어나 보이는 문제가
+// 있었다(실측 지적, 2026-09-01) — 내부 글리프 자체가 h-3.5(14px) 고정이므로 바깥 원을
+// h-4(16px)로 줄여서 pill의 text-xs 리듬에 맞춘다.
 export const VERDICT_ICON: Record<"일치" | "불일치" | "애매", ReactNode> = {
-  일치: <VerdictIcon verdict="일치" className="h-6 w-6" />,
-  불일치: <VerdictIcon verdict="불일치" className="h-6 w-6" />,
-  애매: <VerdictIcon verdict="애매" className="h-6 w-6" />,
+  일치: <VerdictIcon verdict="일치" className="h-4 w-4" />,
+  불일치: <VerdictIcon verdict="불일치" className="h-4 w-4" />,
+  애매: <VerdictIcon verdict="애매" className="h-4 w-4" />,
 };
 
 // 기사 목록 테이블 행의 왼쪽 강조 테두리 색.
