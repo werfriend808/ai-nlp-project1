@@ -1,3 +1,10 @@
+# 819건 검증 실행의 원자료/재개용 체크포인트 (2026-09-01) — candidates.jsonl(검색 후보
+# 원자료, 265MB)와 checkpoint.json(중단 시 재개용, 263MB)은 GitHub 100MB 파일 한도를
+# 넘고 이미 완료된 실행이라 재개 용도도 없다. 결과물(claims/verified_mappings/
+# results.csv/summary 등)만 커밋하고, 이 둘은 로컬 백업(사용자 컴퓨터)에만 보관.
+benchmark/verified_mapping_819/candidates.jsonl
+benchmark/verified_mapping_819/checkpoint.json
+
 # 회사 제공 원본 데이터 (읽기 전용)
 data/*.csv
 
