@@ -29,3 +29,6 @@ agent/kosis/chroma_db/
 
 # 관측성 로그(agent/observability.py) — 실행할 때마다 쌓이는 런타임 산출물, 소스 아님
 logs/*.jsonl
+
+# macOS
+.DS_Store
