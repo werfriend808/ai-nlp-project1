@@ -36,7 +36,12 @@ try:
 except ImportError:
     pass
 
-VDB_TABLE_NAME = "kosis_vdb_tables"
+# [DEPRECATED] 2026-08-27: 이 상수를 쓰는 enrich_table()/enrich_candidates()는 현재
+# 아무 데서도 호출되지 않는다(실제 사용되는 건 fetch_period_range/fetch_table_detail뿐).
+# 가리키는 kosis_vdb_tables 테이블은 데이터 소실 후 재구축에서 없어졌고(지금은
+# kosis_vdb_tables_qwen), objl_enriched 컬럼도 새 스키마엔 없다. 되살리려면
+# 테이블명/컬럼명(tbl_id->table_id, text->embedding_text)을 함께 고쳐야 한다.
+VDB_TABLE_NAME = "kosis_vdb_tables"  # 존재하지 않는 테이블 -- 위 주석 참고
 _META_URL = "https://kosis.kr/openapi/Param/statisticsParameterData.do"
 
 # 표마다 유효한 주기(prdSe)가 다르다(연간만 되는 표, 월별만 되는 표 등) — 실측(체크·
@@ -74,6 +79,25 @@ _PRD_SE_ATTEMPTS = (
 )
 
 _AXIS_NAME_RE = re.compile(r"^C(\d+)_OBJ_NM$")
+
+# 2026-08-30: fetch_table_detail()이 "첫 성공에서 멈추기" 때문에, 표가 여러 주기를
+# 지원해도 하나만 알아내고 나머지(D/H/F/IR 등)는 존재 자체를 모르는 문제가 있었다
+# (docs/period_granularity_fix_spec.md 참고). 이 표는 위 _PRD_SE_ATTEMPTS(주 구조
+# 탐색용, M/A/Y/Q만)가 못 찾는 나머지 KOSIS 공식 주기(D/H/F/IR, 실측: KOSIS 공식
+# prdSe는 D/M/Q/H/Y/F/IR 7종 — reembed_worker.py의 PRD_SE_ATTEMPTS 주석 참고)를
+# 가볍게(전체 axis/code_map을 다시 뽑지 않고 "데이터가 있는지"만) 추가로 확인하는 데
+# 쓴다. 시점 문자열 형식은 KOSIS 공식 문서 기준(YYYY=연간, YYYYMM=월간, YYYYHH=반기
+# [01/02], YYYYQQ=분기[01~04], YYYYMMDD=일간) — 자체 추측이 아니라 공식 문서로
+# 확인한 값이다. F(다년)/IR(비정기)은 실제 조사 연도가 언제인지 알 수 없어(격년/3년/
+# 5년 등 제각각) 최근 몇 개 연도를 순서대로 시도한다(하나라도 성공하면 그 주기를
+# 지원하는 것으로 판단 — 정확한 조사 연도 목록을 만드는 게 아니라 "이 표가 이 주기
+# 자체를 지원하는지"만 확인하는 용도).
+_ADDITIONAL_PERIOD_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "D": ("20231001",),
+    "H": ("202301", "202302"),
+    "F": ("2022", "2021", "2020", "2018"),
+    "IR": ("2023", "2022"),
+}
 
 
 class ObjlFetchError(RuntimeError):
@@ -290,10 +314,50 @@ def fetch_item_names(org_id: str, tbl_id: str, api_key: Optional[str] = None) ->
     return names or None
 
 
+def _probe_additional_periods(
+    org_id: str, tbl_id: str, api_key: str, n_axes: int, already_found: str
+) -> list[str]:
+    """주 탐색(_PRD_SE_ATTEMPTS)이 이미 찾은 것 외에, KOSIS 공식 나머지 주기(D/H/F/IR)를
+    표가 추가로 지원하는지 가볍게 확인한다. 데이터 유무만 보므로 axis/code_map은 다시
+    뽑지 않는다(비용 절감) — n_axes는 주 탐색이 이미 성공한 축 개수를 그대로 재사용한다
+    (같은 표라 축 구조는 주기와 무관하게 동일하다고 가정, table_params.json의 기존
+    "dimensions는 주기 무관, prdSe만 여러 개" 설계와 동일한 전제).
+
+    반환: 실제로 데이터가 확인된 코드 리스트(already_found 제외, 순서는
+    _ADDITIONAL_PERIOD_CANDIDATES 순서 그대로 — D/H/F/IR)."""
+    confirmed: list[str] = []
+    for prd_se, test_dates in _ADDITIONAL_PERIOD_CANDIDATES.items():
+        if prd_se == already_found:
+            continue
+        for start in test_dates:
+            params = {
+                "method": "getList", "apiKey": api_key, "format": "json", "jsonVD": "Y",
+                "orgId": org_id, "tblId": tbl_id, "prdSe": prd_se,
+                "startPrdDe": start, "endPrdDe": start,
+                **{f"objL{i}": "ALL" for i in range(1, n_axes + 1)}, "itmId": "ALL",
+            }
+            try:
+                resp = requests.get(_META_URL, params=params, timeout=15)
+                data = resp.json()
+            except (requests.RequestException, ValueError):
+                continue
+            if isinstance(data, list) and data:
+                confirmed.append(prd_se)
+                break  # 이 prd_se는 확인됐으니 다음 코드로(같은 코드의 다른 연도 더 안 봄)
+    return confirmed
+
+
 def fetch_table_detail(org_id: str, tbl_id: str, api_key: Optional[str] = None) -> dict:
     """표 하나의 분류축 이름 + 값 코드맵을 한 번의 API 성공 응답에서 같이 뽑는다.
-    반환: {"axis_names": [...], "code_maps": {axis_name: {label: code}}, "prd_se": "M"}
-    fetch_axis_names()와 재시도 로직은 동일 — 실패하면 ObjlFetchError."""
+    반환: {"axis_names": [...], "code_maps": {axis_name: {label: code}}, "prd_se": "M",
+           "prd_se_list": ["M", "H"]}
+    fetch_axis_names()와 재시도 로직은 동일 — 실패하면 ObjlFetchError.
+
+    2026-08-30: prd_se_list 추가(docs/period_granularity_fix_spec.md STEP2) — 기존엔
+    "prd_se"(주 탐색에서 처음 성공한 것 하나)만 반환해서, 표가 여러 주기를 지원해도
+    claim이 원하는 주기와 못 맞췄다. axis_names/code_maps를 찾은 뒤(비용이 드는 부분,
+    한 번만) _probe_additional_periods()로 나머지 KOSIS 공식 주기(D/H/F/IR)도 가볍게
+    추가 확인해서 리스트로 합친다."""
     key = api_key or os.environ.get("KOSIS_API_KEY")
     if not key:
         raise ObjlFetchError("KOSIS_API_KEY가 없습니다.")
@@ -368,10 +432,13 @@ def fetch_table_detail(org_id: str, tbl_id: str, api_key: Optional[str] = None) 
             # KOSIS API 파라미터(objL1/objL2/...)를 못 만든다 — 축 번호(n, "C{n}" 패턴)가
             # 곧 objL{n}이므로 이름->번호 역매핑에 쓸 수 있게 같이 반환한다(agent/kosis/
             # dynamic_slot_mapping.py가 resolve한 axis_name을 실제 API 호출로 잇는 다리).
+            extra_periods = _probe_additional_periods(org_id, tbl_id, key, n_axes, prd_se)
+            prd_se_list = [prd_se] + extra_periods
             return {
                 "axis_names": axis_names,
                 "code_maps": code_maps,
                 "prd_se": prd_se,
+                "prd_se_list": prd_se_list,
                 "axis_num_to_name": axis_num_to_name,
             }
 

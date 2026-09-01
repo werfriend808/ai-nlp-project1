@@ -18,7 +18,7 @@ export function ScoreGauge({ value, colorClass }: ScoreGaugeProps) {
           cy={size / 2}
           r={radius}
           strokeWidth={strokeWidth}
-          className="fill-none stroke-gray-100 dark:stroke-gray-800"
+          className="fill-none stroke-stone-100 dark:stroke-stone-800"
         />
         <circle
           cx={size / 2}
@@ -32,10 +32,10 @@ export function ScoreGauge({ value, colorClass }: ScoreGaugeProps) {
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-2xl font-bold text-gray-900 dark:text-gray-50">
+        <span className="text-2xl font-bold text-stone-900 dark:text-stone-50">
           {Math.round(value)}%
         </span>
-        <span className="text-[10px] text-gray-400">매칭률</span>
+        <span className="text-[10px] text-stone-400">매칭률</span>
       </div>
     </div>
   );

@@ -1,0 +1,562 @@
+{
+ "5-01a": {
+  "statistic_expression": "취업자 수",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-01b": {
+  "statistic_expression": "취업자 수",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2024-06",
+  "unit": "명"
+ },
+ "5-02a": {
+  "statistic_expression": "취업자 수",
+  "population": "제조업",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-02b": {
+  "statistic_expression": "전체 취업자 대비 비중",
+  "population": "제조업",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "%"
+ },
+ "5-03": {
+  "statistic_expression": "연속 감소 기간",
+  "population": "제조업 취업자",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "개월"
+ },
+ "5-04": {
+  "statistic_expression": "연속 감소 기간",
+  "population": "제조업 취업자",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "개월"
+ },
+ "5-05a": {
+  "statistic_expression": "취업자 수",
+  "population": "건설업",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-05b": {
+  "statistic_expression": "연속 감소 기간",
+  "population": "건설업 취업자",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "개월"
+ },
+ "5-06a": {
+  "statistic_expression": "취업자 수",
+  "population": "60세 이상",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-06b": {
+  "statistic_expression": "취업자 수",
+  "population": "30대",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-06c": {
+  "statistic_expression": "취업자 수",
+  "population": "15~29세 청년",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-07a": {
+  "statistic_expression": "취업자 수",
+  "population": "40대",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-07b": {
+  "statistic_expression": "취업자 수",
+  "population": "50대",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-11": {
+  "statistic_expression": "취업자 수",
+  "population": "숙박·음식점업",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-12a": {
+  "statistic_expression": "고용률",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "%p"
+ },
+ "5-12b": {
+  "statistic_expression": "고용률",
+  "population": "청년층(15~29세)",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "%p"
+ },
+ "5-13": {
+  "statistic_expression": "연속 하락 기간",
+  "population": "청년층 고용률",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "개월"
+ },
+ "5-14a": {
+  "statistic_expression": "쉬었음 인구",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-14b": {
+  "statistic_expression": "쉬었음 인구",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-15a": {
+  "statistic_expression": "쉬었음 인구",
+  "population": "20대",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "5-15b": {
+  "statistic_expression": "쉬었음 인구",
+  "population": "20대",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-06",
+  "unit": "명"
+ },
+ "11-08": {
+  "statistic_expression": "해외주식 투자잔액",
+  "population": "서학개미",
+  "region": null,
+  "source_org": "한국은행",
+  "period": "2024년 말",
+  "unit": "달러"
+ },
+ "19-01a": {
+  "statistic_expression": "산업생산·설비투자 동반 감소 지속기간",
+  "population": "산업생산·설비투자",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 3~5월",
+  "unit": "개월"
+ },
+ "19-01b": {
+  "statistic_expression": "산업생산·설비투자 동반 감소 지속기간",
+  "population": "산업생산·설비투자",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 3~5월",
+  "unit": "개월"
+ },
+ "19-03": {
+  "statistic_expression": "산업생산",
+  "population": "전산업",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 4~5월",
+  "unit": "%"
+ },
+ "19-04a": {
+  "statistic_expression": "산업생산 증감률",
+  "population": "전산업",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 3~4월",
+  "unit": "%"
+ },
+ "19-04b": {
+  "statistic_expression": "산업생산 증감률",
+  "population": "전산업",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 3~5월",
+  "unit": "%"
+ },
+ "19-05a": {
+  "statistic_expression": "제조업 생산",
+  "population": "제조업",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 4월",
+  "unit": "%"
+ },
+ "19-05b": {
+  "statistic_expression": "제조업 생산",
+  "population": "제조업",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": "%"
+ },
+ "19-06": {
+  "statistic_expression": "소매판매",
+  "population": "소매판매",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": null
+ },
+ "19-07": {
+  "statistic_expression": "소매판매 감소 지속기간",
+  "population": "소매판매",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 3, 4, 5월",
+  "unit": "개월"
+ },
+ "19-08a": {
+  "statistic_expression": "설비투자",
+  "population": "설비투자",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": "%"
+ },
+ "19-08b": {
+  "statistic_expression": "설비투자 감소 지속기간",
+  "population": "설비투자",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 3,4,5월",
+  "unit": "개월"
+ },
+ "19-09": {
+  "statistic_expression": "산업생산·설비투자 동반 감소 지속기간",
+  "population": "산업생산·설비투자",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": "개월"
+ },
+ "19-10a": {
+  "statistic_expression": "건설기성",
+  "population": "건설기성",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": "%"
+ },
+ "19-10b": {
+  "statistic_expression": "건설기성 감소 지속기간",
+  "population": "건설기성",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": "개월"
+ },
+ "19-11a": {
+  "statistic_expression": "동행종합지수 순환변동치",
+  "population": "동행종합지수 순환변동치",
+  "region": null,
+  "source_org": null,
+  "period": "2025년 5월",
+  "unit": "포인트"
+ },
+ "19-11b": {
+  "statistic_expression": "동행종합지수 순환변동치",
+  "population": "동행종합지수 순환변동치",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": "포인트"
+ },
+ "19-12": {
+  "statistic_expression": "동행종합지수 순환변동치 100 미만 지속기간",
+  "population": "동행종합지수 순환변동치",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": "개월"
+ },
+ "19-13": {
+  "statistic_expression": "동행종합지수 순환변동치 100 미만 지속기간",
+  "population": "동행종합지수 순환변동치",
+  "region": null,
+  "source_org": "통계청",
+  "period": "2025년 5월",
+  "unit": "개월"
+ },
+ "27-01": {
+  "statistic_expression": "기준금리",
+  "population": "기준금리",
+  "region": null,
+  "source_org": "한국은행",
+  "period": "2025년 4월",
+  "unit": "%"
+ },
+ "30-01": {
+  "statistic_expression": "전국 평균보다 자살률 높은 지역 비율",
+  "population": "인구 감소 지역",
+  "region": "전국",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "곳"
+ },
+ "30-02": {
+  "statistic_expression": "자살률",
+  "population": "인구 감소 지역",
+  "region": "전국",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-03": {
+  "statistic_expression": "자살률",
+  "population": "인구 감소 지역",
+  "region": "전국",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-04": {
+  "statistic_expression": "전국 평균보다 자살률 높은 지역 비율",
+  "population": "인구 감소 지역",
+  "region": "전국",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "%"
+ },
+ "30-05": {
+  "statistic_expression": "자살률 상위 지역 수",
+  "population": "자살률 상위 지역",
+  "region": "전국",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "곳"
+ },
+ "30-06a": {
+  "statistic_expression": "자살률",
+  "population": "충남 청양군",
+  "region": "충남 청양군",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-06b": {
+  "statistic_expression": "자살률",
+  "population": "강원 홍천군",
+  "region": "강원 홍천군",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-06c": {
+  "statistic_expression": "자살률",
+  "population": "강원 정선군",
+  "region": "강원 정선군",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-06d": {
+  "statistic_expression": "자살률",
+  "population": "전남 진도군",
+  "region": "전남 진도군",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-07e": {
+  "statistic_expression": "자살률",
+  "population": "경북 봉화군",
+  "region": "경북 봉화군",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-08a": {
+  "statistic_expression": "자살률",
+  "population": "노인",
+  "region": "전국",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-08b": {
+  "statistic_expression": "자살률",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "30-09": {
+  "statistic_expression": "정신과 의사 수",
+  "population": "전국",
+  "region": "전국",
+  "source_org": "국가데이터처",
+  "period": "작년(2024년)",
+  "unit": "명(인구 10만명당)"
+ },
+ "35-01": {
+  "statistic_expression": "GDP(국내총생산)",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-05-01 00:00:00",
+  "unit": "%"
+ },
+ "35-02a": {
+  "statistic_expression": "건물 착공 면적",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025 1분기",
+  "unit": "%"
+ },
+ "35-04a": {
+  "statistic_expression": "취업자 수",
+  "population": "건설업 취업자",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-04-01 00:00:00",
+  "unit": "명"
+ },
+ "35-04b": {
+  "statistic_expression": "취업자 수",
+  "population": "제조업 취업자",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "2025-04-01 00:00:00",
+  "unit": "명"
+ },
+ "36-01": {
+  "statistic_expression": "소비 총액",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "한은",
+  "period": "2025.10",
+  "unit": "원"
+ },
+ "36-02": {
+  "statistic_expression": "소비 총액",
+  "population": "65세 이상",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "원"
+ },
+ "36-03": {
+  "statistic_expression": "소비 총액",
+  "population": "65세 이상",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "%"
+ },
+ "36-04": {
+  "statistic_expression": "소비 총액",
+  "population": "15~64세",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "%"
+ },
+ "36-05": {
+  "statistic_expression": "소비 증가율",
+  "population": "0~14세",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "%"
+ },
+ "36-06": {
+  "statistic_expression": "노년층 소비",
+  "population": "65년 이상",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "%"
+ },
+ "36-07": {
+  "statistic_expression": "민간 소비",
+  "population": "민간 소비",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "%"
+ },
+ "36-08": {
+  "statistic_expression": "노동소득",
+  "population": "민간 소비",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "원"
+ },
+ "36-09": {
+  "statistic_expression": "적자",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "원"
+ },
+ "36-10": {
+  "statistic_expression": "민간 자산",
+  "population": "65~74세",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "%"
+ },
+ "36-11": {
+  "statistic_expression": "소비 증가율",
+  "population": "65세 이상",
+  "region": "전국",
+  "source_org": "통계청",
+  "period": "2025.10",
+  "unit": "%"
+ },
+ "42-01": {
+  "statistic_expression": "증가율",
+  "population": "전체",
+  "region": "전국",
+  "source_org": "KOSIS",
+  "period": "25.05",
+  "unit": "원"
+ }
+}

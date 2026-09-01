@@ -54,8 +54,8 @@ interface UnmatchedClaimListProps {
 // 차이"라는 설명이 겹침 케이스엔 안 맞아서 나뉘었다(2026-08-21).
 function UnmatchedClaimList({ title, records, claimNumbers, expandedId, setExpandedId }: UnmatchedClaimListProps) {
   return (
-    <div className="rounded-lg border border-dashed border-gray-300 p-4 text-sm dark:border-gray-600">
-      <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{title}</p>
+    <div className="rounded-lg border border-dashed border-stone-300 p-4 text-sm dark:border-stone-600">
+      <p className="mb-3 text-xs text-stone-500 dark:text-stone-400">{title}</p>
       <ul className="flex flex-col gap-2">
         {records.map((record) => {
           const isExpanded = expandedId === record.result_id;
@@ -69,11 +69,11 @@ function UnmatchedClaimList({ title, records, claimNumbers, expandedId, setExpan
                 onClick={() => detailText && setExpandedId(isExpanded ? null : record.result_id)}
               />
               {isExpanded && detailText && (
-                <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+                <div className="mt-2 rounded-lg border border-stone-200 bg-stone-50 p-4 dark:border-stone-700 dark:bg-stone-800">
                   <VerdictBadge verdict={record.verification_result} />
-                  <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">{detailText}</p>
+                  <p className="mt-2 text-sm text-stone-700 dark:text-stone-300">{detailText}</p>
                   {record.kosis_table && (
-                    <p className="mt-2 border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                    <p className="mt-2 border-t border-stone-200 pt-2 text-xs text-stone-500 dark:border-stone-700 dark:text-stone-400">
                       KOSIS 참조: {record.kosis_table}
                     </p>
                   )}
@@ -106,18 +106,18 @@ export function ArticleTextViewer({ articleText, claims, articleDate }: ArticleT
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md hover:shadow-indigo-500/5 dark:border-gray-700 dark:bg-gray-900">
-        <div className="flex items-center gap-2 border-b border-gray-100 px-6 py-4 dark:border-gray-800">
-          <span className="h-2 w-2 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
-          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">기사 원문</span>
+      <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md dark:border-stone-700 dark:bg-stone-900">
+        <div className="flex items-center gap-2 border-b border-stone-100 px-6 py-4 dark:border-stone-800">
+          <span className="h-2 w-2 rounded-full bg-stone-600" />
+          <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">기사 원문</span>
           {articleDate && (
             <>
-              <span className="text-gray-300 dark:text-gray-600">·</span>
-              <span className="text-sm text-gray-400 dark:text-gray-500">{articleDate}</span>
+              <span className="text-stone-300 dark:text-stone-600">·</span>
+              <span className="text-sm text-stone-400 dark:text-stone-500">{articleDate}</span>
             </>
           )}
         </div>
-        <div className="p-6 text-gray-900 dark:text-gray-100">
+        <div className="p-6 text-stone-900 dark:text-stone-100">
           {paragraphs.map((paragraphSegments, pIndex) => (
           // <p> 대신 <div>를 쓰는 이유: 아래 판정 카드(<div>, block 요소)가 주장을 클릭하면
           // 문단 중간에 끼어드는데, <p> 안에는 block 요소를 넣을 수 없어 브라우저가 <p>를
@@ -140,13 +140,13 @@ export function ArticleTextViewer({ articleText, claims, articleDate }: ArticleT
                     onClick={() => setExpandedId(isExpanded ? null : record.result_id)}
                   />
                   {isExpanded && (
-                    <div className="my-3 block rounded-lg border border-gray-200 bg-gray-50 p-4 leading-normal dark:border-gray-700 dark:bg-gray-800">
+                    <div className="my-3 block rounded-lg border border-stone-200 bg-stone-50 p-4 leading-normal dark:border-stone-700 dark:bg-stone-800">
                       <VerdictBadge verdict={record.verification_result} />
-                      <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
+                      <p className="mt-2 text-sm text-stone-700 dark:text-stone-300">
                         {record.evidence ?? record.ambiguity_reason ?? "판정 근거가 기록되지 않았습니다."}
                       </p>
                       {record.kosis_table && (
-                        <p className="mt-2 border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        <p className="mt-2 border-t border-stone-200 pt-2 text-xs text-stone-500 dark:border-stone-700 dark:text-stone-400">
                           KOSIS 참조: {record.kosis_table}
                         </p>
                       )}

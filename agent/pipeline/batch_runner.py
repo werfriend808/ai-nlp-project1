@@ -573,14 +573,39 @@ def build_kosis_slots(table_id: str, generic_slots: dict, table_params: dict) ->
 # 표현만 예외적으로 화이트리스트에 남겨둔다(실측: kiwi.tokenize로 직접 확인).
 _MONTH_FUSED_COMPOUNDS = ("지난달", "이달", "전달", "전월", "동월", "매달")
 
+# 2026-08-30: D(일)/H(반기)/F(다년) 인식 추가 — 기존엔 분기/월만 인식해서, VDB 전용 표
+# 뿐 아니라 64개 카탈로그 표에서도 이 주기가 필요한 claim이 전부 표의 기본 주기(대개 Y)로
+# 폴백되고 있었다(골든셋 70건 실측: 월 단위 claim 21건 중 17건이 VDB 전용 표라 prd_se
+# 매칭 자체가 안 되고 있었음 — 상세 근거는 docs/period_granularity_fix_spec.md 참고).
+#
+# 일(D) 패턴은 "N월 N일"(월+일이 함께 나오는 명시적 날짜)처럼 명확한 경우만 잡는다 —
+# "N일" 하나만으로는 "3일 만에"/"10일간" 같은 기간(duration) 표현과 구분이 안 돼 오탐
+# 위험이 크다. 실측(골든셋 19-07: "지난 3·4월 2개월 연속 줄었는데, 5월 1일 국회를
+# 통과한...")에서, 이 claim은 본질적으로 월(3·4월) 단위인데 문장 중간에 우연히 날짜가
+# 섞여 있다 — 그래서 D는 분기/월보다 낮은 우선순위로 둬서, 분기/월 신호가 이미 있으면
+# D를 검사조차 하지 않는다(이 문장은 실제로 이 순서 덕에 정확히 "M"으로 잡힘).
+_DAY_PATTERN_RE = re.compile(r"\d{1,2}\s*월\s*\d{1,2}\s*일|(?:지난달|이번달|이달|전달)\s*\d{1,2}\s*일")
+_HALF_YEAR_TERMS = ("상반기", "하반기", "반기")
+# 다년(F) 표현 — "몇 년마다"/"N년 주기"/"격년"처럼 명시적일 때만. 애매하면(예: 그냥
+# "지난 몇 년간") 잡지 않는다 — 기존 함수의 "애매하면 None" 원칙을 그대로 따른다.
+_MULTI_YEAR_RE = re.compile(r"격년|\d\s*년\s*마다|\d\s*년\s*주기")
+
 
 def _infer_desired_granularity(text: Optional[str]) -> Optional[str]:
-    """claim 문장에서 이 주장이 월/분기/연 중 어느 주기를 가리키는지 best-effort로 추정한다.
+    """claim 문장에서 이 주장이 어느 시점 주기(분기/월/일/반기/다년)를 가리키는지
+    best-effort로 추정한다. KOSIS 공식 prdSe 7종(D/M/Q/H/Y/F/IR) 중 문장만으로 비교적
+    안전하게 구분 가능한 Q/M/D/H/F만 다룬다 — Y는 "명시적 신호가 없을 때의 기본값"이라
+    별도 감지가 필요 없고, IR(비정기)/A(연간 별칭)는 문장에서 구분할 신호 자체가 없어
+    이 함수의 대상이 아니다(표가 지원하는 목록에서 상위 호출부 `_select_prd_se`가 처리).
 
     3단계(prd_se 선택 로직)의 핵심 — 2026-08-13, 64개 표 중 41개(64%)가 한 표에서 여러
     주기를 동시에 지원한다는 게 실측 확인돼서, "표가 지원하는 것 중 claim이 실제로 원하는
-    주기"를 골라야 한다. "분기"가 명시되면 최우선(월/연보다 구체적인 표현), 그 다음
-    월/달 표현, 나머지는 판단 보류(None) — 상위 호출부가 표 주기 목록에서 기본값을 쓴다."""
+    주기"를 골라야 한다.
+
+    우선순위(구체적일수록/더 흔할수록 먼저 검사): 분기 > 월/달 > 일(명시적 날짜만) >
+    반기 > 다년. 분기·월 신호가 있으면 그 뒤(일/반기/다년)는 검사하지 않는다 — 문장에
+    여러 시점 표현이 섞여 있을 때 더 큰 단위(월)가 실제 claim의 본체이고 날짜는 부수적
+    언급인 경우가 실측 확인됐다(위 19-07 사례)."""
     if not text:
         return None
 
@@ -590,13 +615,19 @@ def _infer_desired_granularity(text: Optional[str]) -> Optional[str]:
             return "Q"
         if "월" in tokens or "달" in tokens or any(kw in text for kw in _MONTH_FUSED_COMPOUNDS):
             return "M"
-        return None
+    else:
+        # kiwipiepy 미설치 시에만 예전 방식(단순 부분 문자열)으로 폴백 — "억달러" 등 오탐 위험 있음.
+        if "분기" in text:
+            return "Q"
+        if "월" in text or "달" in text:
+            return "M"
 
-    # kiwipiepy 미설치 시에만 예전 방식(단순 부분 문자열)으로 폴백 — "억달러" 등 오탐 위험 있음.
-    if "분기" in text:
-        return "Q"
-    if "월" in text or "달" in text:
-        return "M"
+    if _DAY_PATTERN_RE.search(text):
+        return "D"
+    if any(term in text for term in _HALF_YEAR_TERMS):
+        return "H"
+    if _MULTI_YEAR_RE.search(text):
+        return "F"
     return None
 
 
@@ -1159,10 +1190,19 @@ def _build_dynamic_kosis_slots(
         "tblId": table_id,
         "dimensions": dimensions,
     }
-    if detail.get("prd_se"):
-        base["prdSe"] = [detail["prd_se"]]
-    if not kosis_slots.get("prd_se") and detail.get("prd_se"):
-        kosis_slots["prd_se"] = detail["prd_se"]
+    # 2026-08-30(docs/period_granularity_fix_spec.md STEP4): 예전엔 detail["prd_se"]
+    # (표에서 처음 찾은 주기 하나)를 claim이 뭘 원하든 상관없이 그대로 썼다 — 64개
+    # 카탈로그 표 경로(run_stage_4)가 이미 쓰고 있는 _select_prd_se(supported, desired)를
+    # 여기서도 그대로 재사용해서, VDB 전용 표도 claim이 실제로 원하는 주기(월/분기/일/
+    # 반기 등, _infer_desired_granularity)와 이 표가 지원하는 주기 목록을 맞춘다.
+    prd_se_list = detail.get("prd_se_list") or ([detail["prd_se"]] if detail.get("prd_se") else None)
+    if prd_se_list:
+        base["prdSe"] = prd_se_list
+        if not kosis_slots.get("prd_se"):
+            desired = _infer_desired_granularity(claim.sentence if claim else None)
+            selected = _select_prd_se(prd_se_list, desired)
+            if selected:
+                kosis_slots["prd_se"] = selected
 
     return kosis_slots, base
 
@@ -2166,7 +2206,9 @@ def main(
         print("[배치] Qwen3-Embedding-4B 로딩 중(VDB 쿼리용)...")
         from sentence_transformers import SentenceTransformer
 
-        vdb_model = SentenceTransformer("Qwen/Qwen3-Embedding-4B", truncate_dim=1024)
+        # 2026-08-27: VDB 재구축으로 문서 벡터가 2560차원이 됐다 -- 쿼리도 같은 차원이어야
+        # pgvector 연산이 성립한다(1024로 두면 차원 불일치 오류).
+        vdb_model = SentenceTransformer("Qwen/Qwen3-Embedding-4B", truncate_dim=2560)
         vdb_instruction = (
             "Given a Korean news claim sentence, retrieve the KOSIS statistical table "
             "description that best matches it"

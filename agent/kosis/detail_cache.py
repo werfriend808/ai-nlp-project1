@@ -143,6 +143,10 @@ def get_table_detail(tbl_id: str, org_id: str, *, api_key: Optional[str] = None)
                 "code_maps": payload.get("code_maps"),
                 "axis_num_to_name": payload.get("axis_num_to_name"),
                 "prd_se": prd_se_list[0] if prd_se_list else None,
+                # 2026-08-30: 전체 리스트도 그대로 노출(docs/period_granularity_fix_spec.md
+                # STEP3) — 호출부가 claim이 원하는 주기와 이 표가 지원하는 주기들을
+                # `_select_prd_se()`로 매칭할 수 있게. prd_se(단일값)는 하위 호환용으로 유지.
+                "prd_se_list": prd_se_list,
                 "from_cache": True,
             }
         if row["status"] != "ok":
@@ -156,11 +160,15 @@ def get_table_detail(tbl_id: str, org_id: str, *, api_key: Optional[str] = None)
     try:
         with t_fetch:
             detail = fetch_table_detail(org_id, tbl_id, api_key=api_key)
+        # 2026-08-30: fetch_table_detail()이 이제 여러 주기를 확인해서 prd_se_list로
+        # 돌려준다(STEP2) — 구버전 호출부/캐시 데이터와의 하위 호환을 위해 없으면
+        # [detail["prd_se"]]로 폴백.
+        prd_se_list = detail.get("prd_se_list") or [detail["prd_se"]]
         _save(
             tbl_id, org_id,
             axis_names=detail["axis_names"], code_maps=detail["code_maps"],
             axis_num_to_name=detail["axis_num_to_name"],
-            prd_se_list=[detail["prd_se"]], status="ok",
+            prd_se_list=prd_se_list, status="ok",
         )
         log_event(
             "detail_cache", tbl_id=tbl_id, status="ok", from_cache=False,
@@ -169,7 +177,7 @@ def get_table_detail(tbl_id: str, org_id: str, *, api_key: Optional[str] = None)
         return {
             "status": "ok", "axis_names": detail["axis_names"],
             "code_maps": detail["code_maps"], "axis_num_to_name": detail["axis_num_to_name"],
-            "prd_se": detail["prd_se"], "from_cache": False,
+            "prd_se": detail["prd_se"], "prd_se_list": prd_se_list, "from_cache": False,
         }
     except ObjlFetchError as e:
         msg = str(e)
