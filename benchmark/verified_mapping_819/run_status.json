@@ -1,0 +1,15 @@
+{
+  "process_started_at": "2026-08-30T16:35:04.294249+00:00",
+  "last_updated": "2026-08-31T03:49:20.839780+00:00",
+  "current_phase": "done",
+  "n_articles_total": 819,
+  "n_articles_discovery": 573,
+  "n_articles_evaluation": 246,
+  "n_articles_completed": 819,
+  "n_claims_so_far": 2464,
+  "n_discovery_high_mappings_so_far": 255,
+  "process_elapsed_sec": 40467.4,
+  "sec_per_article_observed_this_process": 49.41,
+  "eta_seconds_remaining_at_this_rate": null,
+  "eta_completion_at_this_rate": null
+}

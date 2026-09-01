@@ -1,0 +1,50 @@
+{
+  "n_articles_total": 819,
+  "n_claims_total": 2464,
+  "n_evaluation_claims_scored": 135,
+  "n_evaluation_claims_with_mapping_hit": 135,
+  "n_evaluation_claims_no_gold": 546,
+  "confidence_distribution": {
+    "HIGH": 355,
+    "MEDIUM": 1178,
+    "LOW": 793,
+    "UNKNOWN": 138
+  },
+  "extended_claim_type_distribution": {
+    "numeric": 1146,
+    "superlative": 93,
+    "comparative": 895,
+    "threshold": 87,
+    "trend": 105,
+    "qualitative": 138
+  },
+  "evaluation_outcome_distribution": {
+    "no_mapping_applicable": 112,
+    "mapping_confirms_baseline": 200,
+    "mapping_skipped_baseline_protected": 52,
+    "mapping_rescued_claim_improvement": 35,
+    "mapping_rejected_conflict": 282
+  },
+  "recall_A_baseline_at_k": {
+    "1": 0.7407,
+    "10": 0.8815,
+    "50": 0.9926,
+    "100": 1.0
+  },
+  "recall_B_mapping_only_at_k": {
+    "1": 1.0,
+    "10": 1.0,
+    "50": 1.0,
+    "100": 1.0
+  },
+  "recall_C_mapping_assisted_at_k": {
+    "1": 1.0,
+    "10": 1.0,
+    "50": 1.0,
+    "100": 1.0
+  },
+  "n_discovery_high_mappings": 255,
+  "hcx_calls_total": 7088,
+  "kosis_calls_total": 2634,
+  "total_elapsed_sec": 40467.5
+}
