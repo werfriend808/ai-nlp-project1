@@ -1,0 +1,32 @@
+{
+  "n_articles_sampled": 2,
+  "n_articles_relevant": 1,
+  "n_claims_total": 0,
+  "n_failed_articles": 0,
+  "failed_articles": [],
+  "leakage_hits": [],
+  "stage_timers_sec": {
+    "classify": 5.7,
+    "extract": 79.5,
+    "retrieval_and_verify": 0.0
+  },
+  "total_elapsed_sec": 163.7,
+  "hcx_calls": {
+    "classify": {
+      "calls": 2,
+      "total_ms": 5680.7,
+      "avg_ms": 2840.4,
+      "errors": 0
+    },
+    "claim_extract": {
+      "calls": 4,
+      "total_ms": 79495.6,
+      "avg_ms": 19873.9,
+      "errors": 0
+    }
+  },
+  "kosis_calls": {},
+  "confidence_distribution": {},
+  "extended_claim_type_distribution": {},
+  "mapping_status_distribution": {}
+}

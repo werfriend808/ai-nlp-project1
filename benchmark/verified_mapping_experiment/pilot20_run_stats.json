@@ -1,0 +1,84 @@
+{
+  "n_articles_sampled": 20,
+  "bucket_counts": {
+    "numeric": 3,
+    "threshold": 3,
+    "comparative": 4,
+    "superlative": 3,
+    "qualitative_no_number": 4,
+    "trend": 3
+  },
+  "split_counts": {
+    "discovery": 10,
+    "evaluation": 10
+  },
+  "n_articles_relevant": 18,
+  "n_claims_extracted": 77,
+  "n_claims_total_processed": 77,
+  "extraction_elapsed_sec": 604.6,
+  "total_elapsed_sec": 1135.0,
+  "confidence_distribution": {
+    "LOW": 40,
+    "MEDIUM": 28,
+    "HIGH": 9
+  },
+  "extended_claim_type_distribution": {
+    "numeric": 42,
+    "comparative": 27,
+    "trend": 2,
+    "superlative": 6
+  },
+  "n_discovery_high_mappings": 4,
+  "n_evaluation_claims_scored": 6,
+  "n_evaluation_claims_no_gold": 37,
+  "baseline_recall_at_k": {
+    "1": 0.8333,
+    "10": 1.0,
+    "50": 1.0,
+    "100": 1.0
+  },
+  "assisted_recall_at_k": {
+    "1": 0.8333,
+    "10": 1.0,
+    "50": 1.0,
+    "100": 1.0
+  },
+  "evaluation_outcome_distribution": {
+    "no_mapping_applicable": 37,
+    "mapping_overrode_correct_baseline_possible_harm": 1,
+    "mapping_rejected_conflict": 3,
+    "mapping_confirms_baseline": 1,
+    "mapping_rescued_claim_improvement": 1
+  },
+  "hcx_calls": {
+    "classify": {
+      "calls": 20,
+      "total_ms": 68672.5,
+      "avg_ms": 3433.6,
+      "errors": 0
+    },
+    "claim_extract": {
+      "calls": 84,
+      "total_ms": 1110166.8,
+      "avg_ms": 13216.3,
+      "errors": 0
+    },
+    "slot_filler": {
+      "calls": 81,
+      "total_ms": 119871.2,
+      "avg_ms": 1479.9,
+      "errors": 0
+    }
+  },
+  "kosis_calls": {
+    "kosis_api": {
+      "calls": 63,
+      "total_ms": 69859.6,
+      "avg_ms": 1108.9,
+      "errors": 0
+    }
+  },
+  "hcx_calls_total": 185,
+  "kosis_calls_total": 63,
+  "failed_articles": []
+}

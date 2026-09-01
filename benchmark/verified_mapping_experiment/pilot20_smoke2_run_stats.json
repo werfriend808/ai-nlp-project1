@@ -1,0 +1,77 @@
+{
+  "n_articles_sampled": 20,
+  "bucket_counts": {
+    "numeric": 3,
+    "threshold": 3,
+    "comparative": 4,
+    "superlative": 3,
+    "qualitative_no_number": 4,
+    "trend": 3
+  },
+  "split_counts": {
+    "discovery": 10,
+    "evaluation": 10
+  },
+  "n_articles_relevant": 18,
+  "n_claims_extracted": 83,
+  "n_claims_total_processed": 20,
+  "extraction_elapsed_sec": 565.1,
+  "total_elapsed_sec": 712.6,
+  "confidence_distribution": {
+    "MEDIUM": 13,
+    "LOW": 7
+  },
+  "extended_claim_type_distribution": {
+    "numeric": 15,
+    "comparative": 2,
+    "trend": 1,
+    "superlative": 2
+  },
+  "n_discovery_high_mappings": 0,
+  "n_evaluation_claims_scored": 0,
+  "n_evaluation_claims_no_gold": 0,
+  "baseline_recall_at_k": {
+    "1": null,
+    "10": null,
+    "50": null,
+    "100": null
+  },
+  "assisted_recall_at_k": {
+    "1": null,
+    "10": null,
+    "50": null,
+    "100": null
+  },
+  "evaluation_outcome_distribution": {},
+  "hcx_calls": {
+    "classify": {
+      "calls": 20,
+      "total_ms": 92244.6,
+      "avg_ms": 4612.2,
+      "errors": 0
+    },
+    "claim_extract": {
+      "calls": 83,
+      "total_ms": 1016054.6,
+      "avg_ms": 12241.6,
+      "errors": 0
+    },
+    "slot_filler": {
+      "calls": 26,
+      "total_ms": 37730.0,
+      "avg_ms": 1451.2,
+      "errors": 0
+    }
+  },
+  "kosis_calls": {
+    "kosis_api": {
+      "calls": 13,
+      "total_ms": 14219.8,
+      "avg_ms": 1093.8,
+      "errors": 0
+    }
+  },
+  "hcx_calls_total": 129,
+  "kosis_calls_total": 13,
+  "failed_articles": []
+}

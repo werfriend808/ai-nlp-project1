@@ -1,0 +1,162 @@
+[
+  {
+    "article_id": "row0",
+    "article_title": "폴크스바겐, 전기차 정보 부실 관리 논란",
+    "article_url": "https://www.chosun.com/economy/auto/2025/01/01/S7LNVYUONNHU3KF3WJWFZZ3NVE",
+    "published_date": "2025-01-01",
+    "selection_bucket": "numeric",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row1",
+    "article_title": "최저임금 1만30원으로 인상… 육아휴직 급여 최대 월 250만원",
+    "article_url": "https://www.chosun.com/economy/economy_general/2025/01/01/ADO7O3Q4WJBCJAX6UUEY4MSBV4",
+    "published_date": "2025-01-01",
+    "selection_bucket": "threshold",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row2",
+    "article_title": "‘직원 한 명에 로봇 수십 대’… 이젠 로봇이 공장 움직인다",
+    "article_url": "https://www.chosun.com/economy/economy_general/2025/01/01/TGA2SHZ4SFACHOHRP36OUPCMHE",
+    "published_date": "2025-01-01",
+    "selection_bucket": "comparative",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row3",
+    "article_title": "정부, 美 ‘CES 2025′에 역대 최대 통합한국관 운영",
+    "article_url": "https://www.chosun.com/economy/industry-company/2025/01/01/2LIJLNBNSNANXCA6WLEDQ7A74A",
+    "published_date": "2025-01-01",
+    "selection_bucket": "superlative",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row4",
+    "article_title": "2024년 수출, 6838억달러로 ‘역대 최대’ 경신",
+    "article_url": "https://www.chosun.com/economy/industry-company/2025/01/01/2UPTGREAPRAWRG4XUBRMLONSKY",
+    "published_date": "2025-01-01",
+    "selection_bucket": "qualitative_no_number",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row5",
+    "article_title": "외신 “2024년, 2018년 이후 가장 항공 희생자 많은 해 됐다”",
+    "article_url": "https://www.chosun.com/economy/industry-company/2025/01/01/CQYMZH3PHRHZ7CXJFKL5PT4AB4",
+    "published_date": "2025-01-01",
+    "selection_bucket": "numeric",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row6",
+    "article_title": "가스공사 5억·삼천리 3억 기부",
+    "article_url": "https://www.chosun.com/economy/industry-company/2025/01/01/M2MAOXQQG5GE5CER35HRDHBBXI",
+    "published_date": "2025-01-01",
+    "selection_bucket": "numeric",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row10",
+    "article_title": "조선업 산업기술인력 9년 만에 다시 상승세",
+    "article_url": "https://www.chosun.com/economy/industry-company/2025/01/01/VR4RUPY3CFEGZGFC5M4JPY5SDE",
+    "published_date": "2025-01-01",
+    "selection_bucket": "trend",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row12",
+    "article_title": "中 비야디, 작년 차 판매량 첫 400만대 넘었다",
+    "article_url": "https://www.chosun.com/economy/auto/2025/01/02/HTW6CXWRT5CSVMD5Z65DXMTMMQ",
+    "published_date": "2025-01-02",
+    "selection_bucket": "trend",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row15",
+    "article_title": "반도체 덕에… 지난해 수출 6838억달러 역대 최대",
+    "article_url": "https://www.chosun.com/economy/economy_general/2025/01/02/6MYGM52QIVHUJBIZYYFBUW5IQM",
+    "published_date": "2025-01-02",
+    "selection_bucket": "qualitative_no_number",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row17",
+    "article_title": "채용·인력배치 로봇 혁명… “관리·설계직 더 뽑고 야근도 확 줄어”",
+    "article_url": "https://www.chosun.com/economy/economy_general/2025/01/02/A7CI5RF3WNDZ3IYINXCYLMBVS4",
+    "published_date": "2025-01-02",
+    "selection_bucket": "trend",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row21",
+    "article_title": "정부, 작년 세수 부족으로 韓銀서 170조원 빌려 썼다",
+    "article_url": "https://www.chosun.com/economy/economy_general/2025/01/02/LYWZZSQ6I5AVJDNTRW6KAK6ORY",
+    "published_date": "2025-01-02",
+    "selection_bucket": "superlative",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row25",
+    "article_title": "완성차 5사 판매량 3년만에 감소세로...내수 부진에 전기차 캐즘 본격화",
+    "article_url": "https://www.chosun.com/economy/auto/2025/01/03/N4AM2ZKHUBDXHOEEKGPMWO4Y2U",
+    "published_date": "2025-01-03",
+    "selection_bucket": "superlative",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row27",
+    "article_title": "추락하는 성장률, 내수 살려 떠받친다",
+    "article_url": "https://www.chosun.com/economy/economy_general/2025/01/03/FS5OTJUQ7RC5JIPD2GEHE7U47Q",
+    "published_date": "2025-01-03",
+    "selection_bucket": "threshold",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row45",
+    "article_title": "\"직장 하나론 소득 빠듯\" 너도나도 N잡러 시대, 직장인 부업 성공하려면",
+    "article_url": "https://www.chosun.com/economy/realty/investment_trends/2025/01/04/DKW3MEMILT2EXU3BFRNPMHNPWE",
+    "published_date": "2025-01-04",
+    "selection_bucket": "threshold",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row50",
+    "article_title": "고물가에 설선물 벅차다면…사전예약‧묶음판매 그나마 싸다",
+    "article_url": "https://www.chosun.com/economy/market_trend/2025/01/05/GAQ4BB4HOJEWNP5GGCUHQTHY7M",
+    "published_date": "2025-01-05",
+    "selection_bucket": "comparative",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row60",
+    "article_title": "지난해 최고 인기 수입차는 테슬라 모델 Y...BMW 520, 벤츠 E200 뒤 이어",
+    "article_url": "https://www.chosun.com/economy/auto/2025/01/06/S27CLI355JFNZLDTKSS6EHCNPI",
+    "published_date": "2025-01-06",
+    "selection_bucket": "comparative",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row62",
+    "article_title": "여름 폭염으로 공급 줄어… 배추 가격 59%, 무 77% 올라",
+    "article_url": "https://www.chosun.com/economy/economy_general/2025/01/06/AKAFLQIYCBABRFMMXNI5JKO7EU",
+    "published_date": "2025-01-06",
+    "selection_bucket": "qualitative_no_number",
+    "split": "discovery"
+  },
+  {
+    "article_id": "row65",
+    "article_title": "계엄 이후 얼어붙은 내수... 덜 먹고 덜 놀러갔다",
+    "article_url": "https://www.chosun.com/economy/economy_general/2025/01/06/UNEVPXHOQFFWRGCMGJ72EICGC4",
+    "published_date": "2025-01-06",
+    "selection_bucket": "qualitative_no_number",
+    "split": "evaluation"
+  },
+  {
+    "article_id": "row76",
+    "article_title": "보조금 폐지한 독일, 전기차 판매 급감...유럽 최대 전기차 시장도 영국에 넘겨줘",
+    "article_url": "https://www.chosun.com/economy/auto/2025/01/07/Y62DLGXPGZCNNK2IBLFZNNKMKY",
+    "published_date": "2025-01-07",
+    "selection_bucket": "comparative",
+    "split": "discovery"
+  }
+]
