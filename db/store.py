@@ -153,6 +153,33 @@ def insert_verification(record: dict, path: Path = DB_PATH) -> None:
             conn.close()
 
 
+def touch_verifications(result_ids: list[str], path: Path = DB_PATH) -> None:
+    """주어진 result_id들의 created_at을 지금 시각으로 갱신한다.
+
+    2026-09-01 추가: 데모 프리셋(agent/api/server.py의 _demo_preset_results)처럼 이미
+    DB에 있는 기록을 그대로 재사용해서 즉시 응답하는 경로는 insert_verification()을 다시
+    안 타므로 created_at이 안 바뀐다 — 그런데 "최근 검증한 기사" 목록은 created_at
+    기준으로 최신순 정렬하므로, 프리셋으로 몇 번을 다시 "검증"해도 화면엔 몇 시간 전
+    타임스탬프 그대로 남아 목록 맨 위로 안 올라오는 문제가 실측 확인됐다(시연 리허설
+    중). 프리셋을 다시 보여줄 때마다 이 함수로 created_at만 갱신해서, 실제로 방금
+    검증한 것처럼 최신순 정렬에 반영되게 한다(다른 컬럼은 전혀 안 건드림)."""
+    if not result_ids:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    placeholders = ", ".join("?" for _ in result_ids)
+    init_db(path)
+    with _WRITE_LOCK:
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute(
+                f"UPDATE verifications SET created_at = ? WHERE result_id IN ({placeholders})",
+                [now, *result_ids],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def fetch_all(path: Path = DB_PATH) -> list[dict]:
     init_db(path)
     conn = sqlite3.connect(path)

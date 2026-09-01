@@ -28,6 +28,7 @@ import shutil
 import threading
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +43,8 @@ except ImportError:
     pass
 
 from db.fetch_article_text import fetch_article_for_verification
+from db.store import fetch_all as _fetch_all_verifications
+from db.store import touch_verifications as _touch_verifications
 from agent.kosis.api_client import KosisApiClient
 from agent.kosis.calculator import KosisCalculator
 from agent.interfaces import dense_query_text
@@ -251,9 +254,59 @@ def _refresh_frontend_exports() -> None:
         shutil.copy(src, frontend_data_dir / dst_name)
 
 
+def _normalize_url_for_match(url: str) -> str:
+    """끝 슬래시(trailing slash)만 있고 없고 차이로 프리셋 매칭이 실패하는 사고가 실제로
+    났다(2026-09-01 — 데모 준비 중 브라우저 주소창 복사 시 흔히 붙는 trailing slash가
+    있는 URL로 제출되니 완전 일치 비교가 깨져서 라이브 파이프라인이 대신 돌았고, 그
+    결과가 프리셋과 다른 문장으로 DB에 섞여 들어감). 완전한 URL 정규화(쿼리스트링/
+    프로토콜 등)까지는 안 하고, 실제로 재현된 이 한 가지 차이만 안전하게 흡수한다."""
+    return url.strip().rstrip("/")
+
+
+def _demo_preset_results(url: str) -> Optional[list[dict]]:
+    """2026-08-31 추가: 데모용 사전 검증 프리셋. `data/build_demo_presets.py`가
+    verifications.db에 미리 넣어둔, 실제 KOSIS 값까지 검증 완료된(HIGH) 기록을
+    article_url로 조회한다 — production DB(Supabase)는 안 건드리고 로컬 SQLite만
+    조회한다. 매칭되는 게 없으면 None(정상적으로 라이브 파이프라인으로 진행)."""
+    target = _normalize_url_for_match(url)
+    rows = [
+        r for r in _fetch_all_verifications()
+        if r.get("article_url") and _normalize_url_for_match(r["article_url"]) == target
+    ]
+    return rows or None
+
+
 def _run_job(job_id: str, url: str) -> None:
     with _jobs_lock:
         _jobs[job_id]["status"] = "fetching"
+
+    preset = _demo_preset_results(url)
+    if preset is not None:
+        # 2026-09-01: 프리셋은 insert_verification()을 다시 안 타므로 created_at이
+        # 안 바뀐다 — "최근 검증한 기사" 목록이 created_at 기준 최신순 정렬인데, 프리셋을
+        # 몇 번을 다시 "검증"해도 화면엔 원래 만들어진 옛 시각 그대로 남아 목록 위로 안
+        # 올라오는 문제가 실측 확인됐다(시연 리허설 중 — export만 갱신하고 시각은 안
+        # 건드렸던 첫 번째 수정으로는 부족했음). 지금 실제로 다시 보여주는 이 순간으로
+        # created_at을 갱신해야 진짜 "방금 검증됨"으로 정렬된다.
+        try:
+            _touch_verifications([r["result_id"] for r in preset if r.get("result_id")])
+        except Exception as e:
+            print(f"[touch] created_at 갱신 실패(검증 결과 자체는 정상): {e}")
+        # 프리셋으로 즉시 응답할 때도 라이브 경로와 똑같이 export를 갱신해야 한다 — 안
+        # 그러면 프론트가 이 기사를 "방금 검증됨"으로 보여줘도 onVerificationDone()이
+        # 다시 불러오는 verifications.json은 그대로라 목록에 반영 안 되는 불일치가 생긴다.
+        try:
+            _refresh_frontend_exports()
+        except Exception as e:
+            print(f"[export] 프론트 데이터 갱신 실패(검증 결과는 이미 DB에 있음): {e}")
+        with _jobs_lock:
+            _jobs[job_id] = {
+                "status": "done",
+                "article_title": preset[0]["article_title"],
+                "claim_count": len(preset),
+                "results": preset,
+            }
+        return
 
     fetched = fetch_article_for_verification(url)
     if fetched is None:
