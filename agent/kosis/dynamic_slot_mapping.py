@@ -33,6 +33,13 @@ _FIELD_TO_AXIS_HINTS = {
     "gender": ["성별"],
 }
 
+# 2026-08-23 실측 발견(건설업 취업자 claim, gold=DT_1DA7E26S): region="전국"인데 표에
+# 지역 축 자체가 없는 표(예: DT_1DA7E06S_NEW "산업별 취업자")를 "incompatible"로 걸러서
+# 값 조회 자체가 안 됐다. 근데 "전국"은 "지역을 좁혀야 한다"는 뜻이 아니라 정반대로 "지역
+# 구분 없이 전체"라는 뜻이라, 애초에 지역 축이 없는 표(=이미 전국 집계뿐인 표)와 논리적으로
+# 모순이 없다 — "서울만" 요청했는데 지역 축이 없는 경우(진짜 incompatible)와는 달라야 한다.
+_NATIONWIDE_REGION_VALUES = {"전국", "전체", "전국 평균", "전국평균"}
+
 
 def _normalize_whitespace(text: str) -> str:
     """공백 유무 차이(claim="65세 이상" vs 코드맵 라벨="65세이상")를 흡수한다 —
@@ -82,6 +89,13 @@ def map_claim_slots(claim, code_maps: dict) -> SlotMappingResult:
 
         axis_name = _find_axis_for_field(field_name, code_maps)
         if axis_name is None:
+            if field_name == "region" and _normalize_whitespace(value) in {
+                _normalize_whitespace(v) for v in _NATIONWIDE_REGION_VALUES
+            }:
+                # "전국"은 지역을 좁히라는 게 아니라 안 좁혀도 된다는 뜻 — 지역 축이 아예
+                # 없는 표(=이미 전국 단위)와 모순되지 않는다.
+                details[field_name] = "not_needed"
+                continue
             details[field_name] = "incompatible"  # 이 표엔 해당 축 자체가 없음
             continue
 

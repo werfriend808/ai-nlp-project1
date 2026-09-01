@@ -66,6 +66,8 @@ except ImportError:
 
 from agent.observability import Timer, log_event
 from agent.kosis.enrich_objl import fetch_period_range
+from agent.kosis.detail_cache import get_table_detail, DetailCacheUnavailableError
+from agent.kosis.version_meta import get_version_meta_batch
 
 try:
     from agent.interfaces import Claim, TableCandidate
@@ -195,14 +197,22 @@ def _merge_candidates(
     embedding_candidates: list[TableCandidate],
     vdb_candidates: Optional[list[TableCandidate]] = None,
     bm25_candidates: Optional[list[TableCandidate]] = None,
+    item_candidates: Optional[list[TableCandidate]] = None,
     core_vdb_candidates: Optional[list[TableCandidate]] = None,
     core_bm25_candidates: Optional[list[TableCandidate]] = None,
 ) -> list[TableCandidate]:
-    """keyword_search/embedding_search/VDB(dense)/BM25(trigram) 후보를 table_id 기준으로
-    합치면서, 각 소스 안에서의 순위(1부터, 입력 리스트가 이미 점수 내림차순 정렬돼 있다고
-    가정)를 source_meta에 "keyword_rank=N"/"embedding_rank=N"/"vdb_rank=N"/"bm25_rank=N"으로
-    남긴다 — 이후 _rrf_fuse()가 점수 크기가 아니라 이 순위만으로 최종 신뢰도를 계산한다.
-    입력으로 받은 candidate 객체는 변형하지 않고 dataclasses.replace로 복사본만 만든다.
+    """keyword_search/embedding_search/VDB(dense)/BM25(trigram)/항목(item) 후보를 table_id
+    기준으로 합치면서, 각 소스 안에서의 순위(1부터, 입력 리스트가 이미 점수 내림차순
+    정렬돼 있다고 가정)를 source_meta에 "keyword_rank=N"/"embedding_rank=N"/"vdb_rank=N"
+    /"bm25_rank=N"/"item_rank=N"으로 남긴다 — 이후 _rrf_fuse()가 점수 크기가 아니라 이
+    순위만으로 최종 신뢰도를 계산한다. 입력으로 받은 candidate 객체는 변형하지 않고
+    dataclasses.replace로 복사본만 만든다.
+
+    2026-08-23: item_candidates(agent.kosis.query_vdb.item_query_vdb) 추가 — 표 제목이
+    검색어와 전혀 안 겹치지만 표 안의 개별 항목(예: "노동소득")은 겹치는 경우를 보완한다
+    (원인 A, "생애주기적자계정" 표 사례로 실측 확인). bm25_rank와 마찬가지로 자동 신뢰
+    대상은 아니다 — item_query_vdb 자체가 아직 표본이 작아 노이즈 가능성을 보수적으로
+    본다.
 
     2026-08-25: core_vdb_candidates/core_bm25_candidates(build_core_query() 참고) 추가 —
     age/gender/region/population 수식어를 뺀 "핵심 쿼리"로 별도 검색한 결과를
@@ -235,23 +245,49 @@ def _merge_candidates(
             if existing is None:
                 merged[cand.table_id] = _tag_source_rank(cand, key, i + 1)
             else:
+                # 2026-08-23: item_candidates가 다른 채널(keyword/embedding/vdb/bm25)보다
+                # 뒤에 _add되면 이 분기(existing이 이미 있음)를 타는데, 여기서 cand의
+                # source_meta(예: "kosis_vdb_item(matched='노동소득')")를 안 챙기고
+                # existing.source_meta만 이어붙이면 어떤 항목이 매칭됐는지가 그냥 사라진다.
+                # rerank()가 이 매칭 항목명을 리랭커 입력 텍스트에 동적으로 붙여야 하므로
+                # (아래 _ITEM_MATCH_RE 사용부 참고) cand 쪽에 있으면 같이 이어붙여 보존한다.
+                extra_match = _ITEM_MATCH_RE.search(cand.source_meta or "")
+                extra = f" | {extra_match.group(0)}" if extra_match else ""
+                # 2026-08-24 버그 수정: keyword_search/embedding_search(64개 카탈로그
+                # 경로)는 org_id를 아예 안 채운다 — 이 두 채널이 먼저 _add되고 나서
+                # VDB(org_id 있음)가 같은 표를 나중에 찾으면, 이 분기(existing 있음)가
+                # existing.org_id(None)만 유지하고 cand.org_id(VDB가 채운 값)를 버리고
+                # 있었다. _apply_axis_value_signal()이 org_id 없는 후보는 조회를 건너뛰는데,
+                # 실측(건설업/제조업 취업자 claim)에서 keyword_search로 먼저 잡힌
+                # DT_1DA7E06S_NEW가 이 버그 때문에 axis_value_rank를 못 받는 걸 확인했다.
+                # existing에 org_id가 없고 cand엔 있으면 보강한다(반대로 이미 있으면 안 건드림).
+                merged_org_id = existing.org_id or cand.org_id
                 merged[cand.table_id] = replace(
-                    existing, source_meta=f"{existing.source_meta} | {key}={i + 1}"
+                    existing, org_id=merged_org_id,
+                    source_meta=f"{existing.source_meta} | {key}={i + 1}{extra}"
                 )
 
     _add(keyword_candidates, "keyword_rank")
     _add(embedding_candidates, "embedding_rank")
     _add(vdb_candidates or [], "vdb_rank")
     _add(bm25_candidates or [], "bm25_rank")
+    _add(item_candidates or [], "item_rank")
     _add(core_vdb_candidates or [], "vdb_core_rank")
     _add(core_bm25_candidates or [], "bm25_core_rank")
     return list(merged.values())
 
 
 _RANK_TAG_RE = re.compile(
-    r"\b(keyword_rank|embedding_rank|vdb_rank|bm25_rank|vdb_core_rank|bm25_core_rank"
+    r"\b(keyword_rank|embedding_rank|vdb_rank|bm25_rank|item_rank|vdb_core_rank|bm25_core_rank"
     r"|reranker_rank|population_rank|institution_rank|gender_rank|region_rank)=(\d+)"
 )
+
+# 2026-08-23: agent.kosis.query_vdb.item_query_vdb가 항목 매칭 후보의 source_meta에
+# "kosis_vdb_item(matched='노동소득')" 형태로 남기는 걸 rerank()에서 뽑아 쓴다 — 표
+# 텍스트 전체에 항목명을 다 붙이는 실험(DT_1NTA2002, 되돌림)은 리랭커 성능에 도움이
+# 안 됐지만, item_rank로 실제로 매칭된 그 항목명 하나만 콕 집어 리랭커 입력에 동적으로
+# 붙이는 건 다일루션 없이 정확한 신호만 전달한다는 가설로 시도한다.
+_ITEM_MATCH_RE = re.compile(r"kosis_vdb_item\(matched='([^']*)'(?:,\s*score=[\d.]+)?\)")
 
 
 def _parse_rrf_ranks(source_meta: Optional[str]) -> dict[str, int]:
@@ -301,11 +337,25 @@ def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     _apply_*_signal 함수들 참고)도 keyword_rank와 동급으로 신뢰한다 — claim에서 직접
     뽑은(또는 화이트리스트로 정규화된) 명시적 규칙 기반 신호라 임베딩/리랭커의 노이즈
     있는 유사도 판단보다 신뢰도가 높다고 보기 때문.
+
+    2026-08-23: item_rank는 위 규칙 신호들과 다르다 — "청년"/"여성" 같은 정확한 단어가
+    표에 그대로 있는지를 보는 게 아니라, 임베딩 코사인 유사도(item_query_vdb)로 판단하는
+    "감으로 말하는" 신호라 bm25_rank/vdb_rank와 같은 부류다(그래서 population_rank
+    화이트리스트에 그냥 끼워 넣지 않는다). 처음엔 "item_rank=1 + 다른 채널 corroboration"
+    조건으로 신뢰해봤는데, 골든셋 실측(DT_1NTA2002 11건)에서 이 조건이 구조적으로 거의
+    항상 거짓이었다 — item 채널은 애초에 "다른 채널이 다 놓친 걸 혼자 찾아라"고 만든
+    거라, 정의상 다른 채널이 같이 찾아주는 일이 거의 없다(11건 중 corroboration 있었던
+    건 0건). 대신 item_trust_score()의 유사도 점수 문턱으로 직접 신뢰한다 — 골든셋
+    70건 실측: 정답 매칭 점수(0.3676~0.4810, 2건 예외 0.3277) vs 무관한 claim의 오탐
+    점수(0.30~0.3584)가 깨끗하게 갈려서, 순위가 아니라 점수 자체가 신뢰할 만한
+    구분자임을 확인했다.
     """
     ranks = _parse_rrf_ranks(source_meta)
     if "keyword_rank" in ranks:
         return True
     if any(k in ranks for k in ("population_rank", "institution_rank", "gender_rank", "region_rank")):
+        return True
+    if _item_trusted(source_meta):
         return True
     if ranks.get("reranker_rank") != 1:
         return False
@@ -313,6 +363,49 @@ def is_rrf_trusted(source_meta: Optional[str]) -> bool:
     if not raw_match:
         return False
     return _sigmoid(float(raw_match.group(1))) >= MIN_RERANKER_CONFIDENCE
+
+
+_ITEM_SCORE_RE = re.compile(r"kosis_vdb_item\(matched='[^']*',\s*score=([\d.]+)\)")
+
+# 2026-08-24 실측(70건 골든셋, 단일 표 인덱싱 기준): item 채널이 찾은 후보의 코사인
+# 유사도 점수가 노이즈(무관한 claim이 우연히 매칭된 경우, 28건 실측 범위 0.30~0.3584)와
+# 진짜 신호(정답 11건 중 9건, 0.3676~0.4810) 사이에 자연스러운 틈이 있다. item_rank
+# "순위" 자체는 지금처럼 표 1개만 인덱싱된 상태에선 있으면 사실상 항상 1등이라 구분력이
+# 없다 — 반드시 점수로 문턱을 걸어야 한다.
+ITEM_TRUST_MIN_SIMILARITY = 0.36
+
+
+def _item_trusted(source_meta: Optional[str]) -> bool:
+    """item 채널이 찾은 후보를 점수 문턱으로 신뢰할지 판단한다(위 ITEM_TRUST_MIN_SIMILARITY
+    실측 근거 참고)."""
+    if not source_meta:
+        return False
+    m = _ITEM_SCORE_RE.search(source_meta)
+    return bool(m) and float(m.group(1)) >= ITEM_TRUST_MIN_SIMILARITY
+
+
+def select_trusted_candidate(candidates: list) -> Optional[TableCandidate]:
+    """RRF 융합 순위 그대로, 최종적으로 채택할 후보 하나를 고른다.
+
+    2026-08-24: candidates[0](RRF 종합 1위)만 검사하던 기존 방식 대신, "믿을 만한 첫
+    후보"를 찾도록 넓혔다. 처음엔 is_rrf_trusted() 전체(keyword_rank/population_rank/
+    reranker_rank==1 등)로 후보 전체를 훑어봤는데, 골든셋 70건 재검증에서 오히려
+    회귀가 커졌다(틀렸는데 신뢰되는 케이스 25건→35건) — reranker_rank==1이 RRF 종합
+    순위와 안 겹쳐도 무조건 신뢰하게 되면서, 원래 RRF가 주던 이중 확인(교차 인코더
+    +종합 순위 둘 다 동의해야 신뢰)이 깨졌기 때문이다. 그래서 범위를 item 채널로만
+    좁힌다 — item 유사도 점수는 노이즈/신호가 깨끗하게 갈린다는 게 이미 검증됐으므로
+    (_item_trusted 참고) 이 조건 하나만 candidates[0] 밖에서도 예외적으로 허용한다.
+    아무 조건도 못 넘으면 기존과 동일하게 candidates[0]을 반환해(안전한 폴백)
+    is_rrf_trusted() 재검사가 "판단불가" 경로로 그대로 이어지게 한다."""
+    if not candidates:
+        return None
+    top1 = candidates[0]
+    if is_rrf_trusted(top1.source_meta):
+        return top1
+    for c in candidates[1:]:
+        if _item_trusted(c.source_meta):
+            return c
+    return top1
 
 
 def _sigmoid(x: float) -> float:
@@ -341,6 +434,20 @@ def _rrf_fuse(reranker_ranked: list[TableCandidate], *, k: int = RRF_K) -> list[
     return fused
 
 
+def _document_text_for(cand: TableCandidate, document_texts: Optional[dict[str, str]]) -> str:
+    """리랭커에 넘길 문서 텍스트를 만든다. document_texts(표 전체 텍스트)가 기본이고,
+    cand가 item_rank 채널로 매칭됐으면(source_meta에 "kosis_vdb_item(matched='...')"
+    존재) 그 매칭된 항목명 하나만 " · 일치 항목: {item_name}"으로 덧붙인다.
+
+    2026-08-23: DB에 저장된 표 텍스트 자체에 항목명을 다 붙이는 건(모든 후보, 모든 검색
+    채널에 항상 영향) 다일루션으로 검증 실패했다(DT_1NTA2002 실험, 되돌림). 이건 그 대신
+    item_rank로 실제 매칭된 후보에 한해서만, 그 요청(claim) 처리 동안만 메모리 상에서
+    텍스트를 늘린다 — DB에는 저장되지 않고, 다른 채널로만 찾은 후보에는 전혀 영향 없다."""
+    base = (document_texts or {}).get(cand.table_id, cand.table_name)
+    m = _ITEM_MATCH_RE.search(cand.source_meta or "")
+    return f"{base} · 일치 항목: {m.group(1)}" if m else base
+
+
 def rerank(
     claim: Claim,
     candidates: list[TableCandidate],
@@ -355,9 +462,7 @@ def rerank(
     if not candidates:
         return []
 
-    documents = [
-        (document_texts or {}).get(c.table_id, c.table_name) for c in candidates
-    ]
+    documents = [_document_text_for(c, document_texts) for c in candidates]
     scores = rerank_scores(claim.sentence, documents)
 
     if scores is None:
@@ -371,6 +476,14 @@ def rerank(
 
     reranked: list[TableCandidate] = []
     for cand, score in zip(candidates, scores):
+        # 2026-08-24 버그 수정(experiment/pipeline-redesign): 여기서 TableCandidate를
+        # 필드 나열로 새로 만들면서 org_id를 안 넣고 있었다 — dataclasses.replace()가
+        # 아니라 생성자를 직접 호출해서, 명시 안 한 필드는 전부 기본값(None)으로 리셋됨.
+        # 이 함수(rerank())는 모든 후보가 예외 없이 거쳐가는 단계라, VDB에서 org_id가
+        # 정상적으로 채워져 온 후보(DB에는 287,498건 전부 org_id 있음, 실측 확인)조차
+        # 여기를 지나가면 org_id가 사라졌다 — _build_dynamic_kosis_slots()(5단계, VDB
+        # 전용 표의 동적 슬롯매핑에 org_id 필수)와 _apply_period_coverage_filter()(org_id
+        # 없으면 그냥 통과시키는 조용한 폴백)가 이 버그 때문에 계속 무력화되고 있었다.
         reranked.append(
             TableCandidate(
                 table_id=cand.table_id,
@@ -378,6 +491,7 @@ def rerank(
                 score=_sigmoid(score),
                 required_slots=cand.required_slots,
                 source_meta=f"{cand.source_meta} | rerank_raw={score:.3f}",
+                org_id=cand.org_id,
             )
         )
 
@@ -639,6 +753,74 @@ def _apply_simplicity_tiebreak(candidates: list[TableCandidate]) -> list[TableCa
     return result
 
 
+# 2026-08-24: AXIS(분류축) "이름"이 아니라 그 축 "안의 실제 값"을 후보 표의 실제
+# KOSIS 코드맵과 정확한 문자열로 비교한다 — "취업자" 3형제 표 충돌 사례로 실측 검증
+# 완료(notebooks 없이 직접 조회): claim에 "건설업"/"제조업"처럼 축 값이 그대로 나오는데,
+# 이걸 AXIS "이름"("산업별") 임베딩과 비교하면 의미적으로 안 이어져서 실패한다
+# (Recall 1/3). 대신 그 값이 후보 표의 code_map 라벨에 그대로 포함되는지 정확한
+# 문자열로 확인하면 성공한다(연령 축만 있는 표는 확실히 배제, 산업 축 있는 표만 남음).
+# AXIS 이름이 아니라 AXIS 값을 봐야 한다는 팀 제안서의 "AXIS VALUE는 FTS/Metadata"
+# 원칙과 정확히 일치.
+#
+# 비용 주의: get_table_detail()은 캐시 미스 시 실제 KOSIS API 호출이라, 후보 전체가
+# 아니라 상위 _AXIS_VALUE_TOP_N개까지만 확인한다(population_rank 등 다른 시그널과
+# 달리 document_texts만으로는 안 되고 반드시 API/캐시 조회가 필요하기 때문).
+_AXIS_VALUE_TOP_N = 20
+_AXIS_LABEL_PREFIX_RE = re.compile(r"^[A-Za-z*]\s+")
+_AXIS_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def _strip_axis_label_noise(label: str) -> str:
+    """KOSIS 분류축 라벨("F 건설업(41~42)")의 기호/코드범위를 벗겨서 순수 이름만
+    남긴다(batch_runner.py의 _strip_kosis_label_noise와 동일한 패턴 — reranker.py가
+    batch_runner.py를 import하면 순환참조가 생겨서 여기 별도로 둔다)."""
+    stripped = _AXIS_LABEL_SUFFIX_RE.sub("", label)
+    stripped = _AXIS_LABEL_PREFIX_RE.sub("", stripped)
+    return stripped or label
+
+
+# 2026-08-24: 골든셋 회귀 검증용 토글 — 끄면(0) 기존 동작과 완전히 동일(신호 자체가
+# 안 생기니 _apply_period_coverage_filter의 axis 우선 분기도 자동으로 안 탐, 하위
+# 호환 폴백 그대로). 기본값은 켜짐(1) — 검증 스크립트에서 WITH_AXIS_VALUE=0으로
+# 베이스라인을 재현한다.
+_AXIS_VALUE_ENABLED = os.environ.get("WITH_AXIS_VALUE", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _apply_axis_value_signal(claim: Claim, candidates: list[TableCandidate]) -> list[TableCandidate]:
+    """claim.population/statistic_expression의 구체적 값이 후보 표의 실제 분류축 값
+    목록(KOSIS code_map)에 정확히 포함되는지 확인해서, 있으면 axis_value_rank=1을
+    붙인다. org_id가 없거나 표 상세 조회가 실패하면(캐시 미스+API 오류 등) 그냥
+    건너뛴다(fail-open — 다른 후보를 배제하지 않음, population_rank류와 동일 원칙)."""
+    if not _AXIS_VALUE_ENABLED:
+        return candidates
+    terms = [t.strip() for t in (claim.population, claim.statistic_expression) if t and t.strip()]
+    if not terms or not candidates:
+        return candidates
+
+    tagged = []
+    for i, c in enumerate(candidates):
+        if i >= _AXIS_VALUE_TOP_N or not c.org_id:
+            tagged.append(c)
+            continue
+        try:
+            detail = get_table_detail(c.table_id, c.org_id)
+        except DetailCacheUnavailableError:
+            tagged.append(c)
+            continue
+        if detail.get("status") != "ok":
+            tagged.append(c)
+            continue
+        code_maps = detail.get("code_maps") or {}
+        matched = any(
+            term in _strip_axis_label_noise(label) or _strip_axis_label_noise(label) in term
+            for term in terms
+            for cm in code_maps.values()
+            for label in cm.keys()
+        )
+        tagged.append(_tag_source_rank(c, "axis_value_rank", 1) if matched else c)
+    return tagged
+
+
 _PERIOD_YEAR_RE = re.compile(r"(19|20)\d{2}")
 _PERIOD_COVERAGE_TOP_N = 5  # 상위 몇 개까지만 확인할지 — 매 claim마다 API 호출이 늘어나므로 좁게 잡음
 
@@ -671,12 +853,27 @@ def _covers_year(period_range: dict, year: int) -> Optional[bool]:
 # "최신판을 무조건 우선"이 아니라 "그 표에 실제로 그 연도 데이터가 있는가"만 본다.
 # 기사가 오래된 시점을 다뤄서 오히려 구판에만 있는 데이터가 필요한 경우까지 안전하게
 # 처리된다. 상위 N개만 확인(비용 제한), 조회 실패/판단 불가 시엔 그대로 순위 유지(fail-open).
+#
+# 2026-08-24 수정: 기존엔 "RRF 종합 순위 상위 5개"만 확인했는데, 실측으로 확인된
+# "취업자" 구판/신판 클러스터(30개 후보 중 11개가 산업/성별 취업자 계열 연도별 중복)에서
+# 이 상위 5개 안에 신판이 안 들어있으면 필터가 아예 발동을 안 하는 구멍이 있었다.
+# _apply_axis_value_signal()이 이미 axis_value_rank로 "관련 있는 후보"를 찾아뒀으면,
+# 임의의 "상위 5개" 대신 그 후보 집합을 확인 대상으로 쓴다 — AXIS로 좁혀진 후보 안에서만
+# 최신판을 고르는 것. axis_value_rank가 하나도 없으면(그 신호가 아예 안 켜진 claim)
+# 기존과 동일하게 상위 5개로 폴백한다(하위 호환, 회귀 없음).
 def _apply_period_coverage_filter(claim: Claim, candidates: list[TableCandidate]) -> list[TableCandidate]:
     year = _extract_target_year(claim)
     if year is None or not candidates:
         return candidates
 
-    head, tail = candidates[:_PERIOD_COVERAGE_TOP_N], candidates[_PERIOD_COVERAGE_TOP_N:]
+    axis_matched = [c for c in candidates if _parse_rrf_ranks(c.source_meta).get("axis_value_rank") == 1]
+    if axis_matched:
+        matched_ids = {c.table_id for c in axis_matched}
+        head = [c for c in candidates if c.table_id in matched_ids]
+        tail = [c for c in candidates if c.table_id not in matched_ids]
+    else:
+        head, tail = candidates[:_PERIOD_COVERAGE_TOP_N], candidates[_PERIOD_COVERAGE_TOP_N:]
+
     kept, excluded = [], []
     for c in head:
         if not c.org_id:
@@ -688,6 +885,54 @@ def _apply_period_coverage_filter(claim: Claim, candidates: list[TableCandidate]
     return kept + excluded + tail
 
 
+# 2026-08-25: 원인 C(근접중복·버전분화) 중에서도 _apply_period_coverage_filter가 못
+# 거르는 케이스 — 신판이 구판 기간을 통째로 포함해버리면(예: DT_1DA7E06S_NEW가
+# 2013~2026 전체를 커버) 구판/신판 둘 다 "그 연도 데이터 있음"으로 통과한다. 이럴 땐
+# "그 연도를 커버하는가"가 아니라 "지금도 갱신되는 표인가"로 골라야 한다.
+# (STAT_ID, TBL_NM)이 둘 다 같은 후보들을 같은 시리즈의 다른 버전으로 보고, 그 중
+# SEND_DE(마지막 자료 제공일)가 가장 최근인 것만 남기고 나머지는 순위 밖으로 민다 —
+# KOSIS 자체 크롤 메타데이터로 이미 확인된 값이라 API 호출이 추가로 들지 않는다
+# (agent/kosis/version_meta.py 참고). fail-open: 메타 조회 실패/클러스터 없음이면 그대로.
+_VERSION_FRESHNESS_ENABLED = os.environ.get("WITH_VERSION_FRESHNESS", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _apply_version_freshness_signal(candidates: list[TableCandidate]) -> list[TableCandidate]:
+    if not _VERSION_FRESHNESS_ENABLED or not candidates:
+        return candidates
+    meta = get_version_meta_batch([c.table_id for c in candidates])
+    if not meta:
+        return candidates
+
+    clusters: dict[tuple, list[TableCandidate]] = {}
+    for c in candidates:
+        m = meta.get(c.table_id)
+        if not m:
+            continue
+        key = (m["stat_id"], m["tbl_nm"])
+        clusters.setdefault(key, []).append(c)
+
+    stale_ids: set[str] = set()
+    fresh_ids: set[str] = set()
+    for members in clusters.values():
+        with_date = [c for c in members if meta[c.table_id].get("send_de")]
+        if len(with_date) < 2:
+            continue  # 클러스터가 진짜 2개 이상이고 날짜 비교가 가능할 때만 판단
+        freshest = max(with_date, key=lambda c: meta[c.table_id]["send_de"])
+        fresh_ids.add(freshest.table_id)
+        stale_ids.update(c.table_id for c in with_date if c.table_id != freshest.table_id)
+
+    if not stale_ids:
+        return candidates
+
+    tagged = [
+        _tag_source_rank(c, "version_fresh_rank", 1) if c.table_id in fresh_ids else c
+        for c in candidates
+    ]
+    kept = [c for c in tagged if c.table_id not in stale_ids]
+    demoted = [c for c in tagged if c.table_id in stale_ids]
+    return kept + demoted
+
+
 def search_and_rerank(
     claim: Claim,
     *,
@@ -695,11 +940,12 @@ def search_and_rerank(
     embedding_fn,
     vdb_fn=None,
     bm25_fn=None,
+    item_fn=None,
     top_k: int = DEFAULT_TOP_K,
     document_texts: Optional[dict[str, str]] = None,
 ) -> list[TableCandidate]:
-    """3단계 전체 흐름: keyword_search + embedding_search(+ VDB dense +VDB BM25) 결과를 합쳐
-    rerank까지 수행.
+    """3단계 전체 흐름: keyword_search + embedding_search(+ VDB dense +VDB BM25 +VDB 항목)
+    결과를 합쳐 rerank까지 수행.
 
     keyword_fn, embedding_fn: 각각 keyword_search(claim), embedding_search(claim) 함수를 주입.
     vdb_fn: (선택) VDB dense 조회 함수 — 넘기면 KOSIS 표 전체(28만7천여 개)도 후보에 포함시킨다.
@@ -708,6 +954,10 @@ def search_and_rerank(
     dense가 못 잡는 "기관명/지표명이 정확히 일치" 케이스를 보완한다(골든셋 실측: HyDE 스타일
     쿼리 기준 Dense Recall@30 61.0% vs BM25 41.5% — 서로 다른 실패 패턴이라 RRF로 합치면
     상호보완 기대).
+    item_fn: (선택, 2026-08-23 추가) agent.kosis.query_vdb.item_query_vdb를 감싼 클로저 —
+    표 제목이 아니라 표 안의 개별 "항목" 임베딩과 비교한다(원인 A 보완). ⚠️ 이 클로저는
+    다른 4개와 같은 블렌딩 검색어를 쓰면 안 되고, claim.statistic_expression만으로 쿼리
+    벡터를 만들어야 한다(실측: 블렌딩 검색어로는 항목 단독 유사도가 오히려 떨어짐).
     document_texts: table_id -> 임베딩/설명 텍스트. rerank()로 그대로 전달된다(생략 시
     table_name으로 대체되는데, 리랭커가 짧은 제목만 보고 판단하게 되어 성능이 떨어진다).
 
@@ -731,13 +981,15 @@ def search_and_rerank(
             vdb_results = vdb_fn(claim) if vdb_fn else []
         with Timer() as t_bm25:
             bm25_results = bm25_fn(claim) if bm25_fn else []
+        with Timer() as t_item:
+            item_results = item_fn(claim) if item_fn else []
         with Timer() as t_vdb_core:
             core_vdb_results = vdb_fn(core_claim) if (vdb_fn and core_claim) else []
         with Timer() as t_bm25_core:
             core_bm25_results = bm25_fn(core_claim) if (bm25_fn and core_claim) else []
         merged = _merge_candidates(
             kw_results, emb_results, vdb_results, bm25_results,
-            core_vdb_results, core_bm25_results,
+            item_results, core_vdb_results, core_bm25_results,
         )
         merged = _apply_population_signal(claim, merged, document_texts)
         merged = _apply_institution_signal(claim, merged, document_texts)
@@ -751,7 +1003,12 @@ def search_and_rerank(
     # (2026-08-22: _apply_simplicity_tiebreak도 시도했으나 골든셋 70건 재검증에서 효과
     # 없음+1건 순위 악화(7위→9위)로 되돌림 — "월별/연도별" 부스팅 회귀 사례와 같은 종류의
     # 위험한 신호로 판단, 구현은 위에 남겨두되 호출은 뺌.)
+    # 2026-08-24: axis_value_signal이 period_coverage_filter보다 먼저 실행돼야 한다 —
+    # period 필터가 axis_value_rank 태그를 보고 확인 대상을 좁히기 때문(취업자 구판/신판
+    # 클러스터 실측 검증, notebooks 없이 직접 조회로 확인).
+    result = _apply_axis_value_signal(claim, result)
     result = _apply_period_coverage_filter(claim, result)
+    result = _apply_version_freshness_signal(result)
 
     # 2026-08-22(관측성): 3단계 검색/리랭킹 한 번을 구조화 로그 한 줄로 남긴다 — 소스별
     # 후보 수·지연시간, 최종 1등 후보/점수를 나중에 집계할 수 있게(예: "이번 배치에서
@@ -765,6 +1022,7 @@ def search_and_rerank(
         core_query=core_query,
         kw_count=len(kw_results), emb_count=len(emb_results),
         vdb_count=len(vdb_results), bm25_count=len(bm25_results),
+        item_count=len(item_results),
         vdb_core_count=len(core_vdb_results), bm25_core_count=len(core_bm25_results),
         merged_count=len(merged), result_count=len(result),
         top1_table_id=top1.table_id if top1 else None,
@@ -772,6 +1030,7 @@ def search_and_rerank(
         latency_ms={
             "keyword": round(t_kw.elapsed_ms, 1), "embedding": round(t_emb.elapsed_ms, 1),
             "vdb_dense": round(t_vdb.elapsed_ms, 1), "vdb_bm25": round(t_bm25.elapsed_ms, 1),
+            "item": round(t_item.elapsed_ms, 1),
             "vdb_dense_core": round(t_vdb_core.elapsed_ms, 1),
             "vdb_bm25_core": round(t_bm25_core.elapsed_ms, 1),
             "rerank": round(t_rerank.elapsed_ms, 1),

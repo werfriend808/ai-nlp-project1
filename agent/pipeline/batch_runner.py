@@ -48,6 +48,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import random
 import re
 import sys
@@ -63,7 +64,7 @@ from agent.preprocessing.claim_candidate_scanner import _normalize_quotes
 from agent.preprocessing.source_filter import resolve_claim_sources, filter_verifiable_claims
 from agent.mapping.keyword_search import SYNONYMS, keyword_search, _kiwi
 from agent.mapping.embedding_search import embedding_search, build_table_embedding_cache
-from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, expand_institution_query_aliases
+from agent.mapping.reranker import search_and_rerank, is_rrf_trusted, select_trusted_candidate, expand_institution_query_aliases, DEFAULT_TOP_K
 from agent.orchestrator.slot_filler import fill_slots, call_hcx, extract_json_fallback, is_region_grounded
 from agent.orchestrator.clarify import clarify
 from agent.orchestrator.calc_type_router import _mentions_foreign_country, route_calc_type
@@ -103,8 +104,7 @@ def _table_required_slots(table_id: Optional[str], catalog_by_id: dict) -> list[
     """table_catalog.json의 표별 required_slots/optional_slots(한글 라벨)를 보고, 4단계
     되묻기가 실제로 다뤄야 할 슬롯 목록(clarify_rules.py의 내부 이름 체계)을 정한다.
 
-    2026-08-17: "period"/"calc_type"은 표 구분 없이 항상 필요(계산 자체가 불가능하거나,
-    calc_type은 뒤에서 route_calc_type()이 항상 덮어쓰므로 물어봐도 해는 없음)하지만,
+    2026-08-17: "period"는 표 구분 없이 항상 필요(계산 자체가 불가능)하지만,
     "region"은 표에 지역 축 자체가 없으면 되물을 이유가 없다 — table_catalog.json에
     "지역"이 required_slots든 optional_slots든 아예 안 걸린 표(예: DT_1DA7102S)면 region을
     뺀다. table_catalog.json에 없는 표(아직 B가 안 채웠거나 조회 실패)는 안전하게 기존
@@ -114,12 +114,31 @@ def _table_required_slots(table_id: Optional[str], catalog_by_id: dict) -> list[
     한 번짜리 고정 clarify_reply로는 답할 수 없는 질문이고(배치 파이프라인은 실제 대화가
     아니라 미리 준비된 문구로 재시도하는 구조), 실제로는 select_dimension_values()가
     claim 내용을 보고 이미 채워주고 있다(2026-08-16 작업) — 여기서 또 요구하면 답 못 할
-    질문 때문에 claim이 불필요하게 스킵될 위험만 커진다."""
+    질문 때문에 claim이 불필요하게 스킵될 위험만 커진다.
+
+    2026-08-24 수정(experiment/pipeline-redesign): table_catalog.json(64개 수동
+    카탈로그)에 없는 표는 "안전하게 region을 요구"하던 기존 폴백이, VDB 도입 이후로는
+    오히려 정반대로 위험해졌다 — 이 카탈로그 밖의 표가 이제 28.7만 개 중 대부분이라,
+    "모르면 region 필수"가 사실상 "VDB로 찾은 표는 거의 다 막는다"와 같아졌다(실측
+    확인: DT_1NTA2002에 clarify_reply 없이 "어느 지역 기준인가요?" 되묻기로 막혀 4단계를
+    통과 못 함 — 다중 후보 검증 루프 end-to-end 테스트 중 재현). claim.region이 실제로
+    있으면(grounded) 이 목록과 무관하게 항상 seed_slots로 쓰이므로, 여기서 region을
+    필수 목록에서 뺀다고 명시된 지역 정보를 버리는 게 아니다 — 그냥 "모르면 무조건
+    되묻기로 막는다"는 기본값만 "모르면 일단 진행한다"로 바꾸는 것. table_catalog.json에
+    있는 표는 기존과 동일하게 그 표의 실제 축 정보를 그대로 신뢰한다(변경 없음).
+
+    2026-08-24 수정(experiment/pipeline-redesign): "calc_type"도 필수 목록에서 뺐다 —
+    fill_slots()가 여기서 뭘 채우든 route_calc_type()이 무조건 덮어쓰므로(위 4~6단계
+    호출부 참고) 애초에 이 값이 비어서 되묻는 건 결과에 영향이 없는데, 대화형 환경
+    가정하고 짠 로직("물어봐도 해는 없음" — 누군가 답해줄 거라는 전제)이 배치(무인)
+    모드에서는 clarify_reply가 항상 None이라 그냥 영구 차단으로 바뀌어버린다(실측 재현:
+    DT_1NTA2002 테스트에서 "증감률을 원하시나요, 합계를 원하시나요?" 되묻기로 막힘).
+    결과에 안 쓰이는 값 때문에 claim을 막을 이유가 없어 뺀다."""
     entry = catalog_by_id.get(table_id) if table_id else None
     if entry is None:
-        return ["period", "region", "calc_type"]
+        return ["period"]
     has_region = "지역" in entry.get("required_slots", []) or "지역" in entry.get("optional_slots", [])
-    return ["period", "region", "calc_type"] if has_region else ["period", "calc_type"]
+    return ["period", "region"] if has_region else ["period"]
 
 
 def _normalize_statistic_name(expression: Optional[str]) -> Optional[str]:
@@ -402,6 +421,21 @@ ARTICLES = [
 ]
 
 
+# 2026-08-23 실측 발견(건설업 취업자 claim, DT_1DA7E06S_NEW): KOSIS 산업분류(KSIC) 계열
+# 축은 라벨이 "F 건설업(41~42)"/"C 제조업(10~34)"처럼 "분류기호 한 글자(또는 *) + 공백 +
+# 진짜 이름 + (코드범위)" 형태다. claim.population="건설업 취업자"는 이 라벨과 부분
+# 문자열로 안 겹쳐서(어느 방향으로도 포함 관계가 안 됨) 매칭이 실패했다 — claim 쪽은
+# 안 건드리고, KOSIS 라벨에서 이 기호/범위 잡음만 벗겨내고 비교한다.
+_KOSIS_LABEL_PREFIX_RE = re.compile(r"^[A-Za-z*]\s+")
+_KOSIS_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+
+def _strip_kosis_label_noise(name: str) -> str:
+    stripped = _KOSIS_LABEL_SUFFIX_RE.sub("", name)
+    stripped = _KOSIS_LABEL_PREFIX_RE.sub("", stripped)
+    return stripped or name  # 다 벗겨져서 빈 문자열이 되면(방어적으로) 원래 이름 유지
+
+
 def _match_by_name(name_to_code: dict, texts: tuple) -> Optional[str]:
     """(공용 매칭 로직) name_to_code(예: itmId->이름, 또는 objL 코드->이름을 뒤집은 것)에서
     texts(claim.population, claim.statistic_expression 등)를 순서대로 하나씩 검사해,
@@ -427,9 +461,10 @@ def _match_by_name(name_to_code: dict, texts: tuple) -> Optional[str]:
             return exact
         best_code, best_len = None, 0
         for name, code in name_to_code.items():
-            if name in text or text in name:
-                if len(name) > best_len:
-                    best_code, best_len = code, len(name)
+            clean_name = _strip_kosis_label_noise(name)
+            if clean_name in text or text in clean_name:
+                if len(clean_name) > best_len:
+                    best_code, best_len = code, len(clean_name)
         if best_code is not None:
             return best_code
     return None
@@ -1102,10 +1137,28 @@ def _build_dynamic_kosis_slots(
         print(f"[동적 슬롯매핑] '{table_id}' axis_num_to_name이 캐시에 없음(구버전 캐시?) → 스킵")
         return None
 
+    # 2026-08-24 버그 수정(experiment/pipeline-redesign): VDB 전용 표(table_params.json
+    # 밖)는 run_stage_4가 그 표의 실제 주기(prdSe)를 몰라서(64개 카탈로그에만 있는 정보라)
+    # generic_slots["prd_se"]가 항상 비어있고, period도 fill_slots()가 그냥 연도만("2023")
+    # 뽑아둔 상태로 넘어온다. 근데 get_table_detail()이 이미 그 표의 실제 prd_se를
+    # 알고 있다(KOSIS 메타데이터에서 가져온 값, detail["prd_se"]) — 지금까지 이 값을
+    # 안 쓰고 있어서, 월/분기 단위 표는 전부 "startPrdDe 형식이 안 맞음" API 에러로
+    # 죽고 있었다(다중 후보 검증 루프 end-to-end 테스트 중 DT_1NTA2002로 재현).
+    # generic_slots["prd_se"]가 있으면(=table_params.json에 있는 표) 그게 우선이고,
+    # 없을 때만 detail["prd_se"]로 보강한다.
+    resolved_prd_se = generic_slots.get("prd_se") or detail.get("prd_se")
+    period = generic_slots.get("period")
+    if resolved_prd_se in ("M", "Q") and period and len(str(period)) == 4 and str(period).isdigit():
+        # 연도만 있는데 표는 월/분기 단위를 요구 — "그 연도의 첫 주기"로 정규화한다
+        # (월이든 분기든 KOSIS 표기는 동일하게 "01" — run_stage_5_6의 최댓값검증 분기가
+        # 이미 쓰고 있는 것과 같은 관례, 새로 만든 규칙이 아니다).
+        period = f"{period}01"
+        print(f"[동적 슬롯매핑] '{table_id}' prd_se={resolved_prd_se!r}인데 period가 연도만 있음 → {period!r}로 보정")
+
     dimensions: dict = {}
-    kosis_slots: dict = {"period": generic_slots.get("period")}
-    if generic_slots.get("prd_se"):
-        kosis_slots["prd_se"] = generic_slots["prd_se"]
+    kosis_slots: dict = {"period": period}
+    if resolved_prd_se:
+        kosis_slots["prd_se"] = resolved_prd_se
     if generic_slots.get("itm_id"):
         kosis_slots["itm_id"] = generic_slots["itm_id"]
 
@@ -1487,6 +1540,7 @@ def run_article(
     *,
     vdb_fn=None,
     bm25_fn=None,
+    item_fn=None,
     raise_on_stage12_error: bool = False,
 ) -> list[dict]:
     """기사 하나를 1~8단계까지 돌리고, 16:30~17:00 결과 검수용 레코드 리스트를 반환한다.
@@ -1573,7 +1627,7 @@ def run_article(
             executor.submit(
                 _process_claim,
                 article, claim, cls_result, table_params, catalog_by_id,
-                client, calculator, embedding_cache, vdb_fn, bm25_fn,
+                client, calculator, embedding_cache, vdb_fn, bm25_fn, item_fn,
             )
             for claim in claims
         ]
@@ -1590,6 +1644,172 @@ def run_article(
 _CLAIM_WORKERS = 3
 
 
+# ---------------------------------------------------------------------------
+# 실험: 여러 후보를 실제 값으로 검증해서 확정하는 경로 (2026-08-24, Section 5/6 재구축)
+#
+# 기존 경로(_finish_claim_with_top_candidate)는 3단계가 표 1개를 확정하면(유사도·리랭커
+# 기준) 그 표만으로 4~8단계를 쭉 진행한다 — "제목이 그럴듯한가"로 먼저 정하고, 실제
+# 값 확인은 그 표 안에서만 나중에(7단계 judge) 이뤄진다. 다른 LLM 에이전트가 같은 문제를
+# 어떻게 푸는지 비교해보니, 핵심 차이는 "여러 후보의 실제 값을 먼저 계산해보고, claim
+# 숫자가 재현되는 표를 최종 확정"한다는 점이었다(유사도가 아니라 계산 재현 여부가
+# 최종 판단 기준). 이 아래 함수들은 그 방식을 시도한다.
+#
+# MULTI_CANDIDATE_VERIFY=1일 때만 켜진다 — 꺼져 있으면(기본값) 아래 로직은 전혀
+# 안 불리고 기존 경로만 그대로 동작한다(회귀 없음 보장). 3단계(후보 생성)는 GPU가
+# 필요해서 이 코드는 AWS 서버 없이 로컬에서 짰다 — end-to-end 테스트는 아직 못 했고,
+# 서버 켜지면 골든셋으로 검증부터 하고 기본 경로로 바꿀지 결정할 것(TODO).
+# ---------------------------------------------------------------------------
+MULTI_CANDIDATE_VERIFY = os.environ.get("MULTI_CANDIDATE_VERIFY", "").strip().lower() in ("1", "true", "yes")
+MULTI_CANDIDATE_TOP_K = int(os.environ.get("MULTI_CANDIDATE_TOP_K", "5"))
+
+# notebooks/verify_stage3_value_reeval.py(3단계 값 기준 재평가 스크립트)에서 실측 검증한
+# 단위 환산표를 그대로 가져온다 — claim.value(예: "64조6000억원"→64600000000000.0)와
+# KOSIS raw_value(예: 64626963925885, unit="원")를 직접 비교할 수 없어서 반드시 필요하다.
+_UNIT_SCALE = {
+    "천명": 1_000, "천원": 1_000, "천달러": 1_000, "천호": 1_000, "천가구": 1_000, "천세대": 1_000,
+    "백만원": 1_000_000, "백만달러": 1_000_000,
+    "억원": 100_000_000, "억달러": 100_000_000,
+    "조원": 1_000_000_000_000,
+}
+
+
+def _scaled_computed_value(computed: ComputedResult) -> Optional[float]:
+    if computed is None or computed.raw_value is None:
+        return None
+    return computed.raw_value * _UNIT_SCALE.get(computed.unit or "", 1)
+
+
+# claim.value가 이 오차 이내로 재현되면 "이 표가 맞다"고 잠정 판단한다(최종 판정은
+# 여전히 run_stage_7_8의 judge()가 LLM으로 더 정밀하게 내림 — 이건 후보를 거르는
+# 스크리닝 문턱일 뿐). 5%로 시작 — 아직 골든셋 검증 전이라 조정 가능성 있음(TODO).
+_VALUE_MATCH_TOLERANCE = 0.05
+
+
+def _computed_matches_claim(computed: Optional[ComputedResult], claim) -> bool:
+    """5~6단계로 얻은 실제 계산값이 claim이 주장하는 숫자와 근사적으로 일치하는지,
+    LLM 호출(judge()) 없이 빠르게 스크리닝한다 — 여러 후보 표를 돌 때 값 비교 기준으로
+    쓴다. claim.value가 없으면(단순 사실 확인류 claim 등 비교할 숫자 자체가 없는 경우)
+    이 방식으로는 애초에 검증 불가라 항상 False."""
+    if computed is None or claim.value is None:
+        return False
+    scaled = _scaled_computed_value(computed)
+    if scaled is None:
+        return False
+    if claim.value == 0:
+        return abs(scaled) < 1e-6
+    rel_error = abs(scaled - claim.value) / abs(claim.value)
+    return rel_error <= _VALUE_MATCH_TOLERANCE
+
+
+def _try_compute_for_candidate(
+    article: dict, claim, candidate, table_params: dict, catalog_by_id: dict,
+    client: KosisApiClient, calculator: KosisCalculator,
+) -> tuple[Optional[dict], Optional[ComputedResult]]:
+    """후보 표 하나에 대해 4~6단계(슬롯 채우기 → itmId/축 선택 → 값 조회·계산)를
+    시도해서 (slots, computed)를 반환한다. 어느 단계든 실패하면 (None, None).
+
+    _finish_claim_with_top_candidate()의 4~6단계 부분과 호출하는 함수는 완전히
+    동일하다(run_stage_4/route_calc_type/select_itm_id/select_dimension_values/
+    run_stage_5_6 — 전부 이미 있는 함수, 새로 만든 로직 없음). 다른 점은 "후보 1개
+    확정 후 계속 진행"이 아니라 "여러 후보를 번갈아 시도"하는 용도라는 것 뿐이고,
+    그래서 7~8단계(판정·설명, LLM 호출이라 비용이 큼)는 여기서 안 부른다 — 값이
+    맞는 후보를 찾은 뒤 딱 한 번만 부르기 위해서다."""
+    try:
+        slots = run_stage_4(
+            claim.sentence, article.get("clarify_reply"), article["published_date"],
+            table_id=candidate.table_id, table_params=table_params,
+            catalog_by_id=catalog_by_id, claim_region=claim.region,
+        )
+    except Exception as e:
+        print(f"  [검증루프] {candidate.table_id}: 4단계 실패({type(e).__name__}) → 스킵")
+        return None, None
+    if slots is None:
+        return None, None
+
+    routed_calc_type = route_calc_type(claim)
+    if routed_calc_type is None:
+        return None, None
+    slots["calc_type"] = routed_calc_type
+
+    selected_itm = select_itm_id(candidate.table_id, claim, table_params)
+    if selected_itm:
+        slots["itm_id"] = selected_itm
+    dim_values = select_dimension_values(candidate.table_id, claim, table_params, slots)
+    if dim_values:
+        slots.update(dim_values)
+
+    computed = run_stage_5_6(
+        candidate.table_id, slots, table_params, client, calculator,
+        comparison_target=claim.comparison_target, claim_sentence=claim.sentence,
+        article_year=article["published_date"].year, org_id=candidate.org_id, claim=claim,
+    )
+    return slots, computed
+
+
+def _select_candidate_by_value(
+    article: dict, claim, candidates: list, table_params: dict, catalog_by_id: dict,
+    client: KosisApiClient, calculator: KosisCalculator, *, top_k: int = MULTI_CANDIDATE_TOP_K,
+) -> Optional[tuple]:
+    """상위 top_k개 후보를 순서대로 시도해서, 실제 계산값이 claim 숫자를 재현하는 첫
+    후보를 (candidate, slots, computed) 튜플로 반환한다. 하나도 안 맞으면 None —
+    이 경우 호출부는 기존 경로(select_trusted_candidate + _finish_claim_with_top_candidate)로
+    폴백해야 한다(이 함수는 "값으로 확정 가능한 경우"만 다룬다, 전부를 대체하지 않음).
+
+    claim.value가 없으면 애초에 값으로 검증할 방법이 없으므로 즉시 None(비용 낭비 방지 —
+    KOSIS API 호출을 후보 수만큼 낭비하지 않는다)."""
+    if claim.value is None or not candidates:
+        return None
+    for candidate in candidates[:top_k]:
+        slots, computed = _try_compute_for_candidate(
+            article, claim, candidate, table_params, catalog_by_id, client, calculator
+        )
+        if computed is not None and _computed_matches_claim(computed, claim):
+            print(f"  [검증루프] {candidate.table_id}: 값 일치 확인 → 이 표로 확정")
+            return candidate, slots, computed
+        elif computed is not None:
+            scaled = _scaled_computed_value(computed)
+            print(f"  [검증루프] {candidate.table_id}: 값 불일치(계산={scaled}, claim={claim.value}) → 다음 후보")
+    return None
+
+
+def _finish_claim_with_value_verified_candidate(
+    article: dict, claim, cls_result, candidate, slots: dict, computed: ComputedResult,
+    table_params: dict, catalog_by_id: dict,
+) -> Optional[dict]:
+    """_select_candidate_by_value()가 값으로 확정한 후보에 대해 7~8단계(판정·설명)만
+    마저 실행하고 DB에 저장한다. 4~6단계는 이미 끝난 상태로 받아서 재실행하지 않는다.
+
+    is_rrf_trusted() 검사를 안 하는 게 기존 경로(_finish_claim_with_top_candidate)와의
+    핵심 차이다 — 이미 실제 값이 claim과 맞는 걸 확인했으니 유사도 기반 신뢰 검사가
+    불필요하다(오히려 여기서 걸었다가 통과 못 하면, 방금 실측으로 확인한 값 일치를
+    무시하고 버리는 모순이 생긴다)."""
+    outcome = run_stage_7_8(
+        claim, candidate, computed, prd_se=slots.get("prd_se"), article_date=article.get("published_date")
+    )
+    if outcome is None:
+        return None
+    verdict, explanation = outcome
+    try:
+        insert_verification(
+            _build_verification_record(
+                article=article, claim=claim, top=candidate, generic_slots=slots,
+                table_params=table_params, computed=computed, verdict=verdict,
+                explanation=explanation, cls_result=cls_result, catalog_by_id=catalog_by_id,
+                verification_possible="가능", ambiguity_reason=None,
+            )
+        )
+    except Exception as e:
+        print(f"[DB 저장] 실패 ({type(e).__name__}: {e}) → 저장만 스킵, 배치는 계속")
+    return {
+        "article": article["label"],
+        "claim_sentence": claim.sentence,
+        "table_name": candidate.table_name,
+        "verdict": verdict.verdict,
+        "gap_type": verdict.gap_type,
+        "classifier_score": cls_result.score,
+    }
+
+
 def _process_claim(
     article: dict,
     claim,
@@ -1601,6 +1821,7 @@ def _process_claim(
     embedding_cache: dict,
     vdb_fn,
     bm25_fn,
+    item_fn=None,
 ) -> Optional[dict]:
     """주장 1건의 3~8단계 전체(표매칭→슬롯채우기→계산→판정→설명, DB저장까지)를 처리한다.
     run_article()의 for claim in claims: 루프 본문을 그대로 뽑아온 것 — 스레드풀에
@@ -1666,6 +1887,13 @@ def _process_claim(
             embedding_fn=lambda c: embedding_search(c, cache=embedding_cache),
             vdb_fn=vdb_fn,
             bm25_fn=bm25_fn,
+            item_fn=item_fn,
+            # 2026-08-24: MULTI_CANDIDATE_VERIFY가 켜져 있으면 top_k를 기본값(5)보다
+            # 넓혀서 넘긴다 — 안 넘기면 search_and_rerank 내부 DEFAULT_TOP_K(5)로 잘려서,
+            # _select_candidate_by_value()가 아무리 top_k를 크게 잡아도(예: 10) 애초에
+            # 후보 리스트 자체가 5개뿐이라 의미가 없다(실측 재현: item_rank로 6위인
+            # DT_1NTA2002가 있는데도 후보 목록엔 5개까지만 들어와서 검증 루프가 못 봄).
+            top_k=max(DEFAULT_TOP_K, MULTI_CANDIDATE_TOP_K) if MULTI_CANDIDATE_VERIFY else DEFAULT_TOP_K,
             document_texts={tid: t["embedding_text"] for tid, t in catalog_by_id.items()},
         )
     except Exception as e:
@@ -1676,7 +1904,20 @@ def _process_claim(
         print("[3단계 매핑] 매칭되는 표 없음 → 스킵")
         return None
 
-    top = candidates[0]
+    if MULTI_CANDIDATE_VERIFY:
+        picked = _select_candidate_by_value(
+            article, claim, candidates, table_params, catalog_by_id, client, calculator,
+        )
+        if picked is not None:
+            candidate, slots, computed = picked
+            result = _finish_claim_with_value_verified_candidate(
+                article, claim, cls_result, candidate, slots, computed, table_params, catalog_by_id,
+            )
+            if result is not None:
+                return result
+        print("[검증루프] 값으로 확정된 후보 없음 → 기존 신뢰 게이트 경로로 폴백")
+
+    top = select_trusted_candidate(candidates)
     return _finish_claim_with_top_candidate(
         article, claim, cls_result, top, table_params, client, calculator, catalog_by_id
     )
@@ -1955,9 +2196,12 @@ def main(
     catalog_by_id = _load_table_catalog_by_id()
     embedding_cache = build_table_embedding_cache()
 
-    vdb_fn = bm25_fn = None
+    vdb_fn = bm25_fn = item_fn = None
     if with_vdb:
-        from agent.kosis.query_vdb import batch_query_vdb, lexical_query_vdb, VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K
+        from agent.kosis.query_vdb import (
+            batch_query_vdb, lexical_query_vdb, item_query_vdb,
+            VdbUnavailableError, VDB_TOP_K, LEXICAL_TOP_K, ITEM_TOP_K,
+        )
 
         print("[배치] Qwen3-Embedding-4B 로딩 중(VDB 쿼리용)...")
         from sentence_transformers import SentenceTransformer
@@ -1974,9 +2218,12 @@ def main(
             base = claim.search_query or claim.sentence
             return expand_institution_query_aliases(base, claim.source_org)
 
+        def _encode_query(text: str):
+            full = f"Instruct: {vdb_instruction}\nQuery: {text}"
+            return vdb_model.encode([full], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
+
         def vdb_fn(claim):
-            text = f"Instruct: {vdb_instruction}\nQuery: {_retrieval_query_text(claim)}"
-            vec = vdb_model.encode([text], convert_to_numpy=True, normalize_embeddings=True)[0].tolist()
+            vec = _encode_query(_retrieval_query_text(claim))
             try:
                 return batch_query_vdb([vec], top_k=VDB_TOP_K)[0]
             except VdbUnavailableError as e:
@@ -1988,6 +2235,17 @@ def main(
                 return lexical_query_vdb(_retrieval_query_text(claim), top_k=LEXICAL_TOP_K)
             except VdbUnavailableError as e:
                 print(f"[BM25] 조회 실패({e}) — BM25 없이 계속 진행")
+                return []
+
+        def item_fn(claim):
+            # 2026-08-23/24: 다른 3개 채널과 달리 블렌딩된 search_query가 아니라
+            # claim.statistic_expression만 써야 한다(reranker.py의 item_fn 문서 참고 —
+            # 블렌딩 쿼리로 비교하면 항목 단독 유사도가 오히려 떨어짐, 실측 확인됨).
+            narrow = claim.statistic_expression or claim.search_query or claim.sentence
+            try:
+                return item_query_vdb(_encode_query(narrow), top_k=ITEM_TOP_K)
+            except VdbUnavailableError as e:
+                print(f"[item] 조회 실패({e}) — item 채널 없이 계속 진행")
                 return []
 
     if csv_mixed:
@@ -2011,7 +2269,7 @@ def main(
             all_results.extend(
                 run_article(
                     article, client, calculator, table_params, embedding_cache, catalog_by_id,
-                    vdb_fn=vdb_fn, bm25_fn=bm25_fn,
+                    vdb_fn=vdb_fn, bm25_fn=bm25_fn, item_fn=item_fn,
                 )
             )
         except Exception as e:

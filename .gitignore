@@ -30,6 +30,9 @@ agent/kosis/chroma_db/
 # 관측성 로그(agent/observability.py) — 실행할 때마다 쌓이는 런타임 산출물, 소스 아님
 logs/*.jsonl
 
+# macOS
+.DS_Store
+
 # 재구축 중 생성되는 DB 덤프/로그 (2026-08-27) — 덤프 1개가 5.3GB라 GitHub 100MB 한도를
 # 훨씬 넘고, DB 자체가 EBS에 있어 재생성 가능하다. 다만 excluded_too_large_ALL.jsonl은
 # "40,000셀 초과로 제외한 7,839개 표 목록"이라 나중에 재처리하려면 필요해서 예외로 둔다.

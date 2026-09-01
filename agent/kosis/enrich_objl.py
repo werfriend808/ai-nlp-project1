@@ -57,10 +57,24 @@ _META_URL = "https://kosis.kr/openapi/Param/statisticsParameterData.do"
 #      (2007-05) ..."), 기간을 넓혀야 한다.
 # 그래도 완전히 못 살리는 표(진짜로 폐기된 시계열)는 여전히 있다 — 이 경우 "데이터가
 # 존재하지 않습니다"가 정직한 답이라 재시도로 해결 안 된다.
+#
+# 2026-08-23 실측 추가: 위 "기간을 넓혀야 한다"는 결론이 반대 문제를 만들었다 — 지역이
+# 세분화된 표(읍면동/시군구 단위, 예: 자살률 DT_1B34E13)는 축이 1개뿐이어도 20년치를
+# 한 번에 요청하면 "[31] 40,000셀을 초과한 결과값은 요청하실 수 없습니다"로 막힌다
+# (직접 재현 확인: DT_1B04005N에 objL1=ALL 하나만 넣고 12개월만 요청해도 이미 초과).
+# 그런데 셀 수는 (축 크기) x (요청 기간의 시점 개수)라서, 기간을 줄이면 축이 커도
+# 대부분 통과한다(예: 읍면동 3,500개 x 1개 시점 = 3,500셀, 문제없음). 그래서 각 prd_se마다
+# 좁은 단일 시점을 먼저 시도하고, 그게 "데이터 없음"으로 실패해야만(폐기된 시계열이라
+# 최근 시점엔 없고 과거에만 있는 경우) 기존의 넓은 기간으로 재시도한다 — 두 문제(폐기된
+# 표는 기간을 넓혀야 찾고, 큰 표는 기간을 좁혀야 통과) 둘 다 해결하려면 순서가 이래야 한다.
 _PRD_SE_ATTEMPTS = (
+    ("M", "202401", "202401"),
     ("M", "200501", "202612"),
+    ("A", "2023", "2023"),
     ("A", "2005", "2026"),
+    ("Y", "2023", "2023"),
     ("Y", "2005", "2026"),
+    ("Q", "20231", "20231"),
     ("Q", "20051", "20264"),
 )
 
@@ -148,7 +162,12 @@ def fetch_axis_names(org_id: str, tbl_id: str, api_key: Optional[str] = None) ->
                 last_error = f"[{err_code}] {err_msg}"
                 # err=21인데 "표가 존재하지 않습니다" 류면 axis 문제가 아니라 표 자체가
                 # 없는 것 — axis 재시도 무의미.
-                is_axis_count_issue = err_code == "21" and "존재하지 않습니다" not in err_msg
+                # 2026-08-23 추가: err=31("40,000셀을 초과한 결과값은 요청하실 수
+                # 없습니다")도 축을 줄이면 셀 수(=각 축 크기의 곱)가 줄어드니 같은 이유로
+                # axis 재시도 대상이다 — 예전엔 여기서 바로 다음 prd_se로 넘어가버려서,
+                # 좁은 기간으로도 못 피할 만큼 축 하나가 큰 표(예: 시군구 단위 표)에서
+                # n_axes를 줄여볼 기회 자체가 없었다(자살률 DT_1B34E13 재현 확인).
+                is_axis_count_issue = err_code in ("21", "31") and "존재하지 않습니다" not in err_msg
                 if not is_axis_count_issue:
                     break  # axis 개수 문제가 아닌 에러 — 재시도해도 결과 동일, 다음 prd_se로.
                 continue
@@ -225,6 +244,76 @@ def fetch_period_range(org_id: str, tbl_id: str, api_key: Optional[str] = None) 
     return result or None
 
 
+# 2026-08-23 추가: fetch_axis_names()/fetch_table_detail()는 분류축 "이름"만 붙인다
+# (원인 A — "생애주기적자계정" 표 안에 "소비"/"노동소득" 같은 세부 항목이 있는데
+# 표 제목·분류축 이름 어디에도 이 단어들이 없어서 검색이 원천적으로 못 찾는 문제)는
+# 축 이름 보강으로는 안 풀린다. 이 값들은 축이 아니라 "항목"(itmId)이라서다.
+# fetch_period_range()와 같은 이유로 getMeta&type=ITM 전용 엔드포인트를 쓴다 — 실제
+# 데이터를 안 가져오고 정의만 오므로 40,000셀 제한과 무관하다. 응답 형식도 PRD와
+# 동일하게 키가 따옴표로 안 감싸인 비표준 JSON이라 정규식으로 직접 파싱한다.
+#
+# ⚠️ 실측 확인(2026-08-23): 이 엔드포인트가 "항목"만 주는 게 아니었다 — 표에 따라
+# 분류축의 개별 "값"까지 같은 필드(ITM_NM)에 섞여서 온다(DT_1B34E13에서 사망원인 50개
+# 항목·시군구 250여 개·"남자"/"여자"까지 전부 딸려옴, DT_1DA7E06S_NEW에서도 산업분류
+# 코드별 값이 같이 옴). 이걸 그대로 다 붙이면 되돌렸던 "항목 전체 재색인"(Recall@1
+# 17.1%→14.3% 하락)과 똑같은 희석 문제가 재현된다. 그래서 진짜 "항목"으로 보이는
+# 것만 걸러낸다 — 나이("0세"~"85세이상"), 괄호 안에 분류코드가 있는 것(지역/질병/
+# 산업 분류, 예: "F 건설업(41~42)", "고의적 자해(자살) (X60-X84)")은 축의 개별 값일
+# 확률이 높아서 뺀다. "계"/"소계"/"전체"/"남자"/"여자"처럼 어느 표에나 있는 범용
+# 단어도 검색 변별력이 없어서 뺀다.
+#
+# 실측상 진짜 항목은 응답 맨 앞에 연달아 나오고, 그 직후에 "계"(전체 집계 — 분류축
+# 값이 시작된다는 신호)가 뒤따르는 패턴이 확인됐다(사망자수/사망률/연령표준화
+# 사망률 → 계 → 질병코드 250여 개 → 지역 250여 개 → 성별 순). 그래서 필터에 걸리는
+# 이름을 만나면 "건너뛰고 계속"이 아니라 "거기서 멈춘다" — 그래야 계 다음에 오는
+# 지역명(따로 걸러낼 패턴이 없는 것들)까지 안 새어 들어온다. _MAX_ITEM_NAMES는 이
+# 정지 신호가 안 걸리는 표에 대비한 안전장치일 뿐이라 넉넉히 잡는다(실측: 국민이전
+# 계정 표는 진짜 항목이 14개).
+_ITM_NM_RE = re.compile(r'(?<!_)ITM_NM:"([^"]*)"')
+_ITEM_NAME_STOPWORDS = {"계", "소계", "합계", "전체", "전국", "남자", "여자", "소계및평균"}
+_ITEM_NAME_AGE_RE = re.compile(r"^\d+세(이상)?$")
+_ITEM_NAME_CODE_SUFFIX_RE = re.compile(r"\([A-Za-z0-9][^)]*\)\s*$")  # 끝에 "(A00-B99)"/"(41~42)"류
+_MAX_ITEM_NAMES = 20
+
+
+def fetch_item_names(org_id: str, tbl_id: str, api_key: Optional[str] = None) -> Optional[list[str]]:
+    """표 하나가 다루는 통계 항목 이름들(예: ["사망자수", "사망률"])을 가져온다.
+    분류축 개별 값(나이/지역/질병코드 등)은 필터링해서 뺀다(모듈 docstring 참고).
+    실패하거나 걸러내고 남는 게 없으면 None(호출부가 건너뛰도록 — best-effort)."""
+    key = api_key or os.environ.get("KOSIS_API_KEY")
+    if not key:
+        return None
+    try:
+        resp = requests.get(
+            _META_TBL_URL,
+            params={
+                "method": "getMeta", "type": "ITM", "apiKey": key,
+                "orgId": org_id, "tblId": tbl_id, "format": "json",
+            },
+            timeout=10,
+        )
+    except requests.RequestException:
+        return None
+
+    names: list[str] = []
+    seen = set()
+    for name in _ITM_NM_RE.findall(resp.text):
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        is_axis_value = (
+            name in _ITEM_NAME_STOPWORDS
+            or _ITEM_NAME_AGE_RE.match(name)
+            or _ITEM_NAME_CODE_SUFFIX_RE.search(name)
+        )
+        if is_axis_value:
+            break  # 진짜 항목 구간이 끝나고 분류축 값 구간이 시작됐다는 신호 — 여기서 멈춤
+        names.append(name)
+        if len(names) >= _MAX_ITEM_NAMES:
+            break
+    return names or None
+
+
 def _probe_additional_periods(
     org_id: str, tbl_id: str, api_key: str, n_axes: int, already_found: str
 ) -> list[str]:
@@ -293,7 +382,12 @@ def fetch_table_detail(org_id: str, tbl_id: str, api_key: Optional[str] = None) 
                 err_code = str(data.get("err"))
                 err_msg = data.get("errMsg", "")
                 last_error = f"[{err_code}] {err_msg}"
-                if not (err_code == "21" and "존재하지 않습니다" not in err_msg):
+                # 2026-08-23: fetch_axis_names()와 같은 이유로 err=31(40,000셀 초과)도
+                # axis 재시도 대상에 넣는다 — 이 함수는 fetch_axis_names()와 별개로
+                # 복붙된 재시도 루프라 그쪽만 고치고 여기를 빠뜨리면 실제 조회 경로
+                # (get_table_detail -> fetch_table_detail, _build_dynamic_kosis_slots가
+                # 쓰는 바로 그 경로)는 여전히 안 고쳐진 채로 남는다.
+                if not (err_code in ("21", "31") and "존재하지 않습니다" not in err_msg):
                     break
                 continue
             if not isinstance(data, list) or not data:
@@ -351,17 +445,26 @@ def fetch_table_detail(org_id: str, tbl_id: str, api_key: Optional[str] = None) 
     raise ObjlFetchError(f"{tbl_id}: 모든 시도 실패 (마지막 오류: {last_error})")
 
 
-def build_enriched_text(base_text: str, axis_names: list[str]) -> str:
-    """기존 텍스트("기관명 (연월) 표명")에 분류축 이름을 붙인다.
+def build_enriched_text(
+    base_text: str, axis_names: list[str], item_names: Optional[list[str]] = None
+) -> str:
+    """기존 텍스트("기관명 (연월) 표명")에 분류축 이름 + 항목 이름을 붙인다.
 
-    개별 분류항목(수백 개일 수 있음)이 아니라 축 이름만 붙인다 — 희석 방지(모듈 docstring
-    참고). 이미 축 이름이 붙어있으면(재실행 등) 중복으로 안 붙인다."""
-    if not axis_names:
-        return base_text
-    suffix = " — " + ", ".join(axis_names)
-    if suffix in base_text:
-        return base_text
-    return base_text + suffix
+    개별 분류항목 값(수백 개일 수 있음)이 아니라 축 "이름"만 붙인다 — 희석 방지(모듈
+    docstring 참고). item_names(2026-08-23 추가, fetch_item_names 참고)는 축과 별개로
+    "소비"/"노동소득"처럼 표 제목·축 이름에 안 드러나는 세부 통계 개념을 보강한다 —
+    둘을 구분자(—/·)로 분리해서 어느 쪽이 붙었는지 나중에도 구별 가능하게 한다. 이미
+    붙어있으면(재실행 등) 중복으로 안 붙인다."""
+    text = base_text
+    if axis_names:
+        suffix = " — " + ", ".join(axis_names)
+        if suffix not in text:
+            text += suffix
+    if item_names:
+        suffix = " · " + ", ".join(item_names)
+        if suffix not in text:
+            text += suffix
+    return text
 
 
 def enrich_table(
@@ -374,13 +477,19 @@ def enrich_table(
     truncate_dim: int = 1024,
 ) -> Optional[tuple[str, list[float]]]:
     """표 하나를 보강한다. 성공하면 (새 텍스트, 새 임베딩) 반환, 실패하면 None
-    (호출부가 조용히 건너뛰도록 — 보강 실패가 배치 전체를 막으면 안 됨)."""
+    (호출부가 조용히 건너뛰도록 — 보강 실패가 배치 전체를 막으면 안 됨).
+
+    2026-08-23: 축 이름 조회(fetch_axis_names)와 항목 이름 조회(fetch_item_names)를
+    서로 독립적인 best-effort로 처리한다 — 축 조회가 실패해도(예: 40,000셀 표라
+    ObjlFetchError) 항목 조회는 별도 경량 엔드포인트라 성공할 수 있으므로, 한쪽이
+    실패했다고 표 전체를 보강 안 하고 넘어가면 안 된다."""
     try:
         axis_names = fetch_axis_names(org_id, tbl_id, api_key)
     except ObjlFetchError:
-        return None
+        axis_names = []
+    item_names = fetch_item_names(org_id, tbl_id, api_key) or []
 
-    new_text = build_enriched_text(base_text, axis_names)
+    new_text = build_enriched_text(base_text, axis_names, item_names)
     if new_text == base_text:
         return None
 
@@ -441,3 +550,53 @@ def enrich_candidates(
         time.sleep(delay_sec)
 
     return enriched_count
+
+
+ITEMS_TABLE_NAME = "kosis_vdb_items"
+
+
+def index_table_items(
+    tbl_id: str,
+    org_id: str,
+    table_name: str,
+    embed_model,
+    *,
+    api_key: Optional[str] = None,
+) -> Optional[int]:
+    """표 하나의 항목들(fetch_item_names 참고)을 각각 독립적으로 임베딩해서
+    kosis_vdb_items에 저장한다 — agent.kosis.query_vdb.item_query_vdb가 읽는 인덱스.
+
+    표 제목에 항목을 다 붙이는 방식(build_enriched_text)과 다른 점: 항목을 표와 같은
+    임베딩에 섞지 않고 별도 행으로 저장해서, 항목 하나("노동소득")의 신호가 다른
+    항목들 사이에서 희석되지 않게 한다(실측: 희석 방식은 Recall 개선 효과 없었음,
+    별도 인덱싱 방식은 항목 단독 유사도가 표 제목 전체보다 뚜렷하게 높게 나옴).
+
+    반환: 저장한 항목 개수, 항목이 없거나 실패하면 None(호출부가 건너뛰도록)."""
+    item_names = fetch_item_names(org_id, tbl_id, api_key)
+    if not item_names:
+        return None
+
+    # 표 제목을 짧게 잘라 최소 맥락만 붙인다 — "노동소득"만 단독으로 두면 너무 헐벗어서
+    # (예: 다른 표의 "노동소득" 항목과 구분이 안 됨) 표 이름의 핵심 명사 정도는 필요하다.
+    # 표 제목 전체(기관명·연월 포함)를 다 붙이면 다시 희석 문제가 재현되므로 일부러 안 한다.
+    short_context = re.sub(r"^[가-힣A-Za-z0-9]+\s*\([\d-]+\)\s*", "", table_name).strip()
+    short_context = short_context or table_name
+
+    texts = [f"{short_context} — {name}" for name in item_names]
+    vecs = embed_model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
+
+    from agent.kosis.query_vdb import _get_connection  # 지연 import, 순환 참조 방지
+
+    conn = _get_connection()
+    with conn.cursor() as cur:
+        for name, vec in zip(item_names, vecs):
+            cur.execute(
+                f"""
+                insert into {ITEMS_TABLE_NAME} (tbl_id, org_id, item_name, embedding)
+                values (%s, %s, %s, %s::vector)
+                on conflict (tbl_id, item_name) do update set embedding = excluded.embedding;
+                """,
+                (tbl_id, org_id, name, vec.tolist()),
+            )
+    conn.commit()
+    return len(item_names)

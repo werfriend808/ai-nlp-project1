@@ -231,3 +231,86 @@ def lexical_query_vdb(query_text: str, *, top_k: int = LEXICAL_TOP_K) -> list[Ta
         )
         for tbl_id, org_id, text, sim in rows
     ]
+
+
+# 2026-08-23 도입: 표 "제목"이 검색어와 전혀 안 겹치는 경우(원인 A — 예: "생애주기적자계정"
+# 표 안에 "소비"/"노동소득" 항목이 있는데 표 제목엔 그 단어가 없음)를 보완한다. 지금까지의
+# 4개 채널은 전부 표 제목 텍스트와 검색어를 비교했는데, 이 채널은 표 "항목"(agent.kosis
+# .enrich_objl.fetch_item_names 참고) 하나하나를 독립적으로 임베딩해서 비교한다 — 표
+# 제목에 여러 항목을 다 붙이면(예전에 시도했다 되돌린 방식) 항목 하나의 신호가 희석되지만,
+# 항목을 표와 별개 행으로 저장하면 희석 없이 비교된다(실측 확인: DT_1NTA2002의 "노동소득"
+# 항목 단독 유사도 0.376 vs 표 제목 전체 0.257).
+#
+# ⚠️ 검증된 전제: 이 채널의 쿼리 벡터는 다른 4개 채널과 같은 (블렌딩된) search_query가
+# 아니라 claim.statistic_expression만 써야 한다 — 블렌딩된 검색어로 비교하면 항목
+# 하나짜리 좁은 텍스트와는 안 맞아서(실측: "노동소득 민간 소비 전국"으로 비교하면
+# "노동소득" 항목이 0.259로 오히려 안 좋아짐, "노동소득"만 쓰면 0.376으로 1위) 호출부가
+# 반드시 별도로 좁은 쿼리 벡터를 만들어 넘겨야 한다.
+ITEM_TOP_K = int(os.environ.get("ITEM_TOP_K", "10"))
+ITEM_MIN_SIMILARITY = float(os.environ.get("ITEM_MIN_SIMILARITY", "0.3"))
+ITEMS_TABLE_NAME = "kosis_vdb_items"
+
+
+def item_query_vdb(query_vec: list[float], *, top_k: int = ITEM_TOP_K) -> list[TableCandidate]:
+    """항목(item) 임베딩 인덱스에서 쿼리 벡터와 가장 가까운 항목들을 찾아, 그 항목이 속한
+    표를 후보로 돌려준다. 한 표에 항목이 여러 개 걸리면 가장 높은 점수만 남긴다(표
+    단위로 중복 제거 — RRF 합치기 쪽은 표 단위 후보 리스트를 기대한다).
+
+    table_name은 kosis_vdb_tables와 조인해서 채운다(kosis_vdb_items는 항목 이름만 들고
+    있음) — 인덱싱 시점에 중복 저장 안 해서 표 제목이 나중에 바뀌어도 항상 최신을 본다."""
+    if not query_vec:
+        return []
+
+    try:
+        conn = _get_connection()
+    except psycopg2.OperationalError as e:
+        raise VdbUnavailableError(f"Supabase(pgvector)에 연결 못 했습니다: {e}") from e
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                select i.tbl_id, i.org_id, i.item_name, t.text,
+                       i.embedding <=> %s::vector as distance
+                from {ITEMS_TABLE_NAME} i
+                join {TABLE_NAME} t on t.tbl_id = i.tbl_id
+                order by i.embedding <=> %s::vector
+                limit %s;
+                """,
+                (query_vec, query_vec, top_k * 3),  # 표 단위 중복 제거 전이라 넉넉히 가져옴
+            )
+            rows = cur.fetchall()
+    except psycopg2.Error as e:
+        global _conn
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _conn = None
+        raise VdbUnavailableError(f"Supabase(pgvector) 항목 검색 중 연결 오류: {e}") from e
+
+    best_per_table: dict[str, tuple] = {}
+    for tbl_id, org_id, item_name, table_text, dist in rows:
+        similarity = 1.0 - float(dist)
+        if similarity < ITEM_MIN_SIMILARITY:
+            continue
+        prev = best_per_table.get(tbl_id)
+        if prev is None or similarity > prev[0]:
+            best_per_table[tbl_id] = (similarity, org_id, item_name, table_text)
+
+    ranked = sorted(best_per_table.items(), key=lambda kv: -kv[1][0])[:top_k]
+    return [
+        TableCandidate(
+            table_id=tbl_id,
+            table_name=table_text,
+            score=similarity,
+            required_slots=[],
+            # 2026-08-24: score도 같이 남긴다 — reranker.py의 신뢰 게이트가 item_rank
+            # "순위"만으론 노이즈를 못 거른다(표 1개만 인덱싱된 지금은 item_rank가 있으면
+            # 사실상 항상 1등이라 순위 자체가 무의미). 유사도 점수로 문턱을 걸어야 한다
+            # (골든셋 실측: 정답 0.3676~0.4810 vs 무관한 오탐 0.30~0.3584, 깨끗하게 분리됨).
+            source_meta=f"kosis_vdb_item(matched='{item_name}', score={similarity:.4f})",
+            org_id=org_id or None,
+        )
+        for tbl_id, (similarity, org_id, item_name, table_text) in ranked
+    ]
