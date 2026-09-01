@@ -111,20 +111,33 @@ def load_document_texts(catalog_path: Path = CATALOG_PATH) -> dict[str, str]:
     tables = json.loads(catalog_path.read_text(encoding="utf-8"))["tables"]
     return {t["tblId"]: t["embedding_text"] for t in tables}
 
-# 일부 환경(예: 특정 CPU/torch 조합)에서 리랭커 모델 로딩이 세그멘테이션 폴트로 죽는데,
-# 이건 OS 레벨 크래시라 아래 try/except로 못 잡는다. 이럴 땐 모델 로딩 자체를 시도하지 않도록
-# .env에 KOSIS_DISABLE_RERANKER=1을 넣어서 우회한다 (rerank()가 기존 score 기준 항등
-# 정렬로 폴백 — keyword_search 점수 우선, 그다음 embedding_search 유사도).
+# 2026-08-30: benchmark/reranker_experiment, top1_reranking_experiment, reranker_feature_analysis
+# 세 독립 실험이 전부 같은 방향으로 재현: CE(bge-reranker-v2-m3)를 완전히 빼고 8채널
+# RRF(keyword/embedding/vdb/bm25/population/institution/gender/region)만으로 최종 순위를
+# 매기는 쪽이 CE를 포함한 production보다 test Top-1(31.4% vs 28.6%)·Conditional Top-1
+# (52.4% vs 47.6%) 모두 높았고 latency는 83% 낮았다(505ms vs 2,986ms). CE는 근접중복/
+# 형제표(신구판, 지역축 확장판) 구분에 근본적으로 약하다는 게 세 실험의 공통 결론.
+# 골든셋이 70건뿐이라 매 실험마다 "PROMISING, 더 큰 골든셋으로 재검증 권고"로 남겨뒀으나,
+# 사용자가 이 결과를 근거로 채택을 결정해 기본값을 CE 비활성화로 전환한다. 필요시
+# RERANKER_ENABLED=1(.env)로 언제든 되돌릴 수 있다(모델 호출 코드 자체는 그대로 남겨둠).
+#
+# 예전 배경(참고, 지금도 유효한 대체 경로): 일부 환경(특정 CPU/torch 조합)에서 리랭커 모델
+# 로딩이 세그멘테이션 폴트로 죽을 수 있는데, 이건 OS 레벨 크래시라 try/except로 못 잡는다 —
+# 이 스위치가 그런 상황도 함께 우회해준다.
 #
 # 2026-08-21(PHASE 8): RERANKER_ENABLED가 명시적으로 설정돼 있으면 그걸 우선한다(원래
 # 아키텍처 스펙이 요청한 이름) — 안 넘기면 기존 KOSIS_DISABLE_RERANKER를 그대로 본다
 # (하위 호환, 기존에 이 env var로 배포 스크립트/문서를 이미 쓰고 있을 수 있어서 대체가
-# 아니라 우선순위만 얹는다).
+# 아니라 우선순위만 얹는다). 어느 쪽도 명시되지 않으면 2026-08-30부터 기본값은 "비활성화"다
+# (예전 기본값은 "활성화"였음 — 위 실험 결과로 기본값 자체를 뒤집은 것).
 _RERANKER_ENABLED_ENV = os.environ.get("RERANKER_ENABLED")
+_KOSIS_DISABLE_RERANKER_ENV = os.environ.get("KOSIS_DISABLE_RERANKER")
 if _RERANKER_ENABLED_ENV is not None:
     _DISABLE_RERANKER = _RERANKER_ENABLED_ENV.strip().lower() not in ("1", "true", "yes")
+elif _KOSIS_DISABLE_RERANKER_ENV is not None:
+    _DISABLE_RERANKER = _KOSIS_DISABLE_RERANKER_ENV.strip().lower() in ("1", "true", "yes")
 else:
-    _DISABLE_RERANKER = os.environ.get("KOSIS_DISABLE_RERANKER", "").strip().lower() in ("1", "true", "yes")
+    _DISABLE_RERANKER = True
 
 _reranker_singleton = None  # CrossEncoder 인스턴스 lazy 캐시 (프로세스당 1회만 로딩)
 
@@ -330,6 +343,27 @@ def _rrf_fuse(reranker_ranked: list[TableCandidate], *, k: int = RRF_K) -> list[
     return fused
 
 
+def _rrf_fuse_no_ce(candidates: list[TableCandidate], *, k: int = RRF_K) -> list[TableCandidate]:
+    """CE를 아예 안 거치고, `_merge_candidates`/소프트 시그널이 이미 태깅해둔 8개 채널
+    (keyword/embedding/vdb/bm25/population/institution/gender/region)만으로 RRF 융합한다.
+
+    2026-08-30: `_rrf_fuse()`와 정확히 같은 공식(`Σ1/(k+rank)`)을 쓰되, `reranker_rank`
+    채널을 추가하지 않는다는 점만 다르다(`_rrf_fuse`는 입력 리스트 순서를 CE 순위로 간주해서
+    무조건 `reranker_rank=i+1`을 얹으므로, CE를 안 쓸 땐 이 함수를 따로 둬야 한다 —
+    `_rrf_fuse`에 CE 없는 리스트를 그대로 넣으면 `_merge_candidates`가 만든 임의의 병합
+    순서가 가짜 9번째 채널로 잡히는 버그가 생긴다). benchmark/reranker_experiment 등
+    실험의 "D0(RRF only)" 조건과 동일한 방식."""
+    fused: list[TableCandidate] = []
+    for cand in candidates:
+        ranks = _parse_rrf_ranks(cand.source_meta)
+        ranks.pop("reranker_rank", None)
+        rrf_score = sum(1.0 / (k + r) for r in ranks.values()) if ranks else 0.0
+        meta = f"{cand.source_meta} | rrf_score={rrf_score:.4f}"
+        fused.append(replace(cand, score=rrf_score, source_meta=meta))
+    fused.sort(key=lambda c: c.score, reverse=True)
+    return fused
+
+
 def rerank(
     claim: Claim,
     candidates: list[TableCandidate],
@@ -344,13 +378,18 @@ def rerank(
     if not candidates:
         return []
 
+    if _DISABLE_RERANKER:
+        # 2026-08-30: CE 비활성화가 기본값(위 _DISABLE_RERANKER 정의부 주석 참고) —
+        # 모델을 아예 로딩하지 않고 8채널 RRF만으로 최종 순위를 정한다(실험 결과 채택).
+        return _rrf_fuse_no_ce(candidates)[:top_k]
+
     documents = [
         (document_texts or {}).get(c.table_id, c.table_name) for c in candidates
     ]
     scores = rerank_scores(claim.sentence, documents)
 
     if scores is None:
-        # 리랭커 모델을 못 쓰는 상황(의존성 미설치 등) — 항등 폴백.
+        # 리랭커를 켰는데도 모델을 못 쓰는 상황(의존성 미설치, 세그폴트 등) — 항등 폴백.
         # keyword_search도 못 찾고 리랭커 판단도 없는 후보(embedding/VDB 단독 저순위)는
         # score 크기만으로 정렬하면 노이즈가 앞설 수 있어 뒤로 민다.
         def _sort_key(c: TableCandidate) -> tuple[bool, float]:
